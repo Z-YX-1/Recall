@@ -5,11 +5,16 @@
 # Runtime data
 data/
 
+# Local scratch (pytest basetemp / sandbox probes)
+.tmp/
+
 # Local binaries (Qdrant native)
 tools/qdrant/*.zip
 tools/qdrant/qdrant.exe
 tools/qdrant/*.dll
 tools/qdrant/storage/
+tools/qdrant/snapshots/
+tools/qdrant/.qdrant-initialized
 
 # Large wheels (PyTorch cu124)
 tools/wheels/*.whl
