@@ -94,12 +94,18 @@ created: 2026-09-04
 
 ### Phase 0：环境与仓库初始化
 
-- [ ] **R-01** 确认本机环境：Miniconda 创建环境 `recall`（`conda create -n recall python=3.11 -y` → `conda activate recall`，Python 3.11.x）；`nvidia-smi` 记录驱动版本并确认支持 CUDA 12.4（RTX 4050）；`python --version` / 驱动信息记录结果（tech.md §2/§12）。
+- [x] **R-01** 确认本机环境：Miniconda 创建环境 `recall`（`conda create -n recall python=3.11 -y` → `conda activate recall`，Python 3.11.x）；`nvidia-smi` 记录驱动版本并确认支持 CUDA 12.4（RTX 4050）；`python --version` / 驱动信息记录结果（tech.md §2/§12）。
+    ✅ 验证：Python 3.11.16（`D:\miniconda\envs\recall`）；驱动 576.02 / CUDA 12.9；GPU RTX 4050 Laptop 6GB。
 - [ ] **R-02** 安装 GPU 版 PyTorch：`pip install torch --index-url https://download.pytorch.org/whl/cu124`（网络慢时换清华镜像源）。
+    ⚠️ 问题：官方 pip 源下载 2.5GB wheel 多次超时/中断；conda 安装因清华镜像连接超时失败（2026-09-21）。
+- [ ] **R-02b** 本地下载 wheel 至 `tools/wheels/` 后 `pip install` 本地文件安装 PyTorch cu124。
     ✅ 验证：`python -c "import torch; print(torch.cuda.is_available())"` 输出 `True`。
-- [ ] **R-03** 安装并启动 Qdrant 单机服务（native 二进制或 Docker 二选一，按本机环境定），监听 `127.0.0.1:6333`。
-    ✅ 验证：Qdrant 客户端可列出 collections（空列表即可）；服务端口可访问。
-- [ ] **R-04** 初始化 Git 仓库（`git init`），创建 `.gitignore`（忽略 `.env`、`data/`、`__pycache__/`、`.pytest_cache/`、`.mypy_cache/`、`.ruff_cache/`、`*.pyc`），创建根 `README.md`（引用 `spec/` 下三份文档：tech.md、code_standards.md、roadmap.md）。
+- [x] **R-03** 安装并启动 Qdrant 单机服务（native 二进制或 Docker 二选一，按本机环境定），监听 `127.0.0.1:6333`。
+    ⚠️ 问题：Docker Desktop 未运行（`dockerDesktopLinuxEngine` pipe 不存在）；改用 native 二进制方案 R-03b。
+- [x] **R-03b** 下载 Qdrant v1.19.0 Windows 原生二进制至 `tools/qdrant/`，启动 `qdrant.exe`。
+    ✅ 验证：`GET http://127.0.0.1:6333/collections` 返回 `{"result":{"collections":[]},"status":"ok"}`。
+- [x] **R-04** 初始化 Git 仓库（`git init`），创建 `.gitignore`（忽略 `.env`、`data/`、`__pycache__/`、`.pytest_cache/`、`.mypy_cache/`、`.ruff_cache/`、`*.pyc`），创建根 `README.md`（引用 `spec/` 下三份文档：tech.md、code_standards.md、roadmap.md）。
+    ✅ 验证：仓库已连接 `origin/main`；`.gitignore` + `README.md` 已创建。
 - [ ] **R-05** 编写 `pyproject.toml`（ruff / mypy / pytest 配置按 code_standards §1：`line-length=100`、mypy strict）+ 依赖清单：`qdrant-client`、`fastapi`、`uvicorn[standard]`、`fastmcp`、`pydantic`、`FlagEmbedding`、`torch`、`openai`（DeepSeek 走 OpenAI 兼容接口）、`httpx`、`pytest`、`ruff`、`mypy`；执行 `pip install`（清华镜像）；下载模型 `BAAI/bge-m3` 与 `BAAI/bge-reranker-v2-m3`（先设置 `$env:HF_ENDPOINT="https://hf-mirror.com"`）。
     ✅ 验证：模型文件落盘（HF cache 目录可见）；`python -c "import FlagEmbedding, qdrant_client, fastmcp"` 无报错。
 - [ ] **R-06** 冒烟验证：`AsyncQdrantClient(url="http://127.0.0.1:6333")` 建一个临时 collection 再删除，确认读写链路通；GPU 上跑一次 bge-m3 单句编码确认显存占用正常。
@@ -180,11 +186,11 @@ created: 2026-09-04
 ## 六、 当前进度快照（每步完成/受阻后更新）
 
 - **当前阶段**：Phase 0（环境与仓库初始化）
-- **当前步骤**：R-01（确认本机环境）
-- **已通过项**：无（spec 已定稿：tech.md、code_standards.md、roadmap.md）
-- **未通过项**：无
+- **当前步骤**：R-02b（本地下载 wheel 安装 PyTorch）
+- **已通过项**：R-01、R-03b、R-04
+- **未通过项**：R-02（网络超时）、R-03（Docker 未运行，已走 R-03b）
 - **待请示事项**：无
-- **最近一次测试结果**：尚无（未开始执行）
+- **最近一次测试结果**：Qdrant native 启动成功；PyTorch 安装进行中
 - **本文件版本**：v0.2.0（2026-09-04 新增"变更登记铁律"§二 与 §七 变更日志；上一版 v0.1.1 为术语调整）
 
 ---
@@ -198,3 +204,7 @@ created: 2026-09-04
 | :--- | :--- | :--- | :--- | :--- |
 | 2026-09-04 | — | 规则新增 | 新增"变更登记铁律"（§二）与本节变更日志（§七）：每一次改动都必须写入本文件，roadmap 未写明的情形必须补录 | 依据项目工程师指示；本行即为该规则的首条记录 |
 | 2026-09-04 | — | 术语调整 | 决策者称呼由"总设计师"统一改为"项目工程师"（全文 14 处），版本 v0.1.0 → v0.1.1 | 依据项目工程师指示，补记录 |
+| 2026-09-21 | R-03 | 环境绕行 | Docker Desktop 未运行，改用 Qdrant v1.19.0 native 二进制（`tools/qdrant/qdrant.exe`） | 符合 roadmap 问题处理协议 |
+| 2026-09-21 | R-02 | 环境绕行 | pip/conda 在线安装 PyTorch cu124 网络不稳定，新增 R-02b 本地下载 wheel 安装 | 符合 roadmap 问题处理协议 |
+| 2026-09-21 | R-04 | 项目初始化 | 新增 `.gitignore`、`README.md`；`.gitignore` 追加 `tools/qdrant/` 二进制忽略规则 | Phase 0 |
+| 2026-09-21 | R-05 | 依赖配置 | 新增 `pyproject.toml`（ruff/mypy/pytest + 依赖清单） | Phase 0，待 pip install |

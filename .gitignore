@@ -1,0 +1,47 @@
+# Environment & secrets
+.env
+.env.*
+
+# Runtime data
+data/
+
+# Local binaries (Qdrant native)
+tools/qdrant/*.zip
+tools/qdrant/qdrant.exe
+tools/qdrant/*.dll
+tools/qdrant/storage/
+
+# Large wheels (PyTorch cu124)
+tools/wheels/*.whl
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+
+# Tool caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Model cache (optional local override)
+# .cache/
