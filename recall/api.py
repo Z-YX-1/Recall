@@ -22,6 +22,9 @@ from dataclasses import dataclass, replace
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from fastmcp import FastMCP
+from fastmcp.exceptions import ToolError
+from pydantic import ValidationError
 from qdrant_client import models as qmodels
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
@@ -30,7 +33,14 @@ from recall.auth import InvalidFilterError, effective_filter, get_identity
 from recall.chunker import CHUNKER_NAME
 from recall.config import Settings
 from recall.embedder import DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_VERSION, Embedder
-from recall.models import ChunkPayload, HealthResult, Identity, SearchRequest, SearchResult
+from recall.models import (
+    ChunkPayload,
+    HealthResult,
+    Identity,
+    SearchRequest,
+    SearchResult,
+    StatsResult,
+)
 from recall.registry import Registry
 from recall.rerank import Reranker
 from recall.store import RECALL_TOP_K, QdrantStore, collection_name
@@ -246,11 +256,15 @@ async def _resolve_source_uris(registry: Registry, doc_ids: Sequence[str]) -> di
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    """应用生命周期：启动时装配服务（fail fast），退出时释放连接。"""
-    del app
+    """组合生命周期：装配 Recall 服务（fail fast）+ 初始化 FastMCP 会话管理。
+
+    ⚠️ code_standards §6.3：必须把 ``mcp_app.lifespan`` 纳入 FastAPI 的 lifespan，
+    否则 Streamable HTTP 的会话管理不初始化，``/mcp`` 请求会失败。
+    """
     await get_service()
     try:
-        yield
+        async with mcp_app.lifespan(app):
+            yield
     finally:
         await close_service()
 
@@ -290,7 +304,7 @@ async def _handle_unexpected(request: Request, exc: Exception) -> JSONResponse:
     return _error_response(500, "internal_error", f"{type(exc).__name__}: {exc}")
 
 
-def _format_validation_error(exc: RequestValidationError) -> str:
+def _format_validation_error(exc: RequestValidationError | ValidationError) -> str:
     """把 Pydantic 校验错误压成一行可读文本（不回显输入值，避免泄漏）。"""
     parts = []
     for error in exc.errors():
@@ -317,6 +331,83 @@ async def health() -> HealthResult:
 
 
 @app.post("/kb/search")
-async def kb_search(payload: SearchRequest, request: Request) -> SearchResult:
-    """检索个人知识库，返回带出处的证据片段（tech.md §8）。"""
+async def kb_search_endpoint(payload: SearchRequest, request: Request) -> SearchResult:
+    """检索个人知识库，返回带出处的证据片段（tech.md §8）。
+
+    函数名与 MCP 工具 ``kb_search`` 区分：本函数只服务 REST 路由。
+    """
     return await kb_search_core(payload, get_identity(request))
+
+
+# --------------------------------------------------------------------------------------
+# MCP 工具与挂载（tech.md §8/§9；code_standards §6.2/§6.3；roadmap R-24、R-25）
+# --------------------------------------------------------------------------------------
+
+mcp = FastMCP(
+    name="recall",
+    instructions=(
+        "Recall（拾忆）个人知识库。检索笔记内容一律用 kb_search 取回带出处的证据，"
+        "再按 recall-assembly 规范用 [n] 标注引用作答；不要凭记忆回答笔记里的内容。"
+    ),
+)
+
+
+@mcp.tool
+async def kb_search(query: str, top_k: int = 20, max_tokens: int = 3000) -> SearchResult:
+    """搜索个人知识库，返回带出处的证据片段。
+
+    何时调用：用户问题涉及"我的笔记/知识库里说过什么"时。
+    调用方须按返回的 references 用 [n] 标注引用，且只依据证据回答。
+
+    Args:
+        query: 检索问题（用中文原问，勿自行改写）
+        top_k: 召回候选数
+        max_tokens: 调用方可接受的证据 token 预算
+    """
+    try:
+        return await kb_search_core(SearchRequest(query=query, top_k=top_k, max_tokens=max_tokens))
+    except ValidationError as exc:
+        raise ToolError(f"参数不合法：{_format_validation_error(exc)}") from exc
+    except ApiError as exc:
+        raise ToolError(f"[{exc.code}] {exc.message}") from exc
+    except Exception as exc:  # noqa: BLE001 - MCP 工具不裸抛，异常转可读文本（§6.2）
+        logger.exception("mcp.kb_search_failed")
+        raise ToolError(f"检索失败：{type(exc).__name__}: {exc}") from exc
+
+
+@mcp.tool
+async def kb_stats() -> StatsResult:
+    """查看个人知识库的当前状态（只读，无副作用）。
+
+    何时调用：需要确认"知识库里有多少内容/建库参数是什么/是否就绪"时。
+
+    Returns:
+        目标 collection、点数、文档数、失败文档数与建库参数。
+    """
+    try:
+        service = await get_service()
+        reachable = await service.store.ping()
+        ready = reachable and await service.store.collection_exists(service.collection)
+        metadata = await service.store.collection_metadata(service.collection) if ready else {}
+        records = await service.registry.list_all()
+        return StatsResult(
+            collection=service.collection,
+            qdrant=reachable,
+            collection_ready=ready,
+            points_count=(await service.store.count_points(service.collection) if ready else 0),
+            documents=len(records),
+            failed_documents=sum(1 for record in records if record.error),
+            embedding_model=str(metadata.get("embedding_model", "")),
+            embedding_version=str(metadata.get("embedding_version", "")),
+            chunker=str(metadata.get("chunker", "")),
+            created_at=str(metadata.get("created_at", "")),
+        )
+    except Exception as exc:  # noqa: BLE001 - MCP 工具不裸抛，异常转可读文本（§6.2）
+        logger.exception("mcp.kb_stats_failed")
+        raise ToolError(f"读取知识库状态失败：{type(exc).__name__}: {exc}") from exc
+
+
+mcp_app = mcp.http_app(path="/")
+"""code_standards §6.3：``http_app(path="/")`` + ``mount("/mcp")`` ⇒ 端点 ``/mcp``。"""
+
+app.mount("/mcp", mcp_app)

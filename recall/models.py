@@ -170,3 +170,18 @@ class HealthResult(BaseModel):
     points_count: int
     documents: int
     """文档注册表中的文档数（与 points_count 对账用）。"""
+
+
+class StatsResult(BaseModel):
+    """``kb_stats`` MCP 工具返回体（只读，无副作用）。"""
+
+    collection: str
+    qdrant: bool
+    collection_ready: bool
+    points_count: int
+    documents: int
+    failed_documents: int
+    embedding_model: str
+    embedding_version: str
+    chunker: str
+    created_at: str

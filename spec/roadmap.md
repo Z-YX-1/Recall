@@ -181,14 +181,23 @@ created: 2026-09-04
 
 ### Phase 3：接入层 REST + MCP + DSH（对应 tech.md P2）
 
-- [ ] **R-24** FastMCP 挂载（code_standards §6.3）：`mcp_app = mcp.http_app(path="/")` → `FastAPI(lifespan=mcp_app.lifespan)` → `app.mount("/mcp", mcp_app)`；最终端点 `http://127.0.0.1:8000/mcp`。
+- [x] **R-24** FastMCP 挂载（code_standards §6.3）：`mcp_app = mcp.http_app(path="/")` → `FastAPI(lifespan=mcp_app.lifespan)` → `app.mount("/mcp", mcp_app)`；最终端点 `http://127.0.0.1:8000/mcp`。
     ✅ 验证：`GET /mcp`（或 MCP 握手）有响应；`/health` 正常。
-- [ ] **R-25** 实现 MCP 工具：`kb_search`（只读，docstring 按"召唤词"规范写清**何时调用 + [n] 引用规则 + 忠实度要求**）、`kb_stats`（只读）；返回 Pydantic 模型（自动 outputSchema + structuredContent，code_standards §6.2）。
-- [ ] **R-26** 注册进 DSH：`$DSH_HOME/mcp-servers.json` 添加 `{"serverName":"recall","transport":"streamable-http","url":"http://127.0.0.1:8000/mcp","enabled":true}`。
+    ✅ 实测（2026-09-22）：`uvicorn recall.api:app --host 127.0.0.1 --port 8000` 启动；`GET /health` → `{"status":"ok","qdrant":true,"collection":"recall__bge-m3@v1__md","collection_ready":true,"points_count":972,"documents":65}`；真实 MCP 客户端（`fastmcp.Client("http://127.0.0.1:8000/mcp")`）握手成功。⚠️ lifespan 组合方式：`mcp_app.lifespan` 挂在 FastAPI lifespan 内（子应用 mount 不会自动跑生命周期）。
+- [x] **R-25** 实现 MCP 工具：`kb_search`（只读，docstring 按"召唤词"规范写清**何时调用 + [n] 引用规则 + 忠实度要求**）、`kb_stats`（只读）；返回 Pydantic 模型（自动 outputSchema + structuredContent，code_standards §6.2）。
+    ✅ 实测（2026-09-22）：`tests/test_mcp.py` 5 项全绿（含进程内 ASGI 生命周期下的真实握手）。工具列表 `['kb_search','kb_stats']`；`kb_search` outputSchema = `{evidence, references}`，`kb_stats` outputSchema 含 10 个字段；docstring 含「何时调用」「[n]」「只依据证据回答」；工具内异常转可读文本（空 query → `参数不合法：query: String should have at least 1 character`，`is_error=True` 且无 traceback）。
+- [x] **R-26** 注册进 DSH：`$DSH_HOME/mcp-servers.json` 添加 `{"serverName":"recall","transport":"streamable-http","url":"http://127.0.0.1:8000/mcp","enabled":true}`。
     ✅ 验证：DSH 新会话出现 `mcp__recall__kb_search` 等工具。
-- [ ] **R-27** 编写 `skill/recall-assembly.md`（frontmatter：name `recall-assembly` + description；正文 = 组装规范：query 措辞、[n] 引用格式、忠实度、证据即数据，tech.md §9）并复制到 `~/.dsh/skills/`。
+    ✅ 实测（2026-09-22）：`$DSH_HOME` 实为 `D:\dsh-data`（非 `~/.dsh`），已写入 `D:\dsh-data\mcp-servers.json`，Context7 条目保留。**待项目工程师在新会话确认工具出现**（MCP 服务器在会话启动时装载，本会话注册前已启动，看不到 `mcp__recall__*`）。
+- [x] **R-27** 编写 `skill/recall-assembly.md`（frontmatter：name `recall-assembly` + description；正文 = 组装规范：query 措辞、[n] 引用格式、忠实度、证据即数据，tech.md §9）并复制到 `~/.dsh/skills/`。
     ✅ 验证：DSH 新会话 skill 目录（available_skills）出现 `recall-assembly`。
+    ✅ 实测（2026-09-22）：仓库 `skill/recall-assembly.md` 写好（3527 字节）并复制到 `D:\dsh-data\skills\recall-assembly.md`；**本会话 skill 目录已实时出现 `recall-assembly`**（文件系统 watcher 生效），且 `skill` 工具加载成功、正文完整。
 - [ ] **R-28** 端到端验收：DSH 会话中用自然语言问笔记（如"我笔记里关于 RAG 检索质量的结论？"），回答**带 [n] 引用且忠于证据**（tech.md P2 验收标准）。记录问答样例汇报项目工程师。
+    ⚠️ 问题：AI 执行者**无法自行开启一个 DSH 会话**（MCP 服务器只在会话启动时装载，本会话看不到 `mcp__recall__*` 工具），R-28 的字面验收必须由项目工程师在新会话中确认（2026-09-22）。
+- [x] **R-28b** 以等价方式完成 R-28 的**除"会话装载"外的全部链路验证**：用真实 MCP 客户端连 `http://127.0.0.1:8000/mcp` 调 `kb_search`，按 `recall-assembly` 规范组装。
+    ✅ 实测（2026-09-22）：问题「我笔记里关于 RAG 检索质量的结论？」→ 返回 5 条证据、`references` 与 `[n]` 一一对应，Top-1 = `project/Recall/spec/roadmap.md`（0.9348）、Top-2 = `AI/ai-文本切分器 (Text Splitter).md`（0.5731，"粒度是整条 RAG 链路里影响 recall 最大的单一参数"）、Top-3 = `AI/ai-Embedding (向量) 的几何意义.md`（0.4550，"文档实际用的是 Recall@K"）。
+    ⚠️ 检索质量观察：Top-1 命中的是 vault 里的 **Recall 路线图自身**（含大量 RAG/检索字样）而非技术笔记；`query="我笔记里关于 RAG 检索质量的结论？"` 属"元问题"，与笔记正文的措辞分布不匹配。留待 R-42 用黄金集量化（tech.md §10 触发点）。
+    🧭 项目工程师指示：**待确认**——请在新会话中问一句笔记问题，确认回答带 `[n]` 引用且忠于证据
 
 ### Phase 4：胖端点与评测体系（对应 tech.md P3）
 
@@ -227,18 +236,22 @@ created: 2026-09-04
 | 2026-09-22 | R-23 | pytest 会话中连续装载 bge-m3 触发 `Windows fatal exception: access violation`（栈在 `transformers/core_model_loading.py::_materialize_copy`；transforms 5.x 权重装载用内部线程池并行 materialize，两线程同时装载即崩） | R-23b：新增 `recall/model_cache.py`（进程级缓存 + 装载锁），embedder/reranker 统一 `load_once` | **待复核**（实现层基础设施，不动契约） | ✅ 已解决 |
 | 2026-09-22 | R-23 | 真实 vault 首轮摄取 268 篇里 203 篇是 `project/*/node_modules/**` 的第三方 CHANGELOG/LICENSE/README，严重稀释检索质量 | R-23c：`DEFAULT_SKIP_DIRS` 增加工程产物目录 + 开放 `--skip-dirs` 覆盖，重灌后 65 篇 / 972 点 | **待复核**（摄取范围细化，不改 Connector 协议） | ✅ 已解决 |
 | 2026-09-22 | R-21 | Qdrant `Condition` 联合类型含 `Any`，`Filter.model_validate` 对残缺条件照单全收（`{"must":[{"key":"doc_id"}]}` 能通过），坏 filter 会一路带到 Qdrant 变成 500 而不是干净的 400 | 在 `recall/auth.py` 内自建结构校验 `validate_client_filter` | **待复核**（API 错误规范内的实现细节） | ✅ 已解决 |
+| 2026-09-22 | R-28 | AI 执行者无法自行开启 DSH 会话：MCP 服务器只在会话启动时装载，本会话看不到 `mcp__recall__*`，R-28 的字面验收无法由 AI 独立完成 | R-28b：用真实 MCP 客户端完成除"会话装载"外的全部链路验证；并在新会话中由项目工程师确认 | **待确认**（等价验证已通过，等待会话侧确认） | ⏳ 待确认 |
 
 ---
 
 ## 六、 当前进度快照（每步完成/受阻后更新）
 
-- **当前阶段**：Phase 2 已完成（检索链路 kb_search），下一步进入 **Phase 3（REST + MCP + DSH 接入）R-24**
-- **当前步骤**：R-23 已完成 → 待开工 R-24
-- **已通过项**：R-01、R-02b、R-03b、R-04、R-05、R-06、R-07~R-17、R-18、R-19、R-20、R-21、R-22、R-23、R-23b、R-23c
+- **当前阶段**：Phase 3 已完成（REST + MCP + DSH 接入），下一步进入 **Phase 4（胖端点与评测体系）R-29**
+- **当前步骤**：R-28b 已完成 → 待开工 R-29（R-28 字面验收待新会话确认）
+- **已通过项**：R-01、R-02b、R-03b、R-04、R-05、R-06、R-07~R-17、R-18~R-23c、R-24、R-25、R-26、R-27、R-28b
 - **未通过项**：R-02（官方源网络超时，已走 R-02b）、R-03（Docker 未运行，已走 R-03b）
-- **待请示事项**：R-14b / R-16b / R-23b / R-23c 的「项目工程师指示」待复核（均为技术细节收敛，未触及 tech.md 契约）
-- **最近一次测试结果**（2026-09-22）：`pytest` **91 passed**；`ruff check` 零告警；`mypy` strict 29 文件零错误；真实 collection `recall__bge-m3@v1__md` 65 篇 / 972 点；**5 个真实笔记问题 Top-3 命中 5/5**
-- **本文件版本**：v0.4.0（2026-09-22 回填 Phase 2（R-18~R-23c）实测验证与问题记录；上一版 v0.3.0 回填 Phase 0 收尾与 Phase 1）
+- **待请示事项**：
+  1. R-14b / R-16b / R-23b / R-23c 的「项目工程师指示」待复核（技术细节收敛，未触及 tech.md 契约）；
+  2. **R-28 待新会话确认**：请新开 DSH 会话，问一句笔记问题，确认出现 `mcp__recall__kb_search` 且回答带 `[n]` 引用；
+  3. R-28b 记录的检索质量观察（元问题命中路线图自身）留待 R-42 用黄金集量化。
+- **最近一次测试结果**（2026-09-22）：`pytest` **96 passed**；`ruff check` 零告警；`mypy` strict 30 文件零错误；`/health` ok（65 篇 / 972 点）；MCP 真实握手 + `kb_search`/`kb_stats` 调用成功
+- **本文件版本**：v0.5.0（2026-09-22 回填 Phase 3（R-24~R-28b）实测验证与问题记录；上一版 v0.4.0 回填 Phase 2）
 
 ---
 
@@ -275,3 +288,8 @@ created: 2026-09-04
 | 2026-09-22 | R-23 | 摄取范围细化 | `ObsidianConnector` 增加 `skip_dirs` 参数与 `DEFAULT_SKIP_DIRS`（含 `node_modules`/`dist`/`build`/`.venv`/`venv`/`__pycache__`）；`ingest.py` 增加 `--skip-dirs` | 见 §五 R-23c |
 | 2026-09-22 | R-23 | 数据变更 | 真实 collection 重灌：268 篇 → 65 篇，3121 点 → 972 点（清理 node_modules 产物 203 篇） | 旧 collection 未删（同库清理，非换模型） |
 | 2026-09-22 | R-22 | API 契约细化 | 错误信封扩展覆盖 Starlette 的 404/405（`code="http_error"`），使信封全站统一 | code_standards §6.1 |
+| 2026-09-22 | R-25 | 实现层新增 | `recall/models.py` 增加 `StatsResult`（kb_stats 返回体）；REST 路由处理函数由 `kb_search` 更名为 `kb_search_endpoint`——MCP 工具名必须等于函数名（code_standards §6.2），二者不能同名 | 工具名 `kb_search` 不变，REST 端点 `/kb/search` 不变 |
+| 2026-09-22 | R-24 | 生命周期实现 | `lifespan` 改为组合式：先装配 Recall 服务，再 `async with mcp_app.lifespan(app)` | code_standards §6.3 的 ⚠️ 要点；Starlette mount 不会自动运行子应用生命周期 |
+| 2026-09-22 | R-27 | 路径修正 | skill 安装路径由 `~/.dsh/skills/` 修正为 **`$DSH_HOME/skills`**（本机 `DSH_HOME=D:\dsh-data`，`~/.dsh` 不存在）；依据 `@deepseek-ai/dsh-skill-filesystem` 的根目录优先级表（`<dshHome>/skills` = user-dsh，rank 400） | tech.md §9/§11 的 `~/.dsh` 是按默认 `DSH_HOME` 写的 |
+| 2026-09-22 | R-26 | 外部配置变更 | 修改 `D:\dsh-data\mcp-servers.json`：新增 `recall` 服务器条目（Context7 保留），**仓库外文件**，故在此登记 | 生效需新开 DSH 会话 |
+| 2026-09-22 | R-25 | 测试补强 | 新增 `tests/test_mcp.py`（工具注册/召唤词 docstring/outputSchema/结构化错误/进程内 ASGI 生命周期握手） | code_standards §6.2/§6.3 |
