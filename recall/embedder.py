@@ -18,6 +18,8 @@ from typing import Any, cast
 import numpy as np
 from FlagEmbedding import BGEM3FlagModel
 
+from recall.model_cache import load_once
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_MODEL_NAME = "BAAI/bge-m3"
@@ -83,7 +85,6 @@ class Embedder:
         self.use_fp16 = use_fp16
         self.batch_size = batch_size
         self.device = device
-        self._model: BGEM3FlagModel | None = None
 
     @property
     def dimension(self) -> int:
@@ -111,21 +112,15 @@ class Embedder:
         )
 
     def _ensure_model(self) -> BGEM3FlagModel:
-        """惰性加载权重（首次调用发生显存占用）。"""
-        if self._model is None:
-            kwargs: dict[str, Any] = {"use_fp16": self.use_fp16}
-            if self.device is not None:
-                kwargs["devices"] = self.device
-            logger.info(
-                "embedder.loading",
-                extra={
-                    "model_name": self.model_name,
-                    "use_fp16": self.use_fp16,
-                    "device": self.device,
-                },
-            )
-            self._model = BGEM3FlagModel(self.model_name, **kwargs)
-        return self._model
+        """取共享的 bge-m3 实例（进程级缓存 + 装载锁，见 :mod:`recall.model_cache`）。"""
+        kwargs: dict[str, Any] = {"use_fp16": self.use_fp16}
+        if self.device is not None:
+            kwargs["devices"] = self.device
+        model_name = self.model_name
+        return load_once(
+            (model_name, self.use_fp16, self.device),
+            lambda: BGEM3FlagModel(model_name, **kwargs),
+        )
 
     def _encode_sync(self, texts: list[str], batch_size: int) -> list[Embedding]:
         output = self._ensure_model().encode(

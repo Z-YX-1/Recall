@@ -51,6 +51,25 @@ def test_list_skips_obsidian_internal_directories(vault: Path) -> None:
     assert [doc.source_uri for doc in ObsidianConnector(vault).list()] == ["笔记.md"]
 
 
+def test_list_skips_engineering_artifact_directories(vault: Path) -> None:
+    """真实 vault 混进 node_modules 会把第三方 CHANGELOG/LICENSE 灌进索引。"""
+    write_note(vault, "笔记.md", "# 笔记\n")
+    write_note(vault, "project/node_modules/pkg/CHANGELOG.md", "# 变更\n")
+    write_note(vault, "project/node_modules/pkg/LICENSE.md", "# 协议\n")
+    write_note(vault, "project/dist/bundle.md", "# 产物\n")
+
+    assert [doc.source_uri for doc in ObsidianConnector(vault).list()] == ["笔记.md"]
+
+
+def test_skip_dirs_can_be_overridden(vault: Path) -> None:
+    write_note(vault, "笔记.md", "# 笔记\n")
+    write_note(vault, "归档/旧笔记.md", "# 旧\n")
+
+    connector = ObsidianConnector(vault, skip_dirs=("归档",))
+    assert [doc.source_uri for doc in connector.list()] == ["笔记.md"]
+    assert connector.skip_dirs == frozenset({"归档"})
+
+
 def test_single_bad_document_is_isolated_and_run_continues(vault: Path) -> None:
     write_note(vault, "好的.md", "# 好的\n\n正文\n")
     (vault / "坏的.md").write_bytes(b"\xff\xfe\x00\x00not utf-8")

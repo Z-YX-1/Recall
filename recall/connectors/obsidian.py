@@ -16,7 +16,7 @@ from __future__ import annotations
 import hashlib
 import logging
 from collections import Counter
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -31,7 +31,23 @@ logger = logging.getLogger(__name__)
 SOURCE_TYPE = "obsidian"
 MARKDOWN_SUFFIX = ".md"
 
-_SKIP_DIRS = frozenset({".obsidian", ".trash", ".git", ".smart-env", ".stfolder"})
+DEFAULT_SKIP_DIRS: tuple[str, ...] = (
+    # Obsidian / VCS 内部目录
+    ".obsidian",
+    ".trash",
+    ".git",
+    ".smart-env",
+    ".stfolder",
+    # 工程产物：真实 vault 里混进 node_modules/dist 会把第三方 CHANGELOG/LICENSE
+    # 灌进索引、把检索结果冲垮（2026-09-22 实测：268 篇里大半是 node_modules）
+    "node_modules",
+    "dist",
+    "build",
+    ".venv",
+    "venv",
+    "__pycache__",
+)
+"""默认跳过的目录名（可按需用 ``--skip-dirs`` 覆盖）。"""
 
 
 class ObsidianConnector(BaseConnector):
@@ -43,19 +59,26 @@ class ObsidianConnector(BaseConnector):
 
     source_type = SOURCE_TYPE
 
-    def __init__(self, vault_path: Path) -> None:
+    def __init__(self, vault_path: Path, *, skip_dirs: Iterable[str] | None = None) -> None:
         """初始化 Connector。
 
         Args:
             vault_path: vault 根目录（不存在时 :meth:`list` 返回空并记一条错误）。
+            skip_dirs: 额外跳过的目录名集合；``None`` 用 :data:`DEFAULT_SKIP_DIRS`。
         """
         super().__init__()
         self._vault = vault_path
+        self._skip_dirs = frozenset(DEFAULT_SKIP_DIRS if skip_dirs is None else skip_dirs)
 
     @property
     def vault_path(self) -> Path:
         """vault 根目录。"""
         return self._vault
+
+    @property
+    def skip_dirs(self) -> frozenset[str]:
+        """被跳过的目录名集合。"""
+        return self._skip_dirs
 
     def list(self) -> Iterator[RawDoc]:
         """枚举 vault 内全部 Markdown 文档（按来源相对路径升序，确定性）。
@@ -66,7 +89,7 @@ class ObsidianConnector(BaseConnector):
         if not self._vault.is_dir():
             self._record_error("", str(self._vault), f"vault 目录不存在或不是目录: {self._vault}")
             return
-        for path, doc_id in _plan(self._vault):
+        for path, doc_id in _plan(self._vault, self._skip_dirs):
             source_uri = path.relative_to(self._vault).as_posix()
             try:
                 raw = path.read_text(encoding="utf-8", errors="strict")
@@ -83,9 +106,9 @@ class ObsidianConnector(BaseConnector):
             )
 
 
-def _plan(vault: Path) -> list[tuple[Path, str]]:
+def _plan(vault: Path, skip_dirs: frozenset[str]) -> list[tuple[Path, str]]:
     """先规划 ``(路径, doc_id)`` 再读取——同名冲突可在此确定性消歧。"""
-    paths = _iter_markdown_paths(vault)
+    paths = _iter_markdown_paths(vault, skip_dirs)
     slugs = {path: slugify(path.stem) for path in paths}
     counts = Counter(slugs.values())
     plan: list[tuple[Path, str]] = []
@@ -99,14 +122,14 @@ def _plan(vault: Path) -> list[tuple[Path, str]]:
     return plan
 
 
-def _iter_markdown_paths(vault: Path) -> list[Path]:
-    """列出待摄取的 Markdown 文件（跳过隐藏目录与 Obsidian 内部目录）。"""
+def _iter_markdown_paths(vault: Path, skip_dirs: frozenset[str]) -> list[Path]:
+    """列出待摄取的 Markdown 文件（跳过隐藏目录与 :data:`DEFAULT_SKIP_DIRS`）。"""
     paths: list[Path] = []
     for path in vault.rglob(f"*{MARKDOWN_SUFFIX}"):
         if not path.is_file() or path.name.startswith("."):
             continue
         relative_parts = path.relative_to(vault).parts[:-1]
-        if any(part in _SKIP_DIRS or part.startswith(".") for part in relative_parts):
+        if any(part in skip_dirs or part.startswith(".") for part in relative_parts):
             continue
         paths.append(path)
     return sorted(paths)

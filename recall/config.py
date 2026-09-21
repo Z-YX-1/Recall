@@ -37,6 +37,8 @@ class Settings:
         host: API 监听地址（默认仅本机，code_standards §12）。
         port: API 监听端口（REST 与 MCP 同端口，tech.md §8）。
         ingest_workers: 摄取时嵌入推理的并发批次数。
+        collection: 检索目标 collection；``None`` 表示用契约默认名
+            （``recall__bge-m3@v1__md``）。A/B 评测时用 ``RECALL_COLLECTION`` 切库。
     """
 
     qdrant_url: str
@@ -50,6 +52,7 @@ class Settings:
     host: str
     port: int
     ingest_workers: int
+    collection: str | None
 
     @classmethod
     def from_env(cls, dotenv_path: Path | None = None) -> Settings:
@@ -67,6 +70,7 @@ class Settings:
         vault_raw = os.getenv("RECALL_VAULT_PATH", "").strip()
         db_raw = os.getenv("RECALL_REGISTRY_DB", "").strip()
         log_raw = os.getenv("RECALL_LOG_DIR", "").strip()
+        collection_raw = os.getenv("RECALL_COLLECTION", "").strip()
         return cls(
             qdrant_url=os.getenv("QDRANT_URL", DEFAULT_QDRANT_URL).strip(),
             vault_path=Path(vault_raw) if vault_raw else None,
@@ -79,4 +83,5 @@ class Settings:
             host=os.getenv("RECALL_HOST", "127.0.0.1").strip(),
             port=int(os.getenv("RECALL_PORT", "8000")),
             ingest_workers=int(os.getenv("RECALL_INGEST_WORKERS", "1")),
+            collection=collection_raw or None,
         )

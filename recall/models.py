@@ -143,3 +143,30 @@ class DocRecord(BaseModel):
     visibility: str = "private"
     chunk_count: int = 0
     error: str | None = None
+
+
+# --------------------------------------------------------------------------------------
+# API 请求 / 响应模型（tech.md §8；字段与端点契约逐字一致）
+# --------------------------------------------------------------------------------------
+
+
+class SearchRequest(BaseModel):
+    """``POST /kb/search`` 请求体（tech.md §8）。"""
+
+    query: str = Field(min_length=1, max_length=2000)
+    top_k: int = Field(default=20, ge=1, le=100)
+    max_tokens: int = Field(default=3000, ge=1, le=32000)
+    filter: dict[str, Any] = Field(default_factory=dict)
+    """客户端过滤条件：只能收窄身份可见范围，服务端强制与 scope 取交集（tech.md §7）。"""
+
+
+class HealthResult(BaseModel):
+    """``GET /health`` 响应体。"""
+
+    status: str
+    qdrant: bool
+    collection: str
+    collection_ready: bool
+    points_count: int
+    documents: int
+    """文档注册表中的文档数（与 points_count 对账用）。"""

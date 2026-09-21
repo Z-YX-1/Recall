@@ -117,6 +117,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--vault", default=None, help="Obsidian vault 路径（覆盖 RECALL_VAULT_PATH）"
     )
+    parser.add_argument(
+        "--skip-dirs",
+        default=None,
+        help="逗号分隔的跳过目录名；默认用 DEFAULT_SKIP_DIRS（含 node_modules 等工程产物）",
+    )
     parser.add_argument("--force", action="store_true", help="忽略文档级 hash 跳过")
     parser.add_argument("--max-tokens", type=int, default=MAX_CHUNK_TOKENS, help="单块 token 上限")
     parser.add_argument(
@@ -160,7 +165,7 @@ async def run_ingest(args: argparse.Namespace) -> IngestReport:
         batch_size=args.batch_size,
         device=args.device,
     )
-    connector: Connector = _build_connector(SOURCE_TYPE, vault)
+    connector: Connector = _build_connector(SOURCE_TYPE, vault, _parse_skip_dirs(args.skip_dirs))
 
     started = time.perf_counter()
     try:
@@ -341,11 +346,18 @@ async def _reconcile_deleted(
     return deleted
 
 
-def _build_connector(source_type: str, vault: Path) -> Connector:
+def _build_connector(source_type: str, vault: Path, skip_dirs: tuple[str, ...] | None) -> Connector:
     """按来源类型构造 Connector（v1 只有 Obsidian，新来源在此注册）。"""
     if source_type == SOURCE_TYPE:
-        return ObsidianConnector(vault)
+        return ObsidianConnector(vault, skip_dirs=skip_dirs)
     raise SystemExit(f"未支持的 source_type: {source_type}")
+
+
+def _parse_skip_dirs(raw: str | None) -> tuple[str, ...] | None:
+    """解析 ``--skip-dirs``：逗号分隔；未提供时返回 ``None``（用连接器默认值）。"""
+    if raw is None:
+        return None
+    return tuple(item.strip() for item in raw.split(",") if item.strip())
 
 
 def _drain_errors(connector: Connector) -> list[SourceError]:

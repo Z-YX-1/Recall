@@ -40,6 +40,9 @@ INTEGER_INDEX_FIELDS: tuple[str, ...] = ("updated_at_ts",)
 UPLOAD_BATCH_SIZE = 64
 UPLOAD_MAX_RETRIES = 3
 
+RECALL_TOP_K = 50
+"""每路召回的候选数（tech.md §4：dense 检索 top_k=50 + sparse 检索 top_k=50）。"""
+
 _T = TypeVar("_T")
 
 
@@ -308,6 +311,56 @@ class QdrantStore:
             max_retries=UPLOAD_MAX_RETRIES,
             wait=False,
         )
+
+    async def hybrid_search(
+        self,
+        name: str,
+        *,
+        dense: Sequence[float],
+        sparse_indices: Sequence[int],
+        sparse_values: Sequence[float],
+        top_k: int = RECALL_TOP_K,
+        query_filter: models.Filter | None = None,
+        limit: int | None = None,
+    ) -> list[models.ScoredPoint]:
+        """dense + sparse 双路检索 → **RRF 融合**（tech.md §4，顺序固定）。
+
+        Args:
+            name: collection 名。
+            dense: query 的 1024 维 dense 向量。
+            sparse_indices: query 的 learned sparse token id（升序）。
+            sparse_values: 与 ``sparse_indices`` 一一对应的权重。
+            top_k: 每路召回的候选数（tech.md §4：各 ``top_k=50``）。
+            query_filter: 服务端收敛后的过滤条件（见 :mod:`recall.auth`），S1 为空。
+            limit: 融合后返回条数，默认与 ``top_k`` 相同。
+
+        Returns:
+            按 RRF 融合分数降序排列的候选点（payload 已回填，向量不回传）。
+        """
+        prefetch = [
+            models.Prefetch(
+                query=list(dense), using=DENSE_VECTOR_NAME, limit=top_k, filter=query_filter
+            ),
+            models.Prefetch(
+                query=models.SparseVector(indices=list(sparse_indices), values=list(sparse_values)),
+                using=SPARSE_VECTOR_NAME,
+                limit=top_k,
+                filter=query_filter,
+            ),
+        ]
+        response = await with_retry(
+            "hybrid_search",
+            lambda: self._client.query_points(
+                collection_name=name,
+                prefetch=prefetch,
+                query=models.FusionQuery(fusion=models.Fusion.RRF),
+                query_filter=query_filter,
+                limit=limit or top_k,
+                with_payload=True,
+                with_vectors=False,
+            ),
+        )
+        return list(response.points)
 
     async def scroll_doc_ids(self, name: str, doc_id: str) -> set[str]:
         """列出某文档名下全部 point id（孤儿清理的比对基准）。

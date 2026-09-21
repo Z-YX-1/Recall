@@ -2,14 +2,15 @@
 
 设计原则：
 
-- **纯单测**（切分、id、registry、connector）不依赖任何外部服务，永远可跑；
+- **纯单测**（切分、id、assemble、auth 结构、registry、connector）不依赖任何外部服务；
 - **集成测试**（Qdrant / GPU 模型）在依赖不可用时 ``skip`` 并给出原因，
-  依赖可用时真实运行——不用 mock 冒充端到端。
+  依赖可用时真实运行——不用 mock 冒充端到端；
 - 模型走 **离线缓存**（``HF_HUB_OFFLINE=1``）：测试不产生网络请求，结果可复现。
 """
 
 from __future__ import annotations
 
+import contextlib
 import os
 import socket
 import uuid
@@ -22,8 +23,12 @@ import pytest
 # 必须早于 FlagEmbedding / transformers 的导入：让模型只从本地缓存加载
 os.environ.setdefault("HF_HUB_OFFLINE", "1")
 
+from recall.api import close_service, get_service  # noqa: E402
 from recall.embedder import DEFAULT_MODEL_NAME, Embedder  # noqa: E402
+from recall.rerank import DEFAULT_MODEL_NAME as RERANKER_MODEL_NAME  # noqa: E402
+from recall.rerank import Reranker  # noqa: E402
 from recall.store import QdrantStore  # noqa: E402
+from tests.helpers import IngestEnv  # noqa: E402
 
 QDRANT_URL = os.getenv("QDRANT_URL", "http://127.0.0.1:6333")
 
@@ -74,6 +79,14 @@ def embedder() -> Embedder:
     return Embedder(device=os.getenv("RECALL_TEST_DEVICE"))
 
 
+@pytest.fixture(scope="session")
+def reranker() -> Reranker:
+    """会话级 bge-reranker-v2-m3 重排器（惰性加载）。"""
+    if not _model_cached(RERANKER_MODEL_NAME):
+        pytest.skip(f"本地缓存缺少模型 {RERANKER_MODEL_NAME}")
+    return Reranker(device=os.getenv("RECALL_TEST_DEVICE"))
+
+
 @pytest.fixture
 def unique_collection() -> str:
     """一次性 collection 名，避免用例之间互相污染。"""
@@ -86,3 +99,42 @@ def vault(tmp_path: Path) -> Path:
     root = tmp_path / "vault"
     root.mkdir()
     return root
+
+
+@pytest.fixture
+async def ingest_env(
+    vault: Path,
+    qdrant_url: str,
+    unique_collection: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> AsyncIterator[IngestEnv]:
+    """隔离的摄取环境：临时 vault + 临时 registry + 一次性 collection。"""
+    registry_db = tmp_path / "registry.db"
+    monkeypatch.setenv("RECALL_VAULT_PATH", str(vault))
+    monkeypatch.setenv("RECALL_REGISTRY_DB", str(registry_db))
+    monkeypatch.setenv("QDRANT_URL", qdrant_url)
+
+    client = QdrantStore(qdrant_url)
+    try:
+        yield IngestEnv(
+            vault=vault, collection=unique_collection, registry_db=registry_db, store=client
+        )
+    finally:
+        with contextlib.suppress(Exception):  # 清理失败不应掩盖用例结论
+            await client.client.delete_collection(unique_collection)
+        await client.close()
+
+
+@pytest.fixture
+async def api_service(
+    ingest_env: IngestEnv, monkeypatch: pytest.MonkeyPatch
+) -> AsyncIterator[object]:
+    """把进程级服务单例指向测试 collection（用完即关，保证用例互不干扰）。"""
+    monkeypatch.setenv("RECALL_COLLECTION", ingest_env.collection)
+    await close_service()
+    service = await get_service()
+    try:
+        yield service
+    finally:
+        await close_service()
