@@ -106,27 +106,47 @@ created: 2026-09-04
     ✅ 验证：`GET http://127.0.0.1:6333/collections` 返回 `{"result":{"collections":[]},"status":"ok"}`。
 - [x] **R-04** 初始化 Git 仓库（`git init`），创建 `.gitignore`（忽略 `.env`、`data/`、`__pycache__/`、`.pytest_cache/`、`.mypy_cache/`、`.ruff_cache/`、`*.pyc`），创建根 `README.md`（引用 `spec/` 下三份文档：tech.md、code_standards.md、roadmap.md）。
     ✅ 验证：仓库已连接 `origin/main`；`.gitignore` + `README.md` 已创建。
-- [ ] **R-05** 编写 `pyproject.toml`（ruff / mypy / pytest 配置按 code_standards §1：`line-length=100`、mypy strict）+ 依赖清单：`qdrant-client`、`fastapi`、`uvicorn[standard]`、`fastmcp`、`pydantic`、`FlagEmbedding`、`torch`、`openai`（DeepSeek 走 OpenAI 兼容接口）、`httpx`、`pytest`、`ruff`、`mypy`；执行 `pip install`（清华镜像）；下载模型 `BAAI/bge-m3` 与 `BAAI/bge-reranker-v2-m3`（先设置 `$env:HF_ENDPOINT="https://hf-mirror.com"`）。
+- [x] **R-05** 编写 `pyproject.toml`（ruff / mypy / pytest 配置按 code_standards §1：`line-length=100`、mypy strict）+ 依赖清单：`qdrant-client`、`fastapi`、`uvicorn[standard]`、`fastmcp`、`pydantic`、`FlagEmbedding`、`torch`、`openai`（DeepSeek 走 OpenAI 兼容接口）、`httpx`、`pytest`、`ruff`、`mypy`；执行 `pip install`（清华镜像）；下载模型 `BAAI/bge-m3` 与 `BAAI/bge-reranker-v2-m3`（先设置 `$env:HF_ENDPOINT="https://hf-mirror.com"`）。
     ✅ 验证：模型文件落盘（HF cache 目录可见）；`python -c "import FlagEmbedding, qdrant_client, fastmcp"` 无报错。
-- [ ] **R-06** 冒烟验证：`AsyncQdrantClient(url="http://127.0.0.1:6333")` 建一个临时 collection 再删除，确认读写链路通；GPU 上跑一次 bge-m3 单句编码确认显存占用正常。
+    ✅ 实测（2026-09-22）：`pip install -e ".[dev]" -i 清华镜像` 成功（FlagEmbedding 1.4.2 / qdrant-client 1.19.1 / fastmcp 2.14.7 / transformers 5.17.0 / pydantic 2.13.5）；HF cache 落盘 `bge-m3` 2.19GB、`bge-reranker-v2-m3` 2.3GB；`import FlagEmbedding, qdrant_client, fastmcp, fastapi, pydantic, openai, httpx, frontmatter, tiktoken` 全部无报错。
+    ✅ 补充（2026-09-22）：新增 `requirements.lock`（157 项显式 pin，code_standards §14）；pyproject 追加 `python-dotenv`、`numpy`。详见 §七 变更日志。
+- [x] **R-06** 冒烟验证：`AsyncQdrantClient(url="http://127.0.0.1:6333")` 建一个临时 collection 再删除，确认读写链路通；GPU 上跑一次 bge-m3 单句编码确认显存占用正常。
     ✅ 验证：临时 collection 建删成功；编码返回 `dense_vecs` 与 `lexical_weights` 两键。
+    ✅ 实测（2026-09-22）：`torch 2.6.0+cu124 / cuda_available=True / RTX 4050 Laptop GPU`；临时 collection `recall__smoke-test`（dense 1024 cosine + sparse）建删成功，metadata 读回 `{"embedding_model":"bge-m3","embedding_version":"v1","chunker":"md-heading-v1","created_at":"2026-09-04"}`；`BGEM3FlagModel` 编码返回 `dense_vecs (1,1024)` + `lexical_weights`（10 terms）；显存 allocated 1093MB / reserved 1112MB（fp16，6GB 卡余量充足）。
 
 ### Phase 1：数据契约与摄取管道（对应 tech.md P0）
 
-- [ ] **R-07** 契约门禁（⚠️ 项目工程师确认）：核对 `recall/models.py` 骨架与 `tech.md` §3 字段、§8 端点完全一致后定稿（`Identity` / `ChunkPayload` / `Evidence` / `SearchResult` / `AnswerResult` / `DocRecord`）。
+- [x] **R-07** 契约门禁（⚠️ 项目工程师确认）：核对 `recall/models.py` 骨架与 `tech.md` §3 字段、§8 端点完全一致后定稿（`Identity` / `ChunkPayload` / `Evidence` / `SearchResult` / `AnswerResult` / `DocRecord`）。
     ⛔ 前置门禁：**契约已定稿，后续实现已启动。**
-- [ ] **R-08** 按定稿契约**原样落地** `recall/models.py`（禁止增删字段），补全 Pydantic 校验（code_standards §3）。
-- [ ] **R-09** 实现 `recall/chunker.py`：两级级联切分——`#/##` 标题层级主切，节超 `MAX_CHUNK_TOKENS=800` 时递归切分兜底（`\n\n→\n→句号→空格` 优先级），overlap ≈ 100 字符，子块继承 `heading_path` + `sub_index`；导航类小节（<100 token）不合并不重切。**必须确定性**（同输入同输出）。
-- [ ] **R-10** 实现 id 规则函数（code_standards §3.1）：`chunk_content_hash`（256-bit sha256 → payload.content_hash）与 `chunk_point_id`（**uuid5**，`recall://{doc_id}/{chunk_index}/{content_hash}`）。
-- [ ] **R-11** 实现 `recall/registry.py`：SQLite 文档注册表，字段与 tech.md §3.2 一致（doc_id / source_type / source_uri / title / frontmatter / content_hash / updated_at / indexed_at / owner / visibility / chunk_count / error）。
-- [ ] **R-12** 实现 `recall/connectors/obsidian.py`（按 code_standards §4.1 的 `Connector` 协议）：扫描 vault `.md` → 抽 frontmatter → `RawDoc`；**单文档失败记 error 并继续**，不中断 run。
-- [ ] **R-13** 实现 `recall/embedder.py`：`BGEM3FlagModel('BAAI/bge-m3', use_fp16=True)`，`encode(return_dense=True, return_sparse=True)`；batch_size 16~32；模型版本从 spec 注入（code_standards §3/§14）。
-- [ ] **R-14** 实现 `recall/store.py`：建 collection（名 `recall__bge-m3@v1__md`，metadata 含 embedding_model/embedding_version/chunker/created_at；dense+sparse 双向量配置）；payload index 现在就建（`doc_id`/`owner`/`visibility`/`groups` keyword、`updated_at_ts` integer）；批量写入用 `upload_points`（batch_size=64，禁止逐点 upsert）；实现孤儿清理。
-- [ ] **R-15** 实现 `ingest.py` CLI：`--update` / `--rebuild` / `--collection` / `--model` / `--chunker` / `--force`；幂等三机制落地（文档 hash 跳过 → 内容寻址 upsert → 孤儿清理）；断点续传可重复执行（tech.md §5）。
-- [ ] **R-16** 编写 `tests/`：切分确定性、`chunk_point_id` 确定性、幂等（同输入跑两次结果一致）、孤儿清理、registry 读写（code_standards §13 必测项）。
+    ✅ 实测（2026-09-22）：`recall/models.py` 落地 6 个定稿模型（字段与 tech.md §3.2/§3.3/§8 逐字一致）+ `RawDoc`（code_standards §4.1）+ `Chunk`（切分器产出，实现层新增）；id 规则函数 `chunk_content_hash` / `chunk_point_id` 同文件落地（code_standards §3.1）。契约外新增项已登记 §七。
+- [x] **R-08** 按定稿契约**原样落地** `recall/models.py`（禁止增删字段），补全 Pydantic 校验（code_standards §3）。
+    ✅ 验证（2026-09-22）：`tests/test_models.py` 13 项全绿——`chunk_point_id` 确定性 + uuid5 版本校验、`ChunkPayload` 12 字段 model_dump 与 tech.md §3.3 逐字一致、`updated_at_ts` 拒绝非整数、`groups` 默认值不跨实例共享、必填字段缺失抛 `ValidationError`。
+- [x] **R-09** 实现 `recall/chunker.py`：两级级联切分——`#/##` 标题层级主切，节超 `MAX_CHUNK_TOKENS=800` 时递归切分兜底（`\n\n→\n→句号→空格` 优先级），overlap ≈ 100 字符，子块继承 `heading_path` + `sub_index`；导航类小节（<100 token）不合并不重切。**必须确定性**（同输入同输出）。
+    ✅ 验证（2026-09-22）：`tests/test_chunker.py` 12 项全绿——同输入同输出；`#/##` 为切分点、`###` 留在节内；导航小节单块；超长节切分后 `sub_index` 连续且相邻块重叠；递归切分**内容零丢失**（`"".join(pieces) == body`）；代码围栏内的 `#` 不误判为标题。
+- [x] **R-10** 实现 id 规则函数（code_standards §3.1）：`chunk_content_hash`（256-bit sha256 → payload.content_hash）与 `chunk_point_id`（**uuid5**，`recall://{doc_id}/{chunk_index}/{content_hash}`）。
+    ✅ 验证（2026-09-22）：`tests/test_models.py` 覆盖——sha256 与 `hashlib` 一致；同 (doc_id, chunk_index, content_hash) 恒等；位置/文本/文档任一变化即换 id；产物为合法 UUIDv5（Qdrant PointId 合法）。
+- [x] **R-11** 实现 `recall/registry.py`：SQLite 文档注册表，字段与 tech.md §3.2 一致（doc_id / source_type / source_uri / title / frontmatter / content_hash / updated_at / indexed_at / owner / visibility / chunk_count / error）。
+    ✅ 验证（2026-09-22）：`tests/test_registry.py` 8 项全绿——建表幂等、读写往返、frontmatter 含 YAML 日期可序列化、`record_error` 保留已入库字段、`list_all` 有序、删除生效。SQLite 阻塞调用统一 `asyncio.to_thread` 隔离（code_standards §0.4）。
+- [x] **R-12** 实现 `recall/connectors/obsidian.py`（按 code_standards §4.1 的 `Connector` 协议）：扫描 vault `.md` → 抽 frontmatter → `RawDoc`；**单文档失败记 error 并继续**，不中断 run。
+    ✅ 验证（2026-09-22）：`tests/test_connectors.py` 8 项全绿——frontmatter 抽取、相对 POSIX `source_uri`、跳过 `.obsidian`/`.trash`、**单文档读取失败隔离并继续**、同名文件按来源路径短哈希确定性消歧、vault 不存在只记 error 不抛。`Connector` 协议仅 2 方法（`list`/`hash_of`），错误缓冲由 `BaseConnector` 提供，不改协议。
+- [x] **R-13** 实现 `recall/embedder.py`：`BGEM3FlagModel('BAAI/bge-m3', use_fp16=True)`，`encode(return_dense=True, return_sparse=True)`；batch_size 16~32；模型版本从 spec 注入（code_standards §3/§14）。
+    ✅ 验证（2026-09-22）：真实 vault 3121 块全部编码成功；`embedding_model="bge-m3"` / `embedding_version="v1"` 由构造参数注入并写入 collection metadata 与每条 payload；sparse indices 升序（Qdrant 要求）；fp16 常驻（R-06 显存实测）。
+- [x] **R-14** 实现 `recall/store.py`：建 collection（名 `recall__bge-m3@v1__md`，metadata 含 embedding_model/embedding_version/chunker/created_at；dense+sparse 双向量配置）；payload index 现在就建（`doc_id`/`owner`/`visibility`/`groups` keyword、`updated_at_ts` integer）；批量写入用 `upload_points`（batch_size=64，禁止逐点 upsert）；实现孤儿清理。
+    ✅ 验证（2026-09-22）：`tests/test_store.py` 6 项全绿；真实 collection 读回 `payload_schema = ['doc_id','groups','owner','updated_at_ts','visibility']`、`dense`(1024,cosine) + `sparse` 命名向量；`upload_points(batch_size=64, max_retries=3)` 实测为**同步方法**（await 会 TypeError）→ 用 `asyncio.to_thread` 隔离；同输入重跑点数不变（幂等），`delete_orphans` 只删不在 keep 集合中的点。
+    ⚠️ 问题：qdrant-client 1.19.1 的 `AsyncQdrantClient.upload_points` 实为**同步**方法（返回 `None`，内部同步完成上传），按 code_standards §4.3 的字面写法 `await upload_points(...)` 会抛 `TypeError: object NoneType can't be used in 'await' expression`（2026-09-22，R-14 验证阶段实测）。
+- [x] **R-14b** 改为「同步调用 + `asyncio.to_thread` 隔离」：仍严格使用 `upload_points`（batch_size=64、max_retries=3、非逐点 upsert，满足 code_standards §4.3），同时满足 §0.4「阻塞点用 `asyncio.to_thread` 隔离」。`tests/test_store.py` 6 项全绿，真实 collection 写入 3121 点。
+    🧭 项目工程师指示：**待复核**（本机运行期间无第二决策人；已按 code_standards §0.4/§4.3 自行收敛，不影响 tech.md 任何契约，备查 §五/§七）
+- [x] **R-15** 实现 `ingest.py` CLI：`--update` / `--rebuild` / `--collection` / `--model` / `--chunker` / `--force`；幂等三机制落地（文档 hash 跳过 → 内容寻址 upsert → 孤儿清理）；断点续传可重复执行（tech.md §5）。
+    ✅ 验证（2026-09-22）：`tests/test_ingest.py` 7 项端到端全绿（真跑扫描→切分→编码→upsert→记账）；额外覆盖「解析失败 ≠ 源已删除」（失败文档不被误删旧块）；`--rebuild` 忽略 hash 跳过整篇重灌且不删旧库。
+- [x] **R-16** 编写 `tests/`：切分确定性、`chunk_point_id` 确定性、幂等（同输入跑两次结果一致）、孤儿清理、registry 读写（code_standards §13 必测项）。
     ✅ 验证：`pytest` 全绿；`ruff check` + `mypy` 零错误。
-- [ ] **R-17** 首次真实摄取：`python ingest.py --rebuild` 对你的 Obsidian vault 跑通。
+    ✅ 实测（2026-09-22）：**54 passed**（`ruff check` All checks passed；`mypy` Success: no issues found in 20 source files）。
+    ⚠️ 问题：本机 DSH 文件沙箱在 workspace-write 模式下拒绝写入 `mode=0o700` 创建的目录（`tempfile.mkdtemp` 与 pytest 的 basetemp/tmp_path 都用该模式），导致 14 个用 `tmp_path` 的用例在 setup 阶段 `PermissionError`（2026-09-22）。
+- [x] **R-16b** 文件策略放开为 `danger-full-access` 后运行：`pytest -q` → **54 passed**；`mypy` / `ruff` 同步复跑零错误。非代码问题，代码与测试未为沙箱做任何妥协。
+    🧭 项目工程师指示：**待复核**（环境策略由项目工程师在本会话中放开；测试代码保持标准 `tmp_path` 写法，未做沙箱适配）
+- [x] **R-17** 首次真实摄取：`python ingest.py --rebuild` 对你的 Obsidian vault 跑通。
     ✅ 验证：Qdrant 按 doc_id 查到 chunk；`chunk_count` 与 registry 一致；摄取日志无 error（tech.md P0 验收标准）。向项目工程师汇报（完成项/测试结论/遗留问题）。
+    ✅ 实测（2026-09-22）：vault `D:/黑曜石/note/大模型应用`，268 篇 → **3121 块**，耗时 172.0s，失败 0；`registry` 268 篇且 `chunk_count` 求和 = 3121 = Qdrant `points_count`（一致）；按 `doc_id` 查到该篇 41 块，payload 12 字段与 tech.md §3.3 逐字一致（`updated_at_ts` 为 int、`owner=me` / `visibility=private` / `groups=[]`）；紧接 `--update` 复跑 **扫描=268 跳过=268 入库=0 耗时 1.0s**（幂等跳过成立，退出码 0）。
 
 ### Phase 2：检索链路（对应 tech.md P1）
 
@@ -180,18 +200,20 @@ created: 2026-09-04
 | 日期 | 原步骤 | 问题描述 | 新步骤 | 项目工程师指示 | 状态 |
 | :--- | :--- | :--- | :--- | :--- | :--- |
 | （示例）2026-09-xx | R-13 | embedder 显存溢出（fp32 + reranker 同驻 6GB） | R-13b：恒 fp16 + reranker 懒加载 | 同意，按 code_standards §10 处理 | ✅ 已解决 |
+| 2026-09-22 | R-14 | `AsyncQdrantClient.upload_points`（qdrant-client 1.19.1）是**同步**方法，`await` 它抛 `TypeError: object NoneType can't be used in 'await' expression`；按 §4.3 字面写法无法通过验证 | R-14b：改为同步调用 + `asyncio.to_thread` 隔离 | **待复核**（已按 code_standards §0.4/§4.3 自行收敛，不动任何契约） | ✅ 已解决 |
+| 2026-09-22 | R-16 | 本机 DSH 沙箱（workspace-write）拒绝写入 `mode=0o700` 目录（`tempfile.mkdtemp`、pytest basetemp 皆用），14 个 `tmp_path` 用例 setup 阶段 `PermissionError` | R-16b：文件策略放开为 `danger-full-access` 后复跑 | **待复核**（环境策略由项目工程师放开；测试代码未做沙箱妥协） | ✅ 已解决 |
 
 ---
 
 ## 六、 当前进度快照（每步完成/受阻后更新）
 
-- **当前阶段**：Phase 0（环境与仓库初始化）
-- **当前步骤**：R-02b（本地下载 wheel 安装 PyTorch）
-- **已通过项**：R-01、R-03b、R-04
-- **未通过项**：R-02（网络超时）、R-03（Docker 未运行，已走 R-03b）
-- **待请示事项**：无
-- **最近一次测试结果**：Qdrant native 启动成功；PyTorch 安装进行中
-- **本文件版本**：v0.2.0（2026-09-04 新增"变更登记铁律"§二 与 §七 变更日志；上一版 v0.1.1 为术语调整）
+- **当前阶段**：Phase 1 已完成（数据契约与摄取管道），下一步进入 **Phase 2（检索链路 kb_search）R-18**
+- **当前步骤**：R-17 已完成 → 待开工 R-18
+- **已通过项**：R-01、R-02b、R-03b、R-04、R-05、R-06、R-07、R-08、R-09、R-10、R-11、R-12、R-13、R-14、R-14b、R-15、R-16、R-16b、R-17
+- **未通过项**：R-02（官方源网络超时，已走 R-02b）、R-03（Docker 未运行，已走 R-03b）
+- **待请示事项**：R-14b / R-16b 的「项目工程师指示」待复核（两项均为技术细节收敛，未触及 tech.md 契约）
+- **最近一次测试结果**（2026-09-22）：`pytest` **54 passed**；`ruff check` 零告警；`mypy` strict 20 文件零错误；真实 vault 摄取 268 篇 → 3121 块（172.0s / 失败 0）；`--update` 复跑 268 跳过 / 1.0s（幂等成立）
+- **本文件版本**：v0.3.0（2026-09-22 回填 Phase 0 收尾与 Phase 1 全部步骤的实测验证记录；上一版 v0.2.0 新增"变更登记铁律"§二 与 §七 变更日志）
 
 ---
 
@@ -208,3 +230,17 @@ created: 2026-09-04
 | 2026-09-21 | R-02 | 环境绕行 | pip/conda 在线安装 PyTorch cu124 网络不稳定，新增 R-02b 本地下载 wheel 安装 | 符合 roadmap 问题处理协议 |
 | 2026-09-21 | R-04 | 项目初始化 | 新增 `.gitignore`、`README.md`；`.gitignore` 追加 `tools/qdrant/` 二进制忽略规则 | Phase 0 |
 | 2026-09-21 | R-05 | 依赖配置 | 新增 `pyproject.toml`（ruff/mypy/pytest + 依赖清单） | Phase 0，待 pip install |
+| 2026-09-22 | R-05 | 依赖安装 | `pip install -e ".[dev]"`（清华镜像）成功：FlagEmbedding 1.4.2 / qdrant-client 1.19.1 / fastmcp 2.14.7 / transformers 5.17.0 / pydantic 2.13.5 | Phase 0 |
+| 2026-09-22 | R-05 | 模型下载 | HF cache 落盘 `BAAI/bge-m3`（2.19GB）、`BAAI/bge-reranker-v2-m3`（2.3GB），走 `HF_ENDPOINT=https://hf-mirror.com` | tech.md §12 |
+| 2026-09-22 | R-05 | 依赖声明修正 | `pyproject.toml` 追加 `python-dotenv`、`numpy`：二者被 `recall/config.py`、`recall/embedder.py` 直接 import，原先只作传递依赖存在 | 直接依赖必须显式声明 |
+| 2026-09-22 | R-05 | 依赖锁定 | 新增 `requirements.lock`（157 项 `==` 显式 pin），满足 code_standards §14「pyproject + 锁文件」 | 首次锁定 |
+| 2026-09-22 | R-02b | 事实记录 | `requirements.lock` 记录 torch 实际安装源为 `file:///D:/torch-2.6.0+cu124-cp311-cp311-win_amd64.whl`（wheel 位于 D 盘根目录；`tools/wheels/` 下那份为未完成下载） | 与 R-02b 描述略有出入，按实际记录 |
+| 2026-09-22 | R-05 | 环境绕行 | 首轮模型下载用 `ignore_patterns` 跳过 `onnx/*`、`imgs/*`、`*.md`，导致 `HF_HUB_OFFLINE=1` 时 huggingface_hub 报 `IncompleteSnapshotError`（缓存树与磁盘不一致）；改为补全完整快照后离线加载正常 | 测试因此可完全离线复现 |
+| 2026-09-22 | R-08 | 实现层新增 | 新增 `recall/config.py`（env/`.env` 单一入口，密钥与路径不硬编码）；`recall/models.py` 增加 `Chunk`（切分器产出，承载 heading_path + sub_index）与 `RawDoc.updated_at`（可选，默认空） | tech.md §3 的 collection/payload/端点契约字段**零变动** |
+| 2026-09-22 | R-10 | 实现细节 | `SearchResult.references` 由 `list[dict]` 参数化为 `list[dict[str, str]]` | 满足 code_standards §1「全量注解」+ §13「mypy 零错误」；字段名与语义不变 |
+| 2026-09-22 | R-12 | 实现细节 | `doc_id` 保留 CJK（NFKC + 小写 + kebab-case，不引入拼音依赖）；同名文件跨目录冲突时，冲突项统一追加来源路径 sha1 前 8 位消歧 | code_standards §2 只要求"稳定 slug"，tech.md 示例中的拼音为生成方式而非契约 |
+| 2026-09-22 | R-14 | 实现细节 | `upload_points` 改同步调用 + `asyncio.to_thread`（见 §五 R-14b） | 语义与 code_standards §4.3 一致 |
+| 2026-09-22 | R-15 | 健壮性 | `ingest.py` 启动时把 stdout/stderr 切到 UTF-8（`errors="replace"`）：Windows 控制台默认 GBK，笔记标题含 emoji 时汇总打印会抛 `UnicodeEncodeError` | 否则一次成功的摄取会以失败退出码结束 |
+| 2026-09-22 | R-16 | 测试环境 | 本机 DSH 沙箱拒绝 `mode=0o700` 目录导致 `tmp_path` 用例失败（见 §五 R-16b）；文件策略放开后 `pytest -q` 54 passed | 非代码缺陷 |
+| 2026-09-22 | — | 忽略规则 | `.gitignore` 追加 `.tmp/`（pytest basetemp 等本地临时物）、`tools/qdrant/snapshots/`、`tools/qdrant/.qdrant-initialized` | 保持工作区干净 |
+| 2026-09-22 | — | 环境文件 | 新增 `.env`（已 gitignore）：`RECALL_VAULT_PATH=D:/黑曜石/note/大模型应用`、`QDRANT_URL`、`HF_ENDPOINT`；DeepSeek key 留空待 Phase 4 | 路径用正斜杠，避免反斜杠被当转义 |
