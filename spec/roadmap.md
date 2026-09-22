@@ -233,6 +233,9 @@ created: 2026-09-04
     ✅ 验证：`import ragas` 成功；`recall.api` / `recall.llm` 导入正常；`pytest` 全绿（见下）。
     🧭 项目工程师指示：**待复核**（依赖约束调整，属 R-32 的前置修复）
 - [ ] **R-33** 汇报基线评测结果（黄金集分数 + Ragas 分数 + 发现的检索质量问题），供项目工程师决定是否进入调优（Phase 6 R-42）。
+    ✅ 已完成（检索半，2026-09-22）：新增 `eval/BASELINE.md`——指标表 / 名次分布 / **分类命中率** / 5 题未命中明细 / 质量观察 / R-42 调优候选（按预期收益排序）。
+    📌 关键结论：**问题不在 embedding，在语料结构**——AI 技术笔记命中率 0.95、Recall spec 1.00，而 `project/bamboo-old/spec/` 集群只有 0.50（十几篇同主题文档词汇高度重叠、互相挤占 Top-K），4/5 的未命中都出自该集群。
+    ⏳ **Ragas 半待补**：`eval/eval_ragas.py` 已就绪，等 `.env` 里的 `DEEPSEEK_API_KEY`；跑完把 `faithfulness` / `answer_relevancy` 与引用一致性补进 `eval/BASELINE.md` §6。
 
 ### Phase 5：集成验收与运维演练
 
@@ -287,8 +290,8 @@ created: 2026-09-04
 ## 六、 当前进度快照（每步完成/受阻后更新）
 
 - **当前阶段**：Phase 4 进行中（R-29~R-33），Phase 5 的 R-34~R-36 已提前完成
-- **当前步骤**：R-29/R-32 的真实 DeepSeek 调用待补（等 `DEEPSEEK_API_KEY`）；R-33 待出基线汇报；R-37 待项目工程师验收
-- **已通过项**：R-01、R-02b、R-03b、R-04、R-05、R-06、R-07~R-17、R-18~R-23c、R-24、R-25、R-26、R-27、R-27c、R-27d、R-28b、R-30、R-31、R-32b、R-34、R-35、R-36
+- **当前步骤**：R-33 检索半已完成（`eval/BASELINE.md`）；R-29/R-32/R-33(Ragas 半) 的真实 DeepSeek 调用待补（等 `DEEPSEEK_API_KEY`）；R-37 待项目工程师验收
+- **已通过项**：R-01、R-02b、R-03b、R-04、R-05、R-06、R-07~R-17、R-18~R-23c、R-24、R-25、R-26、R-27、R-27c、R-27d、R-28b、R-30、R-31、R-32b、R-33(检索半)、R-34、R-35、R-36
 - **未通过项**：R-02（官方源网络超时，已走 R-02b）、R-03（Docker 未运行，已走 R-03b）
 - **待请示事项**：
   1. R-14b / R-16b / R-21(校验) / R-23b / R-23c / R-32b 的「项目工程师指示」待复核（均为技术细节收敛，未触及 tech.md 契约）；
@@ -296,7 +299,7 @@ created: 2026-09-04
   3. **R-29 / R-32 待 key**：`.env` 里 `DEEPSEEK_API_KEY` 填好后即可跑真实生成与 Ragas 首轮评分；
   4. R-28b / R-31 记录的检索质量观察（元问题命中路线图自身、bamboo-old 同目录互相挤占）留待 R-42 用黄金集量化。
 - **最近一次测试结果**（2026-09-22）：`pytest` **109 passed**；`ruff` 零告警；`mypy` strict 35 文件零错误；检索基线 Recall@1=0.467 / @3=0.733 / MRR=0.601（v1 与 v2 一致）；重灌演练 972 块 / 65.1s / 续跑 3.0s
-- **本文件版本**：v0.6.2（2026-09-22 code_standards §15 回写：Connector 协议示例 + tech.md §16 决策记录；上一版 v0.6.1 补录 R-27c/R-27d）
+- **本文件版本**：v0.6.3（2026-09-22 新增 R-33 检索半基线报告 `eval/BASELINE.md`；上一版 v0.6.2 为 code_standards §15 回写）
 
 ---
 
@@ -350,3 +353,4 @@ created: 2026-09-04
 | 2026-09-22 | R-36 | 备份落地 | **实际产出** Qdrant 快照两个（v1 882MB / v2 881.9MB，位于 `tools/qdrant/snapshots/`，已 gitignore）；清理重复快照一份 | 快照创建 >60s，客户端 timeout 需放到 180s |
 | 2026-09-22 | R-26 | 格式复核 | 依据 `@deepseek-ai/dsh-mcp-client` 文档核对注册格式：`transport: streamable-http` + `serverName`（`[A-Za-z0-9_-]{1,32}`）+ `url`，工具名形如 `mcp__<serverName>__<tool>` ⇒ `mcp__recall__kb_search`，与 tech.md §8 一致 | DSH 侧实际装载仍需新会话确认 |
 | 2026-09-22 | — | spec 回写 | **code_standards §15**：`Connector` 协议补 Google 风格 `Example:`（完整可抄的最小来源实现，供 R-41 参考）；**tech.md 新增 §16 决策记录 9~12**（模型缓存+装载锁 / `--rebuild` 可续跑 / 摄取排除工程产物 / MCP 工具名与 REST 处理函数改名） | 影响架构的决策必须回写 spec 并追加 tech.md 决策记录 |
+| 2026-09-22 | R-33 | 新增产物 | 新增 `eval/BASELINE.md`（基线评测报告：指标 / 名次分布 / 分类命中率 / 未命中明细 / R-42 调优候选） | R-33 的"汇报"落点；检索半已完成，Ragas 半待 key |
