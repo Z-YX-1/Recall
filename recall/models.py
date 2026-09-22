@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import uuid
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -185,3 +185,33 @@ class StatsResult(BaseModel):
     embedding_version: str
     chunker: str
     created_at: str
+
+
+class AnswerRequest(BaseModel):
+    """``POST /kb/answer`` 请求体（tech.md §8，胖端点）。"""
+
+    query: str = Field(min_length=1, max_length=2000)
+    max_tokens: int = Field(default=3000, ge=1, le=32000)
+
+
+class IngestRequest(BaseModel):
+    """``POST /kb/ingest`` 请求体（tech.md §8，**有副作用**的写操作）。"""
+
+    mode: Literal["update", "rebuild"] = "update"
+    collection: str | None = None
+    """目标 collection；``None`` 时用契约默认名。"""
+
+
+class IngestSummary(BaseModel):
+    """``POST /kb/ingest`` 与 MCP ``kb_ingest`` 的返回体。"""
+
+    mode: str
+    collection: str
+    scanned: int
+    skipped: int
+    indexed_docs: int
+    indexed_chunks: int
+    orphans_deleted: int
+    deleted_docs: int
+    failed: list[str] = Field(default_factory=list)
+    elapsed_s: float

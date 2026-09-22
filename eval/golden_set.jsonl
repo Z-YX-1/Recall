@@ -1,0 +1,30 @@
+{"question": "Embedding 向量的几何意义是什么？", "expected_sources": ["AI/ai-Embedding (向量) 的几何意义.md"]}
+{"question": "嵌入模型（Embedding Model）的原理是什么？", "expected_sources": ["AI/ai-Embedding (嵌入模型) 原理.md"]}
+{"question": "Function Calling 函数调用是怎么工作的？", "expected_sources": ["AI/ai-Function Calling (函数调用) 原理.md"]}
+{"question": "怎么让大模型稳定输出 JSON？", "expected_sources": ["AI/ai-JSON 模式与结构化输出.md"]}
+{"question": "多轮对话的上下文是怎么管理的？", "expected_sources": ["AI/ai-Message History (多轮对话上下文管理).md"]}
+{"question": "System Prompt 系统提示词为什么重要？", "expected_sources": ["AI/ai-System Prompt 的威力.md"]}
+{"question": "Temperature 怎么影响输出的确定性？", "expected_sources": ["AI/ai-Temperature 与确定性控制.md"]}
+{"question": "Token 是怎么计费和拆分的？", "expected_sources": ["AI/ai-Token (词元) 的计费与拆分机制.md"]}
+{"question": "上下文窗口溢出了该怎么处理？", "expected_sources": ["AI/ai-上下文窗口溢出处理.md"]}
+{"question": "向量相似度是怎么计算的？", "expected_sources": ["AI/ai-向量相似度计算.md"]}
+{"question": "大模型 API 怎么做鉴权和基础调用？", "expected_sources": ["AI/ai-大模型 API 鉴权与基础调用.md"]}
+{"question": "文本切分器的粒度该选多大？", "expected_sources": ["AI/ai-文本切分器 (Text Splitter).md"]}
+{"question": "流式输出 Streaming 的原理是什么？", "expected_sources": ["AI/ai-流式输出 (Streaming) 原理.md"]}
+{"question": "轻量级向量数据库该怎么选型？", "expected_sources": ["AI/ai-轻量级向量数据库选型.md"]}
+{"question": "模型的能力对齐与缩放定律讲的是什么？", "expected_sources": ["AI/ai-模型的能力对齐与缩放定律.md"]}
+{"question": "联网搜索和 RAG 的原理是什么？", "expected_sources": ["AI/ai-联网搜索与RAG原理.md"]}
+{"question": "自回归生成与注意力机制是怎么回事？", "expected_sources": ["AI/ai-自回归生成与注意力机制.md"]}
+{"question": "大模型开发架构大纲都包含哪些内容？", "expected_sources": ["AI大模型开发架构大纲MOC.md"]}
+{"question": "大模型测试 MOC 里列了哪些测试方向？", "expected_sources": ["大模型测试MOC.md"]}
+{"question": "Recall 这个项目为什么选 Qdrant 做向量库、选 bge-m3 做 embedding？", "expected_sources": ["project/Recall/spec/tech.md"]}
+{"question": "Recall 的代码规范对 ruff 和 mypy 有什么要求？", "expected_sources": ["project/Recall/spec/code_standards.md"]}
+{"question": "Recall 的开发路线图分哪几个阶段？", "expected_sources": ["project/Recall/spec/roadmap.md"]}
+{"question": "代码教练的引擎是怎么设计的？", "expected_sources": ["project/bamboo-old/spec/教练引擎设计.md"]}
+{"question": "教练引擎的格式与模板规定了什么？", "expected_sources": ["project/bamboo-old/spec/教练引擎-格式与模板.md"]}
+{"question": "教学注释是怎么设计的？", "expected_sources": ["project/bamboo-old/spec/教学注释-设计.md"]}
+{"question": "知识点词表 v0 里收了哪些知识点？", "expected_sources": ["project/bamboo-old/spec/知识点词表-v0.md"]}
+{"question": "bamboo-old 的路线图是怎么规划的？", "expected_sources": ["project/bamboo-old/spec/路线图.md"]}
+{"question": "DSH 的扩展点实测结论是什么？", "expected_sources": ["project/bamboo-old/spec/DSH扩展点-实测.md"]}
+{"question": "代码教练项目的蓝图是什么？", "expected_sources": ["project/bamboo-old/spec/代码教练-项目蓝图.md"]}
+{"question": "Praxis 的源码是怎么拆解的？", "expected_sources": ["Praxis源码拆解.md"]}

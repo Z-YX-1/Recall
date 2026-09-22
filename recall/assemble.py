@@ -12,6 +12,7 @@ from __future__ import annotations
 from collections import defaultdict
 from dataclasses import dataclass, replace
 
+from recall.chunker import count_tokens
 from recall.models import Evidence, SearchResult
 
 DEFAULT_MAX_TOKENS = 3000
@@ -201,3 +202,59 @@ def _to_evidence(candidates: list[Candidate]) -> list[Evidence]:
         )
         for position, candidate in enumerate(candidates, start=1)
     ]
+
+
+# --------------------------------------------------------------------------------------
+# 生成用 prompt 组装（code_standards §8；供 kb_answer 胖端点使用）
+# --------------------------------------------------------------------------------------
+
+PROMPT_HEADER = "以下是检索到的证据（编号 [n] 与之一一对应）："
+PROMPT_FOOTER = (
+    '请输出一个 JSON 对象，字段为 "answer"（回答正文，引用处写 [n]）'
+    '与 "citations"（用到的编号数组）。不要输出 JSON 以外的任何内容。'
+)
+
+
+def assemble(
+    evidence: list[Evidence],
+    max_tokens: int = DEFAULT_MAX_TOKENS,
+    rules: str = FIDELITY_RULES,
+) -> tuple[str, dict[str, str]]:
+    """把证据包拼成生成用 prompt（**纯函数**，code_standards §8）。
+
+    预算在这里再兜一次底：即使调用方传入的证据未做截断，也只保留累计
+    ``token_count`` 不超 ``max_tokens`` 的部分（kb_search 已截断过一次，此处幂等）。
+
+    Args:
+        evidence: 证据片段（``ref_id`` 从 1 连续）。
+        max_tokens: 证据 token 预算。
+        rules: 忠实度规则模板，默认 :data:`FIDELITY_RULES`。
+
+    Returns:
+        ``(prompt, ref_map)``；``ref_map`` 为 ``ref_id -> "source_uri > heading_path"``。
+    """
+    kept: list[Evidence] = []
+    used = 0
+    for item in evidence:
+        cost = count_tokens(item.text)
+        if kept and used + cost > max_tokens:
+            continue
+        kept.append(item)
+        used += cost
+
+    ref_map: dict[str, str] = {}
+    blocks: list[str] = []
+    for item in kept:
+        label = f"{item.source_uri} > {item.heading_path}" if item.heading_path else item.source_uri
+        ref_map[item.ref_id] = label
+        blocks.append(f"[{item.ref_id}] 来源：{label}\n{item.text}")
+
+    prompt = "\n\n".join(
+        [
+            rules.strip(),
+            PROMPT_HEADER,
+            "\n\n".join(blocks) if blocks else "（无证据）",
+            PROMPT_FOOTER,
+        ]
+    )
+    return prompt, ref_map

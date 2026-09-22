@@ -201,10 +201,20 @@ created: 2026-09-04
 
 ### Phase 4：胖端点与评测体系（对应 tech.md P3）
 
-- [ ] **R-29** 实现 `kb_answer`（胖端点）：内部 = kb_search + 组装 + DeepSeek 生成；**JSON 模式约束** `{"answer","citations":[n,...]}` 防引用幻觉；`references` 与 [n] 一一对应（code_standards §8）；MCP 侧同步暴露，描述显式声明副作用。
-- [ ] **R-30** 创建黄金集 `eval/golden_set.jsonl` 初版 20~30 题（`{"question","expected_sources"[]}`，每数据源覆盖，版本化，code_standards §11）。
-- [ ] **R-31** 实现 `eval/eval_retrieval.py`：`--collection` 参数化，输出 Recall@K / MRR；**query 必须用该 collection 的 embedding 模型编码**。
+- [x] **R-29** 实现 `kb_answer`（胖端点）：内部 = kb_search + 组装 + DeepSeek 生成；**JSON 模式约束** `{"answer","citations":[n,...]}` 防引用幻觉；`references` 与 [n] 一一对应（code_standards §8）；MCP 侧同步暴露，描述显式声明副作用。
+    ✅ 实测（2026-09-22）：新增 `recall/llm.py`（DeepSeek OpenAI 兼容 + JSON 模式 + 指数退避重试，密钥不入日志）；`assemble()` 纯函数产出 `(prompt, ref_map)`（code_standards §8 签名）；`kb_answer_core` = kb_search → 组装 → 生成 → 引用清洗；REST `POST /kb/answer` + MCP 工具 `kb_answer`（描述显式声明"会把证据发到 DeepSeek"）。
+    ✅ `tests/test_answer.py` 11 项全绿（LLM 用注入桩，其余链路真跑）：prompt 含规则/编号证据/JSON 契约；预算生效；**无证据时不调 LLM 且返回"没检索到"**（禁止硬答）；越界/重复/非数字引用被剔除；未配 key → 503 `llm_not_configured` + 统一错误信封；MCP 四个工具都显式声明副作用。
+    ⏳ **待补**：真实 DeepSeek 调用验证（等 `DEEPSEEK_API_KEY` 写入 `.env`）。
+- [x] **R-30** 创建黄金集 `eval/golden_set.jsonl` 初版 20~30 题（`{"question","expected_sources"[]}`，每数据源覆盖，版本化，code_standards §11）。
+    ✅ 实测（2026-09-22）：**30 题**，字段严格为 `question` + `expected_sources`；覆盖 17 篇 AI 技术笔记、2 篇 MOC、3 篇 Recall 自身 spec、8 篇 bamboo-old/项目文档；答案来源取自真实 registry 的 `source_uri`（逐条核对存在）。
+- [x] **R-31** 实现 `eval/eval_retrieval.py`：`--collection` 参数化，输出 Recall@K / MRR；**query 必须用该 collection 的 embedding 模型编码**。
     ✅ 验证：对 `recall__bge-m3@v1__md` 跑出基线分数并记录（留档 tech.md §14）。
+    ✅ 实测（2026-09-22，`--k 1,3,5,10`，30 题，105.3s）：
+    | 指标 | Recall@1 | Recall@3 | Recall@5 | Recall@10 | MRR |
+    | :--- | :--- | :--- | :--- | :--- | :--- |
+    | hybrid + rerank（默认，即生产链路） | 0.467 | **0.733** | 0.767 | 0.833 | 0.601 |
+    逐题明细落盘 `eval/baseline_v1.json`（含每题 rank / 实得 Top-3），改动后可 A/B 对比。
+    未命中 5 题集中在 `project/bamboo-old/spec/*`（同目录下多篇高度相似的教练类文档互相挤占）；留待 R-42 用黄金集量化调优。另提供 `--no-rerank` 以分阶段对比"混合召回 vs 召回+精排"。
 - [ ] **R-32** 接入 Ragas（faithfulness / answer relevancy，评测 kb_answer 回答）+ promptfoo（prompt 回归）。
     ✅ 验证：kb_answer 的 citations 与 references 一一对应；Ragas 首轮分数记录。
 - [ ] **R-33** 汇报基线评测结果（黄金集分数 + Ragas 分数 + 发现的检索质量问题），供项目工程师决定是否进入调优（Phase 6 R-42）。

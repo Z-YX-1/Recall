@@ -28,15 +28,20 @@ from pydantic import ValidationError
 from qdrant_client import models as qmodels
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from recall.assemble import Candidate, assemble_evidence
+from recall.assemble import Candidate, assemble, assemble_evidence
 from recall.auth import InvalidFilterError, effective_filter, get_identity
 from recall.chunker import CHUNKER_NAME
 from recall.config import Settings
 from recall.embedder import DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_VERSION, Embedder
+from recall.llm import DeepSeekClient, LlmNotConfiguredError
 from recall.models import (
+    AnswerRequest,
+    AnswerResult,
     ChunkPayload,
     HealthResult,
     Identity,
+    IngestRequest,
+    IngestSummary,
     SearchRequest,
     SearchResult,
     StatsResult,
@@ -79,6 +84,7 @@ class Service:
     embedder: Embedder
     reranker: Reranker
     registry: Registry
+    llm: DeepSeekClient
     collection: str
 
     @classmethod
@@ -101,6 +107,7 @@ class Service:
             embedder=Embedder(),
             reranker=Reranker(),
             registry=registry,
+            llm=DeepSeekClient.from_settings(settings),
             collection=collection or settings.collection or DEFAULT_COLLECTION,
         )
 
@@ -254,6 +261,150 @@ async def _resolve_source_uris(registry: Registry, doc_ids: Sequence[str]) -> di
     return resolved
 
 
+async def kb_answer_core(request: AnswerRequest, identity: Identity | None = None) -> AnswerResult:
+    """kb_answer 胖端点：kb_search + 组装 + DeepSeek 生成（tech.md §6/§8）。
+
+    瘦/胖判据 = **服务是否自己调 LLM 出最终答案**（tech.md §15 决策 2）——本函数就是胖的那一半。
+
+    ⚠️ 副作用：会把证据文本发送到 DeepSeek API（数据出域仅限这一次生成调用）。
+    本地 embedding 与知识库内容仍然不出域（tech.md §15 决策 7）。
+
+    Args:
+        request: 回答请求（query / max_tokens）。
+        identity: 调用者身份；``None`` 时用 S1 默认身份。
+
+    Returns:
+        :class:`~recall.models.AnswerResult`；无证据时直接返回"没找到"，**不调 LLM 硬答**。
+
+    Raises:
+        ApiError: 未配置 DeepSeek key，或 LLM 调用失败。
+    """
+    trace_id = uuid.uuid4().hex[:12]
+    started = time.perf_counter()
+    search = await kb_search_core(
+        SearchRequest(query=request.query, max_tokens=request.max_tokens), identity
+    )
+
+    if not search.evidence:
+        logger.info(
+            "kb_answer.done",
+            extra={
+                "trace_id": trace_id,
+                "stage": "no_evidence",
+                "query": request.query,
+                "evidence_count": 0,
+                "latency_ms": round((time.perf_counter() - started) * 1000, 1),
+            },
+        )
+        return AnswerResult(
+            answer="笔记里没有检索到与该问题相关的内容，建议换一个说法或关键词再问。",
+            citations=[],
+            references=[],
+        )
+
+    prompt, ref_map = assemble(search.evidence, request.max_tokens)
+    service = await get_service()
+    try:
+        payload = await service.llm.complete_json(prompt)
+    except LlmNotConfiguredError as exc:
+        raise ApiError("llm_not_configured", str(exc), 503) from exc
+    except Exception as exc:  # noqa: BLE001 - LLM 失败统一转语义化错误
+        logger.exception("kb_answer.llm_failed", extra={"trace_id": trace_id})
+        raise ApiError("llm_failed", f"生成失败：{type(exc).__name__}: {exc}", 502) from exc
+
+    raw_answer = payload.get("answer")
+    answer = str(raw_answer).strip() if raw_answer is not None else ""
+    citations = _normalize_citations(payload.get("citations"), len(search.evidence), trace_id)
+
+    logger.info(
+        "kb_answer.done",
+        extra={
+            "trace_id": trace_id,
+            "stage": "generated",
+            "query": request.query,
+            "evidence_count": len(search.evidence),
+            "citation_count": len(citations),
+            "prompt_tokens": len(ref_map),
+            "latency_ms": round((time.perf_counter() - started) * 1000, 1),
+        },
+    )
+    return AnswerResult(answer=answer, citations=citations, references=search.references)
+
+
+def _normalize_citations(raw: object, evidence_count: int, trace_id: str) -> list[int]:
+    """清洗 LLM 返回的 ``citations``：去重保序、剔除越界编号（防引用幻觉）。
+
+    Args:
+        raw: LLM 返回的 ``citations`` 字段原文。
+        evidence_count: 本次证据条数，合法编号为 ``1..evidence_count``。
+        trace_id: 日志用查询 id。
+
+    Returns:
+        合法且去重的编号列表。
+    """
+    if not isinstance(raw, (list, tuple)):
+        return []
+    cleaned: list[int] = []
+    dropped: list[object] = []
+    for item in raw:
+        if isinstance(item, bool) or not isinstance(item, (int, float, str)):
+            dropped.append(item)
+            continue
+        try:
+            number = int(item)
+        except ValueError:
+            dropped.append(item)
+            continue
+        if not 1 <= number <= evidence_count or number in cleaned:
+            dropped.append(item)
+            continue
+        cleaned.append(number)
+    if dropped:
+        logger.warning(
+            "kb_answer.citations_dropped",
+            extra={"trace_id": trace_id, "dropped": [str(item) for item in dropped]},
+        )
+    return cleaned
+
+
+async def kb_ingest_core(request: IngestRequest) -> IngestSummary:
+    """摄取入口：参数化调用同一管道（幂等三机制见 :mod:`ingest`，tech.md §5）。
+
+    ⚠️ **有副作用的写操作**：会写入 Qdrant 与 registry。
+
+    Args:
+        request: 摄取请求（mode / collection）。
+
+    Returns:
+        本次 run 的汇总。
+
+    Raises:
+        ApiError: vault 未配置或不存在等参数问题。
+    """
+    from ingest import build_parser, run_ingest  # 延迟导入：CLI 模块只在真正摄取时加载
+
+    argv = [f"--{request.mode}", "--log-level", "WARNING"]
+    if request.collection:
+        argv += ["--collection", request.collection]
+    args = build_parser().parse_args(argv)
+    try:
+        report = await run_ingest(args)
+    except SystemExit as exc:  # run_ingest 用 SystemExit 报告参数问题
+        raise ApiError("ingest_rejected", str(exc), 400) from exc
+    return IngestSummary(
+        mode=report.mode,
+        collection=report.collection,
+        scanned=report.scanned,
+        skipped=report.skipped,
+        indexed_docs=report.indexed_docs,
+        indexed_chunks=report.indexed_chunks,
+        orphans_deleted=report.orphans_deleted,
+        deleted_docs=report.deleted_docs,
+        failed=list(report.failed),
+        elapsed_s=round(report.elapsed_s, 2),
+    )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """组合生命周期：装配 Recall 服务（fail fast）+ 初始化 FastMCP 会话管理。
@@ -339,6 +490,21 @@ async def kb_search_endpoint(payload: SearchRequest, request: Request) -> Search
     return await kb_search_core(payload, get_identity(request))
 
 
+@app.post("/kb/answer")
+async def kb_answer_endpoint(payload: AnswerRequest, request: Request) -> AnswerResult:
+    """胖端点：检索 → 组装 → DeepSeek 生成带引用的回答（tech.md §8）。"""
+    return await kb_answer_core(payload, get_identity(request))
+
+
+@app.post("/kb/ingest")
+async def kb_ingest_endpoint(payload: IngestRequest) -> IngestSummary:
+    """摄取知识库（**有副作用的写操作**，tech.md §8）。
+
+    ⚠️ code_standards §6.1：本端点自 S2 起必须挂鉴权 + 限流；S1 仅监听 127.0.0.1。
+    """
+    return await kb_ingest_core(payload)
+
+
 # --------------------------------------------------------------------------------------
 # MCP 工具与挂载（tech.md §8/§9；code_standards §6.2/§6.3；roadmap R-24、R-25）
 # --------------------------------------------------------------------------------------
@@ -354,7 +520,7 @@ mcp = FastMCP(
 
 @mcp.tool
 async def kb_search(query: str, top_k: int = 20, max_tokens: int = 3000) -> SearchResult:
-    """搜索个人知识库，返回带出处的证据片段。
+    """搜索个人知识库，返回带出处的证据片段（只读，无副作用）。
 
     何时调用：用户问题涉及"我的笔记/知识库里说过什么"时。
     调用方须按返回的 references 用 [n] 标注引用，且只依据证据回答。
@@ -405,6 +571,59 @@ async def kb_stats() -> StatsResult:
     except Exception as exc:  # noqa: BLE001 - MCP 工具不裸抛，异常转可读文本（§6.2）
         logger.exception("mcp.kb_stats_failed")
         raise ToolError(f"读取知识库状态失败：{type(exc).__name__}: {exc}") from exc
+
+
+@mcp.tool
+async def kb_answer(query: str, max_tokens: int = 3000) -> AnswerResult:
+    """检索笔记并**由服务端自己调 LLM** 生成带引用的回答（胖端点）。
+
+    何时调用：调用方希望直接拿到成稿回答、而不是自己组装证据时（例如客服 / 业务系统）。
+
+    ⚠️ 副作用：会把检索到的证据文本发送到 DeepSeek API 完成这一次生成；
+    如果调用方要自己组装作答（DSH agent 的默认姿势），请改用只读的 ``kb_search``。
+
+    Args:
+        query: 用户问题（用中文原问，勿自行改写）
+        max_tokens: 证据 token 预算
+
+    Returns:
+        answer 正文（引用处为 [n]）、citations（用到的编号）、references（与 [n] 一一对应）。
+    """
+    try:
+        return await kb_answer_core(AnswerRequest(query=query, max_tokens=max_tokens))
+    except ValidationError as exc:
+        raise ToolError(f"参数不合法：{_format_validation_error(exc)}") from exc
+    except ApiError as exc:
+        raise ToolError(f"[{exc.code}] {exc.message}") from exc
+    except Exception as exc:  # noqa: BLE001 - MCP 工具不裸抛，异常转可读文本（§6.2）
+        logger.exception("mcp.kb_answer_failed")
+        raise ToolError(f"生成失败：{type(exc).__name__}: {exc}") from exc
+
+
+@mcp.tool
+async def kb_ingest(mode: str = "update", collection: str | None = None) -> IngestSummary:
+    """把 Obsidian 笔记增量同步进知识库（**写操作，有副作用**）。
+
+    何时调用：用户明确要求"更新/重建知识库"时；**只读提问不要调用本工具**。
+
+    ⚠️ 副作用：会写入 / 覆盖 Qdrant 中的向量点与 SQLite 注册表记录；
+    ``mode="rebuild"`` 会忽略内容哈希整篇重灌（仍不删除旧 collection）。
+
+    Args:
+        mode: "update" 增量（哈希未变即跳过）或 "rebuild" 整篇重灌
+        collection: 目标 collection 名；留空用契约默认名
+    """
+    try:
+        return await kb_ingest_core(
+            IngestRequest.model_validate({"mode": mode, "collection": collection})
+        )
+    except ValidationError as exc:
+        raise ToolError(f"参数不合法：{_format_validation_error(exc)}") from exc
+    except ApiError as exc:
+        raise ToolError(f"[{exc.code}] {exc.message}") from exc
+    except Exception as exc:  # noqa: BLE001 - MCP 工具不裸抛，异常转可读文本（§6.2）
+        logger.exception("mcp.kb_ingest_failed")
+        raise ToolError(f"摄取失败：{type(exc).__name__}: {exc}") from exc
 
 
 mcp_app = mcp.http_app(path="/")

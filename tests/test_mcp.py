@@ -21,6 +21,8 @@ from ingest import run_ingest
 from recall.api import app, close_service, mcp
 from tests.helpers import IngestEnv, ingest_args, write_note
 
+EXPECTED_TOOLS = {"kb_search", "kb_answer", "kb_ingest", "kb_stats"}
+
 _RAG_NOTE = """\
 # RAG 检索
 
@@ -51,7 +53,7 @@ async def test_tools_are_registered_with_summoning_docstrings() -> None:
     async with Client(mcp) as client:
         tools = {tool.name: tool for tool in await client.list_tools()}
 
-    assert set(tools) == {"kb_search", "kb_stats"}
+    assert set(tools) == EXPECTED_TOOLS
     description = tools["kb_search"].description or ""
     assert "何时调用" in description  # 「召唤词」：写清何时调用
     assert "[n]" in description  # 引用规则
@@ -147,7 +149,7 @@ async def test_mcp_endpoint_handshakes_under_app_lifespan(
     try:
         async with app.router.lifespan_context(app), Client(transport) as client:
             tools = {tool.name for tool in await client.list_tools()}
-            assert tools == {"kb_search", "kb_stats"}
+            assert tools == EXPECTED_TOOLS
             result = await client.call_tool("kb_search", {"query": "红烧肉怎么做"})
             data = result.structured_content
             assert data is not None and data["evidence"]
