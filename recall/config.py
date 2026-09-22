@@ -22,6 +22,8 @@ DATA_DIR: Path = PROJECT_ROOT / "data"
 """运行期数据目录（Qdrant 存储、registry.db、日志；已 gitignore）。"""
 
 DEFAULT_QDRANT_URL = "http://127.0.0.1:6333"
+DEFAULT_HF_ENDPOINT = "https://hf-mirror.com"
+"""HuggingFace 镜像（tech.md §12 国内下载镜像）。"""
 
 LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s %(message)s"
 LOG_MAX_BYTES = 5 * 1024 * 1024
@@ -43,7 +45,6 @@ class Settings:
         deepseek_model: 生成用模型名。
         host: API 监听地址（默认仅本机，code_standards §12）。
         port: API 监听端口（REST 与 MCP 同端口，tech.md §8）。
-        ingest_workers: 摄取时嵌入推理的并发批次数。
         collection: 检索目标 collection；``None`` 表示用契约默认名
             （``recall__bge-m3@v1__md``）。A/B 评测时用 ``RECALL_COLLECTION`` 切库。
         log_to_file: 是否把结构化日志同时写进 ``log_dir``（``RECALL_LOG_TO_FILE=0`` 可关；
@@ -60,13 +61,16 @@ class Settings:
     deepseek_model: str
     host: str
     port: int
-    ingest_workers: int
     collection: str | None
     log_to_file: bool
 
     @classmethod
     def from_env(cls, dotenv_path: Path | None = None) -> Settings:
         """从 ``.env`` 与环境变量构造配置（环境变量优先）。
+
+        ⚠️ 副作用（有意为之）：把 ``HF_ENDPOINT`` 写进 ``os.environ``——HF 镜像必须在
+        **任何模型加载之前**生效（tech.md §12），而这是全项目唯一的配置入口，
+        放在这里才能保证"先建配置、后加载模型"的顺序绕不过去。
 
         Args:
             dotenv_path: 显式指定的 ``.env`` 路径；默认读取项目根目录下的 ``.env``。
@@ -81,21 +85,23 @@ class Settings:
         db_raw = os.getenv("RECALL_REGISTRY_DB", "").strip()
         log_raw = os.getenv("RECALL_LOG_DIR", "").strip()
         collection_raw = os.getenv("RECALL_COLLECTION", "").strip()
-        return cls(
+        settings = cls(
             qdrant_url=os.getenv("QDRANT_URL", DEFAULT_QDRANT_URL).strip(),
             vault_path=Path(vault_raw) if vault_raw else None,
             registry_db=Path(db_raw) if db_raw else DATA_DIR / "registry.db",
             log_dir=Path(log_raw) if log_raw else DATA_DIR / "logs",
-            hf_endpoint=os.getenv("HF_ENDPOINT", "https://hf-mirror.com").strip(),
+            hf_endpoint=os.getenv("HF_ENDPOINT", DEFAULT_HF_ENDPOINT).strip(),
             deepseek_api_key=os.getenv("DEEPSEEK_API_KEY") or None,
             deepseek_base_url=os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com").strip(),
             deepseek_model=os.getenv("DEEPSEEK_MODEL", "deepseek-chat").strip(),
             host=os.getenv("RECALL_HOST", "127.0.0.1").strip(),
             port=int(os.getenv("RECALL_PORT", "8000")),
-            ingest_workers=int(os.getenv("RECALL_INGEST_WORKERS", "1")),
             collection=collection_raw or None,
             log_to_file=os.getenv("RECALL_LOG_TO_FILE", "1").strip() not in {"0", "false", "False"},
         )
+        if settings.hf_endpoint:
+            os.environ.setdefault("HF_ENDPOINT", settings.hf_endpoint)
+        return settings
 
 
 def configure_logging(

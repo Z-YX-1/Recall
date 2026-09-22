@@ -201,6 +201,14 @@ created: 2026-09-04
     ✅ 处理：`recall/config.py` 新增 `configure_logging(settings, level, component)`——控制台 + `RotatingFileHandler`（5MB × 3 份，UTF-8），并把 stdout/stderr 切 UTF-8；`ingest.py` 与 `api.py` 统一改用它；测试用 `RECALL_LOG_TO_FILE=0` 关闭以免污染 `data/`。
     ✅ 验证：`python ingest.py --update` 后 `data/logs/ingest.log` 落盘（`ingest.finished` 一行）。
     🧭 项目工程师指示：**待复核**
+- [x] **R-27e** 补齐 code_standards §15 的两条硬性要求（自查发现）。
+    ⚠️ 问题：① §15 要求"公共协议必须有示例"，`Connector` 协议只有签名没有用法示例；② §15 要求"任何影响架构的决策回写 spec 并在 tech.md §15 决策记录追加条目"，而实现期已产生 4 项此类决策（模型缓存/装载锁、`--rebuild` 可续跑、摄取排除工程产物、MCP 工具名与 REST 函数改名）却未回写（2026-09-22）。
+    ✅ 处理：`Connector` 补 Google 风格 `Example:`（完整可抄的最小来源实现）；`tech.md` 新增 **§16 决策记录 9~12**。
+- [x] **R-27f** 清理悬空配置 + 让 `host`/`port` 真正生效（自查发现）。
+    ⚠️ 问题：`Settings.ingest_workers` 声明并读环境变量但**全项目无人使用**；`Settings.host` / `port` 同样无人使用（README 让用户手抄 uvicorn 参数）；`hf_endpoint` 只是"顺带"被 `load_dotenv` 写进环境变量，本身没有被程序化应用（2026-09-22）。
+    ✅ 处理：① 删除 `ingest_workers`（无用配置比没有配置更危险）；② `recall/api.py` 新增 `main()` + `if __name__ == "__main__"`，`python -m recall.api` 按 `Settings.host/port` 启动，README 同步更新；③ `Settings.from_env()` 显式 `os.environ.setdefault("HF_ENDPOINT", …)`，保证镜像在任何模型加载前生效。
+    ✅ 验证：`python -m recall.api` 启动成功——`/health` 200（972 点 / 65 篇）、MCP 四个工具可列；`data/logs/api.log` 落盘；`Settings` 无 `ingest_workers` 属性、`HF_ENDPOINT` 环境变量被正确设置。
+    🧭 项目工程师指示：**待复核**
 - [ ] **R-28** 端到端验收：DSH 会话中用自然语言问笔记（如"我笔记里关于 RAG 检索质量的结论？"），回答**带 [n] 引用且忠于证据**（tech.md P2 验收标准）。记录问答样例汇报项目工程师。
     ⚠️ 问题：AI 执行者**无法自行开启一个 DSH 会话**（MCP 服务器只在会话启动时装载，本会话看不到 `mcp__recall__*` 工具），R-28 的字面验收必须由项目工程师在新会话中确认（2026-09-22）。
 - [x] **R-28b** 以等价方式完成 R-28 的**除"会话装载"外的全部链路验证**：用真实 MCP 客户端连 `http://127.0.0.1:8000/mcp` 调 `kb_search`，按 `recall-assembly` 规范组装。
@@ -291,7 +299,7 @@ created: 2026-09-04
 
 - **当前阶段**：Phase 4 进行中（R-29~R-33），Phase 5 的 R-34~R-36 已提前完成
 - **当前步骤**：R-33 检索半已完成（`eval/BASELINE.md`）；R-29/R-32/R-33(Ragas 半) 的真实 DeepSeek 调用待补（等 `DEEPSEEK_API_KEY`）；R-37 待项目工程师验收
-- **已通过项**：R-01、R-02b、R-03b、R-04、R-05、R-06、R-07~R-17、R-18~R-23c、R-24、R-25、R-26、R-27、R-27c、R-27d、R-28b、R-30、R-31、R-32b、R-33(检索半)、R-34、R-35、R-36
+- **已通过项**：R-01、R-02b、R-03b、R-04、R-05、R-06、R-07~R-17、R-18~R-23c、R-24、R-25、R-26、R-27、R-27c、R-27d、R-27e、R-27f、R-28b、R-30、R-31、R-32b、R-33(检索半)、R-34、R-35、R-36
 - **未通过项**：R-02（官方源网络超时，已走 R-02b）、R-03（Docker 未运行，已走 R-03b）
 - **待请示事项**：
   1. R-14b / R-16b / R-21(校验) / R-23b / R-23c / R-32b 的「项目工程师指示」待复核（均为技术细节收敛，未触及 tech.md 契约）；
@@ -299,7 +307,7 @@ created: 2026-09-04
   3. **R-29 / R-32 待 key**：`.env` 里 `DEEPSEEK_API_KEY` 填好后即可跑真实生成与 Ragas 首轮评分；
   4. R-28b / R-31 记录的检索质量观察（元问题命中路线图自身、bamboo-old 同目录互相挤占）留待 R-42 用黄金集量化。
 - **最近一次测试结果**（2026-09-22）：`pytest` **109 passed**；`ruff` 零告警；`mypy` strict 35 文件零错误；检索基线 Recall@1=0.467 / @3=0.733 / MRR=0.601（v1 与 v2 一致）；重灌演练 972 块 / 65.1s / 续跑 3.0s
-- **本文件版本**：v0.6.3（2026-09-22 新增 R-33 检索半基线报告 `eval/BASELINE.md`；上一版 v0.6.2 为 code_standards §15 回写）
+- **本文件版本**：v0.6.4（2026-09-22 补录 R-27e/R-27f：spec 回写与悬空配置清理；tech.md §14 检查点勾选；上一版 v0.6.3 新增 R-33 检索半报告）
 
 ---
 
@@ -354,3 +362,8 @@ created: 2026-09-04
 | 2026-09-22 | R-26 | 格式复核 | 依据 `@deepseek-ai/dsh-mcp-client` 文档核对注册格式：`transport: streamable-http` + `serverName`（`[A-Za-z0-9_-]{1,32}`）+ `url`，工具名形如 `mcp__<serverName>__<tool>` ⇒ `mcp__recall__kb_search`，与 tech.md §8 一致 | DSH 侧实际装载仍需新会话确认 |
 | 2026-09-22 | — | spec 回写 | **code_standards §15**：`Connector` 协议补 Google 风格 `Example:`（完整可抄的最小来源实现，供 R-41 参考）；**tech.md 新增 §16 决策记录 9~12**（模型缓存+装载锁 / `--rebuild` 可续跑 / 摄取排除工程产物 / MCP 工具名与 REST 处理函数改名） | 影响架构的决策必须回写 spec 并追加 tech.md 决策记录 |
 | 2026-09-22 | R-33 | 新增产物 | 新增 `eval/BASELINE.md`（基线评测报告：指标 / 名次分布 / 分类命中率 / 未命中明细 / R-42 调优候选） | R-33 的"汇报"落点；检索半已完成，Ragas 半待 key |
+| 2026-09-22 | R-27e | spec 回写 | `Connector` 协议补 `Example:`；`tech.md` 新增 §16 决策记录 9~12 | code_standards §15 两条硬性要求 |
+| 2026-09-22 | R-27f | 配置清理 | 删除无用的 `Settings.ingest_workers` 与 `RECALL_INGEST_WORKERS` 环境变量 | 见 §四 R-27f |
+| 2026-09-22 | R-27f | 入口新增 | `recall/api.py` 增加 `main()`：`python -m recall.api` 按 `Settings.host/port` 启动服务；README 运行拓扑同步 | 让 `host`/`port` 真正生效 |
+| 2026-09-22 | R-27f | 行为显式化 | `Settings.from_env()` 显式 `os.environ.setdefault("HF_ENDPOINT", …)`；新增常量 `DEFAULT_HF_ENDPOINT` | HF 镜像须在任何模型加载前生效（tech.md §12） |
+| 2026-09-22 | — | spec 勾选 | `tech.md` §14 三个待验证检查点勾选并附实测证据（Qdrant native 二进制 / 模型下载 / dense+sparse 冒烟） | 检查点已由 R-03b、R-05、R-06 验证 |

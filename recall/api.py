@@ -631,3 +631,24 @@ mcp_app = mcp.http_app(path="/")
 """code_standards §6.3：``http_app(path="/")`` + ``mount("/mcp")`` ⇒ 端点 ``/mcp``。"""
 
 app.mount("/mcp", mcp_app)
+
+
+def main() -> None:
+    """``python -m recall.api`` 启动服务：监听地址与端口从配置读（tech.md §12 进程 2）。
+
+    等价于 ``uvicorn recall.api:app --host <RECALL_HOST> --port <RECALL_PORT>``，
+    但走 :class:`~recall.config.Settings`，部署时不必再手抄一遍 host/port。
+    """
+    import uvicorn
+
+    settings = Settings.from_env()
+    uvicorn.run(
+        "recall.api:app",
+        host=settings.host,
+        port=settings.port,
+        log_level="info",
+    )
+
+
+if __name__ == "__main__":
+    main()

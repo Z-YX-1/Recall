@@ -44,13 +44,14 @@ HF_ENDPOINT=https://hf-mirror.com
 # 进程 1: Qdrant（native 二进制）
 tools\qdrant\qdrant.exe
 
-# 进程 2: 摄取（手动触发；幂等、可重复执行）
-python ingest.py --update          # 增量：文档 hash 未变即整篇跳过
-python ingest.py --rebuild         # 整篇重灌同一 collection
-python ingest.py --rebuild --collection recall__bge-m3@v2__md --model bge-m3@v2
+# 进程 2: 检索服务（REST + MCP 同端口；host/port 从 .env 读）
+python -m recall.api
+# 等价写法：uvicorn recall.api:app --host 127.0.0.1 --port 8000
 
-# 进程 3: 检索服务（Phase 2 起）
-uvicorn recall.api:app --host 127.0.0.1 --port 8000
+# 进程 3: 摄取（手动触发；幂等、可重复执行）
+python ingest.py --update          # 增量：文档 hash 未变即整篇跳过
+python ingest.py --rebuild         # 重灌同一 collection（可断点续传）
+python ingest.py --rebuild --collection recall__bge-m3@v2__md --model bge-m3@v2
 ```
 
 ## 质量门槛

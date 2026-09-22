@@ -239,9 +239,12 @@ $env:HF_ENDPOINT = "https://hf-mirror.com"                    # 国内下载镜�
 
 - [x] Qdrant 本地模式是官方特性；**本机采用单机服务模式**（最稳）
 - [x] RTX 4050 6GB 可容纳 bge-m3 + reranker（fp16）——**embedding/rerank 全上 GPU**
-- [ ] qdrant 单机服务安装方式（native binary vs Docker）按本机环境定
-- [ ] bge-m3 / bge-reranker-v2-m3 模型下载（HF 镜像）首次跑通
-- [ ] Qdrant dense+sparse 双向量 collection 配置冒烟测试
+- [x] qdrant 单机服务安装方式（native binary vs Docker）按本机环境定
+      ✅ 2026-09-22 实测：Docker Desktop 未运行，改用 **native 二进制** `tools/qdrant/qdrant.exe`（v1.19.0），监听 `127.0.0.1:6333`
+- [x] bge-m3 / bge-reranker-v2-m3 模型下载（HF 镜像）首次跑通
+      ✅ 2026-09-22 实测：`HF_ENDPOINT=https://hf-mirror.com` 下载落盘 `bge-m3` 2.19GB / `bge-reranker-v2-m3` 2.3GB；离线（`HF_HUB_OFFLINE=1`）加载正常
+- [x] Qdrant dense+sparse 双向量 collection 配置冒烟测试
+      ✅ 2026-09-22 实测：`dense`(1024, cosine) + `sparse` 命名向量建库成功，metadata 可读回；真实库 972 点（dense 1024 维 + sparse 升序 indices）
 - [x] Qdrant collection 自定义元数据：官方支持（`create_collection(metadata=…)`）✅ Context7 核实 2026-09-04
 - [x] bge-m3 sparse 必须用 FlagEmbedding `BGEM3FlagModel`（sentence-transformers 仅 dense）✅ Context7 核实
 - [x] FastMCP 挂载 FastAPI：`http_app()` + `mount()` + **传递 lifespan** ✅ Context7 核实
