@@ -32,6 +32,33 @@ DEFAULT_BATCH_SIZE = 32
 MAX_LENGTH = 1024
 """query+passage 的最大 token 数；块上限 800（cl100k 估算）留足余量，避免静默截断。"""
 
+RERANK_HEADING_SEPARATOR = "\n"
+
+
+def build_rerank_document(heading_path: str, text: str) -> str:
+    """拼出喂给精排的文本：**标题路径 + 块正文**。
+
+    ⚠️ 标题不能省。实测（2026-09-22，30 题黄金集，其余条件完全相同）：
+
+    | 精排输入 | Recall@1 | Recall@3 | MRR |
+    | :--- | ---: | ---: | ---: |
+    | 只喂块正文 | 0.467 | 0.700 | 0.591 |
+    | **标题 + 正文** | **0.767** | **0.933** | **0.859** |
+
+    逐题对比：加标题后 **13 题变好、0 题变差**。原因是这类笔记的话题信号大部分在标题里
+    （如「🎲 ai-Temperature 与确定性控制 —— 全景解析」），只喂正文会让 cross-encoder
+    失去最强的判别特征，把 RRF 原本排第 1 的文档压到第 2~3。
+
+    Args:
+        heading_path: 块的标题路径，如 ``"标题 > 小节"``；为空时只用正文。
+        text: 块正文。
+
+    Returns:
+        精排输入文本。
+    """
+    heading = heading_path.strip()
+    return f"{heading}{RERANK_HEADING_SEPARATOR}{text}" if heading else text
+
 
 @dataclass(frozen=True, slots=True)
 class RerankHit:

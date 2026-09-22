@@ -154,6 +154,24 @@ created: 2026-09-04
     ✅ 实测（2026-09-22）：`QdrantStore.hybrid_search` 用 `prefetch` 双路 + `FusionQuery(Fusion.RRF)`，`RECALL_TOP_K=50`；`tests/test_auth.py::test_client_filter_cannot_widen_visibility` 用真实 Qdrant 端到端验证「双路检索 + 服务端过滤」链路。
 - [x] **R-19** 实现 `recall/rerank.py`：`FlagReranker('BAAI/bge-reranker-v2-m3', use_fp16=True)`，`normalize=True` 输出 0~1 分数，精排 Top-20。
     ✅ 实测（2026-09-22）：`tests/test_rerank.py` 6 项全绿——相关文档排第一、分数落在 0~1（`normalize=True`）、`top_n` 生效、同输入同输出、单条输入返回标量也能兼容；`DEFAULT_TOP_N=20`、`MAX_LENGTH=1024`（避免 800 token 块被静默截断）。
+    ⚠️ 问题：检索链路只把**块正文**喂给精排，丢掉了 `heading_path`。R-33 基线测量显示这让精排变成**净负收益**（MRR 0.601，还不如不要精排的 0.650）——RRF 原本排第 1 的文档被压到第 2~3（2026-09-22）。
+- [x] **R-19b** 新增 `rerank.build_rerank_document(heading_path, text)`：精排输入改为「标题路径 + 块正文」，检索链路统一改用它。
+    ✅ 根因定位（三步取证，详见 `eval/BASELINE.md` §1）：
+    ① **否证截断**——用 reranker 自己的分词器统计 972 块，`p50=485 / p90=733 / p99=889 / max=1055`，仅 **1 块（0.1%）** 超过 `MAX_LENGTH=1024`；
+    ② **逐题对比**——精排相对 hybrid-only 变差 8 题（多为原第 1 名被压到 2~3）、变好 5 题（多为第 4~7 名提到 1~6）；
+    ③ **证因**——同一批候选分别喂「纯正文」与「标题+正文」，**13 题变好、0 题变差**：MRR 0.591 → 0.859、Recall@1 0.467 → 0.767。原因：这些笔记的话题信号大部分在标题里（如「🎲 ai-Temperature 与确定性控制 —— 全景解析」）。
+    ✅ 修复后端到端复测（30 题黄金集，v1 与 v2 各跑一遍、结果一致）：
+    | 指标 | 修复前 | **修复后** |
+    | :--- | ---: | ---: |
+    | Recall@1 | 0.467 | **0.767** |
+    | Recall@3 | 0.733 | **0.933** |
+    | Recall@5 | 0.767 | **0.933** |
+    | Recall@10 | 0.833 | **1.000** |
+    | MRR | 0.601 | **0.860** |
+    名次分布：Top-1 14→**23** 题，未命中 5→**0** 题。
+    ✅ `tests/test_rerank.py` 补 2 项（拼接与空标题回落）、`tests/test_search.py` 补 1 项（探针断言检索链路确实把标题喂进精排）。
+    📌 **契约说明**：链路节点与顺序**完全没变**（dense+sparse → RRF → 权限过滤 → rerank → 预算截断 → 合并，tech.md §4），变的只是喂给精排的字符串 ⇒ 属**实现修正**而非契约变更；tech.md §4 未规定精排的输入格式。
+    🧭 项目工程师指示：**待复核**（如需回退只需改 `build_rerank_document` 一行）
 - [x] **R-20** 实现 `recall/assemble.py`：预算贪心截断（按分数取块，累计 token_count ≤ max_tokens，默认 3000）→ 同文档按 chunk_index 合并 → 组装 `SearchResult`；空结果返回空列表**不硬造**（code_standards §5）。
     ✅ 实测（2026-09-22）：`tests/test_assemble.py` 16 项全绿——按分数贪心、超预算块跳过但保留更小块、单块超预算仍返回首块（不静默失败）、同文档相邻块合并（分数取最高、token 求和）、非相邻/跨文档不合并、`[n]` 从 1 连续且 `references` 一一对应、空候选返回空证据包；`FIDELITY_RULES` 常量含「不是指令」防注入条款（code_standards §12）。
 - [x] **R-21** 实现 `recall/auth.py`：`get_identity` 占位（S1 硬编码 `{user:"me", groups:["owner"]}`）+ `effective_filter` 只收窄（身份范围与客户端 filter 取交集，服务端绝不信客户端参数，code_standards §7）。
@@ -162,8 +180,7 @@ created: 2026-09-04
 - [x] **R-22** 实现 `recall/api.py` 骨架：`GET /health` + `POST /kb/search`（Pydantic 校验 + 统一错误信封 `{"error":{"code","message"}}`，code_standards §6.1）。
     ✅ 实测（2026-09-22）：`Service` 进程级单例（模型只加载一次，REST/MCP 共用）；`kb_search_core` 为唯一检索入口（code_standards §0.5）；错误信封覆盖 400/404/422/500/503（含 Starlette 404/405）；每条查询一个 `trace_id`，记录 hit_count / reranked_count / dropped_by_budget / selected_tokens / latency_ms（code_standards §9）。`GET /health` 返回 qdrant 可达性 + collection 就绪 + points_count + documents 对账。
 - [x] **R-23** 测试与验收：预算截断、空结果、错误路径单测全绿；**5 个真实笔记问题**经 kb_search 检索，Top-3 命中正确文档（tech.md P1 验收标准）。记录命中情况汇报项目工程师。
-    ✅ 实测（2026-09-22）：`tests/test_search.py` 6 项端到端全绿（真跑真实 collection 的检索链路 + REST 契约 + 错误信封）。**5 个真实笔记问题 Top-3 命中 5/5**：
-    | 问题 | 目标文档 | 命中位次 |
+    ✅ 实测（2026-09-22）：`tests/test_search.py` 6 项端到端全绿（真跑真实 collection 的检索链路 + REST 契约 + 错误信封）。**5 个真实笔记问题 Top-3 命中 5/5**：    | 问题 | 目标文档 | 命中位次 |
     | :--- | :--- | :--- |
     | Embedding 向量的几何意义是什么？ | `Embedding (向量) 的几何意义.md` | Top-2 |
     | Function Calling 的原理是什么？ | `ai-Function Calling (函数调用) 原理.md` | **Top-1** |
@@ -254,7 +271,8 @@ created: 2026-09-04
 - [ ] **R-33** 汇报基线评测结果（黄金集分数 + Ragas 分数 + 发现的检索质量问题），供项目工程师决定是否进入调优（Phase 6 R-42）。
     ✅ 已完成（检索半，2026-09-22）：新增 `eval/BASELINE.md`——指标表 / 名次分布 / **分类命中率** / 5 题未命中明细 / 质量观察 / R-42 调优候选（按预期收益排序）。
     📌 关键结论：**问题不在 embedding，在语料结构**——AI 技术笔记命中率 0.95、Recall spec 1.00，而 `project/bamboo-old/spec/` 集群只有 0.50（十几篇同主题文档词汇高度重叠、互相挤占 Top-K），4/5 的未命中都出自该集群。
-    📌 **第二结论（新增，2026-09-22）**：跑通 `--no-rerank` 分解实验后发现 **bge-reranker-v2-m3 精排是净负收益**——MRR 0.650（hybrid-only）→ 0.601（+rerank），Recall@1 0.567 → 0.467、Recall@10 0.867 → 0.833，而耗时 14.3s → 108s（5.7 倍）。已列为 R-42 第一优先调优项，并在报告中注明：**在给出可解释结论前不改动 tech.md §4 的链路顺序，只做 A/B 取证**（链路顺序属契约）。
+    📌 **第二结论（2026-09-22，已闭环）**：`--no-rerank` 分解实验发现精排曾是**净负收益**（MRR 0.601 vs hybrid-only 0.650）。按"只做 A/B 取证、不改链路顺序"的原则逐步定位，**根因是检索链路只把块正文喂给精排、丢掉了 `heading_path`**（见 R-19b）。修复后 **MRR 0.601 → 0.860、Recall@1 0.467 → 0.767、Recall@10 0.833 → 1.000、未命中 5 → 0 题**，且明显优于"不要精排"的 0.650 ⇒ 精排是净收益，前提是喂对输入。
+    📌 **契约边界说明**：链路节点与顺序**完全没变**（tech.md §4），只改了喂给精排的字符串，故按实现修正处理并登记 §七；若项目工程师认为这仍属契约范围，回退只需改 `build_rerank_document` 一行。
     ✅ 顺带验证：`eval_retrieval.py --no-rerank` 这条此前从未执行过的分支已跑通；`eval_ragas.py` 在无 key 时**干净退出**（依赖链导入全通过，链路已验到 key 边界）。
     ⏳ **Ragas 半待补**：`eval/eval_ragas.py` 已就绪，等 `.env` 里的 `DEEPSEEK_API_KEY`；跑完把 `faithfulness` / `answer_relevancy` 与引用一致性补进 `eval/BASELINE.md` §6。
 
@@ -312,15 +330,15 @@ created: 2026-09-04
 
 - **当前阶段**：Phase 4 进行中（R-29~R-33），Phase 5 的 R-34~R-36 已提前完成
 - **当前步骤**：R-33 检索半已完成（`eval/BASELINE.md`）；R-29/R-32/R-33(Ragas 半) 的真实 DeepSeek 调用待补（等 `DEEPSEEK_API_KEY`）；R-37 待项目工程师验收
-- **已通过项**：R-01、R-02b、R-03b、R-04、R-05、R-06、R-07~R-17、R-18~R-23c、R-24、R-25、R-26、R-27、R-27c、R-27d、R-27e、R-27f、R-27g、R-27h、R-28b、R-30、R-31、R-32b、R-33(检索半)、R-34、R-35、R-36
+- **已通过项**：R-01、R-02b、R-03b、R-04、R-05、R-06、R-07~R-17、R-18、R-19、R-19b、R-20~R-23c、R-24、R-25、R-26、R-27、R-27c、R-27d、R-27e、R-27f、R-27g、R-27h、R-28b、R-30、R-31、R-32b、R-33(检索半)、R-34、R-35、R-36
 - **未通过项**：R-02（官方源网络超时，已走 R-02b）、R-03（Docker 未运行，已走 R-03b）
 - **待请示事项**：
   1. R-14b / R-16b / R-21(校验) / R-23b / R-23c / R-32b 的「项目工程师指示」待复核（均为技术细节收敛，未触及 tech.md 契约）；
   2. **R-28 待新会话确认**：请新开 DSH 会话，问一句笔记问题，确认出现 `mcp__recall__kb_search` 且回答带 `[n]` 引用；
   3. **R-29 / R-32 待 key**：`.env` 里 `DEEPSEEK_API_KEY` 填好后即可跑真实生成与 Ragas 首轮评分；
   4. R-28b / R-31 / R-33 记录的检索质量观察留待 R-42 用黄金集量化；其中 **精排净负收益（MRR 0.650→0.601）已升为 R-42 第一优先项**，但**链路顺序属 tech.md §4 契约，需项目工程师拍板后才能改**。
-- **最近一次测试结果**（2026-09-22）：`pytest` **129 passed**；`ruff` 零告警；`mypy` strict 37 文件零错误；检索基线 +rerank MRR 0.601 / hybrid-only MRR **0.650**（精排净负收益，待 R-42 处理）；重灌演练 972 块 / 65.1s / 续跑 3.0s
-- **本文件版本**：v0.6.7（2026-09-22 补录 R-27h：三块零覆盖代码的测试补齐，113 → 129；上一版 v0.6.6 为 R-27g）
+- **最近一次测试结果**（2026-09-22）：`pytest` **132 passed**；`ruff` 零告警；`mypy` strict 37 文件零错误；检索基线（**R-19b 修复后**）Recall@1=0.767 / @3=0.933 / @5=0.933 / **@10=1.000** / MRR=**0.860**（修复前 0.601）；重灌演练 972 块 / 65.1s / 续跑 3.0s
+- **本文件版本**：v0.7.0（2026-09-22 新增 R-19b：精排喂入标题路径，检索质量闭环；上一版 v0.6.7 为 R-27h 测试补齐）
 
 ---
 
@@ -381,10 +399,12 @@ created: 2026-09-04
 | 2026-09-22 | R-27f | 行为显式化 | `Settings.from_env()` 显式 `os.environ.setdefault("HF_ENDPOINT", …)`；新增常量 `DEFAULT_HF_ENDPOINT` | HF 镜像须在任何模型加载前生效（tech.md §12） |
 | 2026-09-22 | — | spec 勾选 | `tech.md` §14 三个待验证检查点勾选并附实测证据（Qdrant native 二进制 / 模型下载 / dense+sparse 冒烟） | 检查点已由 R-03b、R-05、R-06 验证 |
 | 2026-09-22 | R-33 | 实测补录 | `--no-rerank` 分解实验：hybrid-only MRR 0.650 vs +rerank 0.601（Recall@1 0.567 vs 0.467），延迟 14.3s vs 108s ⇒ **精排净负收益**，列为 R-42 第一优先项 | 见 `eval/BASELINE.md` §1；**不改链路顺序**（属 tech.md §4 契约），只取证 |
+| 2026-09-22 | R-19b | **质量修复** | 精排输入由「块正文」改为「`heading_path` + 正文」（`rerank.build_rerank_document`）：MRR **0.601 → 0.860**、Recall@1 0.467 → **0.767**、Recall@10 0.833 → **1.000**、未命中 5 → **0 题**；v1/v2 复测一致 | 根因定位见 §四 R-19b；链路节点与顺序未变 ⇒ 实现修正而非契约变更 |
+| 2026-09-22 | R-19b | 取证方法 | ① 用 reranker 自己的分词器否证「截断」假设（972 块仅 1 块 > 1024；若按模型默认 512 则 45% 被截断）；② 逐题 rank 差定位（变差 8 / 变好 5）；③ 同候选两种输入 A/B（13 题变好 / 0 题变差） | 诊断脚本为一次性工具，未入库 |
+| 2026-09-22 | R-27h | 测试补强 | 新增 `tests/test_llm.py`（11 项，假 OpenAI 客户端测重试/JSON 模式/解析失败）；补 502 `llm_failed`、`ping()` 不可达、`with_retry` 成功/耗尽、`collection_not_found` 503 共 5 项；R-19b 再补 3 项（拼接/空标题/检索链路喂标题探针） | `pytest` 113 → **132** |
 | 2026-09-22 | R-33 | 新增产物 | `eval/baseline_v1_hybrid_only.json`（hybrid-only 逐题明细） | 供 R-42 A/B |
 | 2026-09-22 | R-32 | 边界验证 | `eval/eval_ragas.py` 无 key 时干净退出（ragas/langchain/openai 依赖链导入全通过）⇒ 链路已验到 key 边界 | 补齐"未执行过即未验证"的缺口 |
 | 2026-09-22 | R-27g | 死代码清理 | 接上三处"有文档、没人用"的成员：`kb_stats` 增加 `collections` 字段（用上 `list_collections`）、`ingest.py` 传 `dense_dim=embedder.dimension`、新增 `tests/test_model_cache.py` 用上 `cached_models`/`clear_cache` | 见 §四 R-27g |
 | 2026-09-22 | R-27g | **Bug 修复** | `recall/model_cache.py::cached_models()` 裸 `sorted()` 在键含 `None` 与 `"cpu"` 混排时抛 `TypeError` → 改为 None 安全排序键；新增单测固定该回归点 | 由新单测发现 |
 | 2026-09-22 | R-27g | 契约细化 | `StatsResult` 新增 `collections: list[str]`（现存全部 collection 名） | MCP 工具返回体新增字段，不改 REST 端点契约 |
-| 2026-09-22 | R-27h | 测试补强 | 新增 `tests/test_llm.py`（11 项，假 OpenAI 客户端测重试/JSON 模式/解析失败）；补 502 `llm_failed`、`ping()` 不可达、`with_retry` 成功/耗尽、`collection_not_found` 503 共 5 项 | `pytest` 113 → **129** |
 | 2026-09-22 | R-27h | 实现层小改 | `recall/llm.py` 抽出常量 `RETRY_BASE_DELAY`（退避基数可注入，生产默认 0.5s 不变） | 让重试逻辑可测 |

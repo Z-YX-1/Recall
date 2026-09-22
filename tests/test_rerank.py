@@ -2,10 +2,20 @@
 
 from __future__ import annotations
 
-from recall.rerank import Reranker
+from recall.rerank import Reranker, build_rerank_document
 
 _RELEVANT = "混合检索用 RRF 把 dense 与 sparse 两路召回结果融合，再交给重排模型精排。"
 _NOISE = "五花肉切块，冷水下锅焯水，加冰糖炒出糖色后小火慢炖。"
+
+
+def test_rerank_document_prepends_heading_path() -> None:
+    """⚠️ 回归守门：标题必须喂给精排，否则 MRR 从 0.859 掉到 0.591（见函数 docstring）。"""
+    assert build_rerank_document("标题 > 小节", "正文") == "标题 > 小节\n正文"
+
+
+def test_rerank_document_falls_back_to_text_when_heading_is_empty() -> None:
+    assert build_rerank_document("", "正文") == "正文"
+    assert build_rerank_document("   ", "正文") == "正文"
 
 
 async def test_rerank_puts_the_relevant_document_first(reranker: Reranker) -> None:

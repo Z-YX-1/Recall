@@ -47,7 +47,7 @@ from recall.models import (
     StatsResult,
 )
 from recall.registry import Registry
-from recall.rerank import Reranker
+from recall.rerank import Reranker, build_rerank_document
 from recall.store import RECALL_TOP_K, QdrantStore, collection_name
 
 logger = logging.getLogger(__name__)
@@ -210,7 +210,9 @@ async def kb_search_core(request: SearchRequest, identity: Identity | None = Non
 
     candidates = [_to_candidate(hit) for hit in hits]
     reranked = await service.reranker.rerank(
-        request.query, [candidate.text for candidate in candidates], top_n=request.top_k
+        request.query,
+        [build_rerank_document(candidate.heading_path, candidate.text) for candidate in candidates],
+        top_n=request.top_k,
     )
     rescored = [replace(candidates[hit.index], score=hit.score) for hit in reranked]
 

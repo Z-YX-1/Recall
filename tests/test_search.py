@@ -5,12 +5,15 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 import httpx
 import pytest
 
 from ingest import run_ingest
 from recall.api import ApiError, Service, app, kb_answer_core, kb_search_core
 from recall.models import AnswerRequest, SearchRequest
+from recall.rerank import DEFAULT_TOP_N, Reranker, RerankHit
 from tests.helpers import IngestEnv, ingest_args, write_note
 
 _RAG_NOTE = """\
@@ -106,6 +109,36 @@ async def test_kb_search_rejects_malformed_client_filter(
         await kb_search_core(SearchRequest(query="任何问题", filter={"must": [{"key": "doc_id"}]}))
     assert excinfo.value.code == "invalid_filter"
     assert excinfo.value.status_code == 400
+
+
+async def test_kb_search_feeds_heading_context_to_the_reranker(
+    ingest_env: IngestEnv, api_service: object
+) -> None:
+    """⚠️ 回归守门：检索链路必须把「标题 + 正文」交给精排。
+
+    只喂正文会让精排丢掉最强的话题信号（实测 MRR 0.859 → 0.591，见
+    :func:`recall.rerank.build_rerank_document`），这里用探针把喂进去的文本抓下来。
+    """
+    await _prepare_corpus(ingest_env)
+    assert isinstance(api_service, Service)
+    captured: list[list[str]] = []
+
+    class _SpyReranker(Reranker):
+        async def rerank(
+            self, query: str, documents: Sequence[str], *, top_n: int = DEFAULT_TOP_N
+        ) -> list[RerankHit]:
+            captured.append(list(documents))
+            return await service_reranker.rerank(query, documents, top_n=top_n)
+
+    service_reranker = api_service.reranker
+    api_service.reranker = _SpyReranker()
+
+    await kb_search_core(SearchRequest(query="混合检索怎么融合两路召回结果？", top_k=3))
+
+    assert captured, "精排没有被调用"
+    fed = captured[0]
+    assert any("\n" in document for document in fed), "喂给精排的文本里没有标题行"
+    assert any(doc.startswith("🧪") or "混合检索" in doc.split("\n")[0] for doc in fed)
 
 
 async def test_kb_search_reports_missing_collection_as_503(
