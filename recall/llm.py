@@ -24,6 +24,8 @@ logger = logging.getLogger(__name__)
 DEFAULT_TIMEOUT = 60.0
 DEFAULT_MAX_RETRIES = 3
 DEFAULT_MAX_OUTPUT_TOKENS = 2048
+RETRY_BASE_DELAY = 0.5
+"""指数退避基数（秒）：第 n 次失败后等待 ``RETRY_BASE_DELAY * 2**(n-1)``（code_standards §10）。"""
 
 SYSTEM_PROMPT = (
     "你是 Recall 知识库的回答器，只依据用户给出的证据作答。"
@@ -126,7 +128,7 @@ class DeepSeekClient:
                 last_error = exc
                 if attempt == self._max_retries:
                     break
-                delay = 0.5 * (2 ** (attempt - 1))
+                delay = RETRY_BASE_DELAY * (2 ** (attempt - 1))
                 logger.warning(
                     "llm.retry",
                     extra={

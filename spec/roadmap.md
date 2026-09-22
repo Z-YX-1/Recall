@@ -214,6 +214,12 @@ created: 2026-09-04
     ✅ 处理（一律"接上"而不是"删掉"，因为它们各自都有真实用途）：① `kb_stats` 返回新增 `collections` 字段（A/B 时能看到新旧库并排，docstring 成真）；② `ingest.py` 建库时传 `dense_dim=embedder.dimension`（collection 维度跟着 embedder 走，而不是跟着常量）；③ 新增 `tests/test_model_cache.py` 4 项，实测缓存复用与装载锁——**顺带抓出一个真实 bug**：`cached_models()` 用裸 `sorted()` 排序含 `None`/`"cpu"` 的键会抛 `TypeError`，已改为 None 安全排序。
     ✅ 验证：`pytest` **113 passed**（新增 4 项）；ruff/mypy 零错误。
     🧭 项目工程师指示：**待复核**
+- [x] **R-27h** 补齐三块**此前完全没有测试覆盖**的代码（自查发现）。
+    ⚠️ 问题：① `recall/llm.py` 的重试 / 退避 / 返回体解析**零覆盖**，而它是"生成失败"类问题的唯一防线；② `kb_answer` 的 LLM 失败路径（502 `llm_failed`）未测；③ 所有 Qdrant 调用都走的 `store.with_retry` 重试原语、`store.ping()` 降级路径、以及"忘了先跑 ingest"时最常撞到的 `collection_not_found` (503) 全部未测（2026-09-22）。
+    ✅ 处理：新增 `tests/test_llm.py`（11 项，用假 OpenAI 客户端测重试次数/JSON 模式入参/非法 JSON 不重试/空内容/未配 key）；`tests/test_answer.py` 补 502 路径；`tests/test_store.py` 补 `ping()` 不可达与 `with_retry` 成功/耗尽；`tests/test_search.py` 补缺少 collection 的 503 路径（`kb_search` 与 `kb_answer` 各一条）。
+    ✅ 顺带改进：`recall/llm.py` 抽出常量 `RETRY_BASE_DELAY`（退避基数可被测试注入，生产默认 0.5s 不变）。
+    ✅ 验证：`pytest` **129 passed**（本轮 +16 项）；ruff/mypy 零错误。
+    🧭 项目工程师指示：**待复核**
 - [ ] **R-28** 端到端验收：DSH 会话中用自然语言问笔记（如"我笔记里关于 RAG 检索质量的结论？"），回答**带 [n] 引用且忠于证据**（tech.md P2 验收标准）。记录问答样例汇报项目工程师。
     ⚠️ 问题：AI 执行者**无法自行开启一个 DSH 会话**（MCP 服务器只在会话启动时装载，本会话看不到 `mcp__recall__*` 工具），R-28 的字面验收必须由项目工程师在新会话中确认（2026-09-22）。
 - [x] **R-28b** 以等价方式完成 R-28 的**除"会话装载"外的全部链路验证**：用真实 MCP 客户端连 `http://127.0.0.1:8000/mcp` 调 `kb_search`，按 `recall-assembly` 规范组装。
@@ -306,15 +312,15 @@ created: 2026-09-04
 
 - **当前阶段**：Phase 4 进行中（R-29~R-33），Phase 5 的 R-34~R-36 已提前完成
 - **当前步骤**：R-33 检索半已完成（`eval/BASELINE.md`）；R-29/R-32/R-33(Ragas 半) 的真实 DeepSeek 调用待补（等 `DEEPSEEK_API_KEY`）；R-37 待项目工程师验收
-- **已通过项**：R-01、R-02b、R-03b、R-04、R-05、R-06、R-07~R-17、R-18~R-23c、R-24、R-25、R-26、R-27、R-27c、R-27d、R-27e、R-27f、R-27g、R-28b、R-30、R-31、R-32b、R-33(检索半)、R-34、R-35、R-36
+- **已通过项**：R-01、R-02b、R-03b、R-04、R-05、R-06、R-07~R-17、R-18~R-23c、R-24、R-25、R-26、R-27、R-27c、R-27d、R-27e、R-27f、R-27g、R-27h、R-28b、R-30、R-31、R-32b、R-33(检索半)、R-34、R-35、R-36
 - **未通过项**：R-02（官方源网络超时，已走 R-02b）、R-03（Docker 未运行，已走 R-03b）
 - **待请示事项**：
   1. R-14b / R-16b / R-21(校验) / R-23b / R-23c / R-32b 的「项目工程师指示」待复核（均为技术细节收敛，未触及 tech.md 契约）；
   2. **R-28 待新会话确认**：请新开 DSH 会话，问一句笔记问题，确认出现 `mcp__recall__kb_search` 且回答带 `[n]` 引用；
   3. **R-29 / R-32 待 key**：`.env` 里 `DEEPSEEK_API_KEY` 填好后即可跑真实生成与 Ragas 首轮评分；
   4. R-28b / R-31 / R-33 记录的检索质量观察留待 R-42 用黄金集量化；其中 **精排净负收益（MRR 0.650→0.601）已升为 R-42 第一优先项**，但**链路顺序属 tech.md §4 契约，需项目工程师拍板后才能改**。
-- **最近一次测试结果**（2026-09-22）：`pytest` **113 passed**；`ruff` 零告警；`mypy` strict 36 文件零错误；检索基线 +rerank MRR 0.601 / hybrid-only MRR **0.650**（精排净负收益，待 R-42 处理）；重灌演练 972 块 / 65.1s / 续跑 3.0s
-- **本文件版本**：v0.6.6（2026-09-22 补录 R-27g：死代码清理 + `cached_models()` 排序 bug 修复 + 模型缓存单测；上一版 v0.6.5 为精排净负收益发现）
+- **最近一次测试结果**（2026-09-22）：`pytest` **129 passed**；`ruff` 零告警；`mypy` strict 37 文件零错误；检索基线 +rerank MRR 0.601 / hybrid-only MRR **0.650**（精排净负收益，待 R-42 处理）；重灌演练 972 块 / 65.1s / 续跑 3.0s
+- **本文件版本**：v0.6.7（2026-09-22 补录 R-27h：三块零覆盖代码的测试补齐，113 → 129；上一版 v0.6.6 为 R-27g）
 
 ---
 
@@ -380,3 +386,5 @@ created: 2026-09-04
 | 2026-09-22 | R-27g | 死代码清理 | 接上三处"有文档、没人用"的成员：`kb_stats` 增加 `collections` 字段（用上 `list_collections`）、`ingest.py` 传 `dense_dim=embedder.dimension`、新增 `tests/test_model_cache.py` 用上 `cached_models`/`clear_cache` | 见 §四 R-27g |
 | 2026-09-22 | R-27g | **Bug 修复** | `recall/model_cache.py::cached_models()` 裸 `sorted()` 在键含 `None` 与 `"cpu"` 混排时抛 `TypeError` → 改为 None 安全排序键；新增单测固定该回归点 | 由新单测发现 |
 | 2026-09-22 | R-27g | 契约细化 | `StatsResult` 新增 `collections: list[str]`（现存全部 collection 名） | MCP 工具返回体新增字段，不改 REST 端点契约 |
+| 2026-09-22 | R-27h | 测试补强 | 新增 `tests/test_llm.py`（11 项，假 OpenAI 客户端测重试/JSON 模式/解析失败）；补 502 `llm_failed`、`ping()` 不可达、`with_retry` 成功/耗尽、`collection_not_found` 503 共 5 项 | `pytest` 113 → **129** |
+| 2026-09-22 | R-27h | 实现层小改 | `recall/llm.py` 抽出常量 `RETRY_BASE_DELAY`（退避基数可注入，生产默认 0.5s 不变） | 让重试逻辑可测 |

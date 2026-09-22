@@ -9,8 +9,8 @@ import httpx
 import pytest
 
 from ingest import run_ingest
-from recall.api import ApiError, app, kb_search_core
-from recall.models import SearchRequest
+from recall.api import ApiError, Service, app, kb_answer_core, kb_search_core
+from recall.models import AnswerRequest, SearchRequest
 from tests.helpers import IngestEnv, ingest_args, write_note
 
 _RAG_NOTE = """\
@@ -106,6 +106,35 @@ async def test_kb_search_rejects_malformed_client_filter(
         await kb_search_core(SearchRequest(query="任何问题", filter={"must": [{"key": "doc_id"}]}))
     assert excinfo.value.code == "invalid_filter"
     assert excinfo.value.status_code == 400
+
+
+async def test_kb_search_reports_missing_collection_as_503(
+    ingest_env: IngestEnv, api_service: object
+) -> None:
+    """忘了先跑 ingest 时的真实报错路径：503 + 可操作提示，而不是 500 堆栈。"""
+    del ingest_env
+    assert isinstance(api_service, Service)
+    api_service.collection = "recall__never-built"
+
+    with pytest.raises(ApiError) as excinfo:
+        await kb_search_core(SearchRequest(query="任何问题"))
+
+    assert excinfo.value.code == "collection_not_found"
+    assert excinfo.value.status_code == 503
+    assert "ingest.py" in excinfo.value.message  # 提示怎么修
+
+
+async def test_kb_answer_reports_missing_collection_too(
+    ingest_env: IngestEnv, api_service: object
+) -> None:
+    del ingest_env
+    assert isinstance(api_service, Service)
+    api_service.collection = "recall__never-built"
+
+    with pytest.raises(ApiError) as excinfo:
+        await kb_answer_core(AnswerRequest(query="任何问题"))
+
+    assert excinfo.value.code == "collection_not_found"
 
 
 async def test_rest_endpoints_and_error_envelope(

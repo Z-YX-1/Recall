@@ -15,7 +15,7 @@ from fastmcp import Client
 from ingest import run_ingest
 from recall.api import ApiError, Service, app, kb_answer_core, kb_ingest_core, mcp
 from recall.assemble import FIDELITY_RULES, assemble
-from recall.llm import DeepSeekClient
+from recall.llm import DeepSeekClient, LlmError
 from recall.models import AnswerRequest, Evidence, IngestRequest
 from tests.helpers import IngestEnv, ingest_args, write_note
 
@@ -55,6 +55,23 @@ class _StubLlm(DeepSeekClient):
         del system, max_tokens
         self.calls.append(prompt)
         return self._payload
+
+
+class _FailingLlm(DeepSeekClient):
+    """``complete_json`` 直接抛错（模拟 DeepSeek 不可用 / 返回体违约）。"""
+
+    def __init__(self) -> None:
+        super().__init__(api_key=None, base_url="http://stub", model="stub")
+
+    @property
+    def available(self) -> bool:
+        return True
+
+    async def complete_json(
+        self, prompt: str, *, system: str = "", max_tokens: int = 0
+    ) -> dict[str, Any]:
+        del prompt, system, max_tokens
+        raise LlmError("DeepSeek 调用失败（3 次尝试）：RuntimeError('502 Bad Gateway')")
 
 
 def _evidence(ref_id: str, text: str = "证据正文") -> Evidence:
@@ -191,6 +208,21 @@ async def test_kb_answer_reports_missing_api_key_as_503(
 
     assert excinfo.value.code == "llm_not_configured"
     assert excinfo.value.status_code == 503
+
+
+async def test_kb_answer_maps_generation_failure_to_502(
+    ingest_env: IngestEnv, api_service: object
+) -> None:
+    """LLM 调用失败 ⇒ 502 ``llm_failed``（与"没配 key"的 503 区分开，便于运维定位）。"""
+    await _prepare_corpus(ingest_env)
+    _service(api_service).llm = _FailingLlm()
+
+    with pytest.raises(ApiError) as excinfo:
+        await kb_answer_core(AnswerRequest(query="检索质量取决于什么？"))
+
+    assert excinfo.value.code == "llm_failed"
+    assert excinfo.value.status_code == 502
+    assert "DeepSeek" in excinfo.value.message
 
 
 async def test_kb_answer_rest_endpoint_uses_error_envelope(

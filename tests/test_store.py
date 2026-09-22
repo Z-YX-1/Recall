@@ -17,6 +17,7 @@ from recall.store import (
     CollectionMismatchError,
     QdrantStore,
     collection_name,
+    with_retry,
 )
 
 
@@ -136,3 +137,40 @@ async def test_delete_document_removes_every_point(
 
     assert await store.delete_document(collection, "doc-b") == 2
     assert await store.count_points(collection, "doc-b") == 0
+
+
+async def test_ping_reports_unreachable_service() -> None:
+    """Qdrant 不可达时 ``ping()`` 返回 False 而不是抛错（``/health`` 降级路径）。"""
+    store = QdrantStore("http://127.0.0.1:1", timeout=2)
+    try:
+        assert await store.ping() is False
+    finally:
+        await store.close()
+
+
+async def test_with_retry_succeeds_after_transient_failures() -> None:
+    """所有 Qdrant 调用都走的重试原语：瞬时失败要能重试成功（code_standards §10）。"""
+    attempts = 0
+
+    async def flaky() -> str:
+        nonlocal attempts
+        attempts += 1
+        if attempts < 3:
+            raise RuntimeError("瞬时故障")
+        return "ok"
+
+    assert await with_retry("probe", flaky, attempts=3, base_delay=0.0) == "ok"
+    assert attempts == 3
+
+
+async def test_with_retry_raises_last_error_after_exhausting_attempts() -> None:
+    attempts = 0
+
+    async def always_fail() -> None:
+        nonlocal attempts
+        attempts += 1
+        raise ValueError("一直失败")
+
+    with pytest.raises(ValueError, match="一直失败"):
+        await with_retry("probe", always_fail, attempts=2, base_delay=0.0)
+    assert attempts == 2
