@@ -49,9 +49,13 @@ def load_once(key: CacheKey, factory: Callable[[], _T]) -> _T:
 
 
 def cached_models() -> list[CacheKey]:
-    """列出当前已缓存的模型键（诊断 / 测试用）。"""
+    """列出当前已缓存的模型键（诊断 / 测试用，按 ``(模型名, fp16, 设备)`` 排序）。
+
+    ⚠️ 排序键把设备名做了 ``None → ""`` 归一：直接 ``sorted()`` 会在
+    ``None`` 与 ``"cpu"`` 之间比较时抛 ``TypeError``（2026-09-22 由单测发现）。
+    """
     with _lock:
-        return sorted(_cache)
+        return sorted(_cache, key=lambda key: (key[0], key[1], key[2] or ""))
 
 
 def clear_cache() -> None:

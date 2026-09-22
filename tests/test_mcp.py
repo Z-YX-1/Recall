@@ -103,6 +103,8 @@ async def test_kb_stats_tool_reports_collection_state(
     assert data["failed_documents"] == 0
     assert data["embedding_model"] == "bge-m3"
     assert data["chunker"] == "md-heading-v1"
+    # A/B 时能看到新旧库并排（tech.md §3.1）
+    assert ingest_env.collection in data["collections"]
 
 
 async def test_tool_errors_are_readable_text_not_tracebacks(

@@ -176,6 +176,8 @@ class StatsResult(BaseModel):
     """``kb_stats`` MCP 工具返回体（只读，无副作用）。"""
 
     collection: str
+    collections: list[str] = Field(default_factory=list)
+    """Qdrant 上现存的全部 collection 名——A/B 时能看到新旧库并排（tech.md §3.1）。"""
     qdrant: bool
     collection_ready: bool
     points_count: int

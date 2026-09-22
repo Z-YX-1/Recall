@@ -559,6 +559,7 @@ async def kb_stats() -> StatsResult:
         records = await service.registry.list_all()
         return StatsResult(
             collection=service.collection,
+            collections=await service.store.list_collections() if reachable else [],
             qdrant=reachable,
             collection_ready=ready,
             points_count=(await service.store.count_points(service.collection) if ready else 0),

@@ -192,6 +192,7 @@ async def run_ingest(args: argparse.Namespace) -> IngestReport:
             embedding_model=model_ref.model,
             embedding_version=model_ref.version,
             chunker=args.chunker,
+            dense_dim=embedder.dimension,
         )
         docs = await asyncio.to_thread(lambda: list(connector.list()))
         seen: set[str] = set()
