@@ -36,6 +36,7 @@ from pathlib import Path
 
 from recall.chunker import CHUNKER_NAME, MAX_CHUNK_TOKENS, chunk_markdown
 from recall.config import Settings
+from recall.config import configure_logging as configure_recall_logging
 from recall.connectors.base import BaseConnector, Connector, SourceError, slugify
 from recall.connectors.obsidian import SOURCE_TYPE, ObsidianConnector
 from recall.embedder import (
@@ -466,20 +467,8 @@ def _now_iso() -> str:
 
 
 def configure_logging(level: str) -> None:
-    """配置结构化日志（code_standards §9：禁止库代码裸 print）。
-
-    同时把 stdout/stderr 切到 UTF-8——Windows 控制台默认 GBK，笔记标题里的 emoji
-    会让 run 结束时的汇总打印抛 ``UnicodeEncodeError``，把一次成功的摄取变成失败退出。
-    """
-    for stream in (sys.stdout, sys.stderr):
-        reconfigure = getattr(stream, "reconfigure", None)
-        if reconfigure is not None:
-            reconfigure(encoding="utf-8", errors="replace")
-    logging.basicConfig(
-        level=getattr(logging, level.upper(), logging.INFO),
-        format="%(asctime)s %(levelname)s %(name)s %(message)s",
-        stream=sys.stderr,
-    )
+    """配置结构化日志：控制台 + ``data/logs/ingest.log``（code_standards §9；tech.md §11）。"""
+    configure_recall_logging(Settings.from_env(), level=level, component="ingest")
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -6,7 +6,10 @@
 
 from __future__ import annotations
 
+import logging
+import logging.handlers
 import os
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -19,6 +22,10 @@ DATA_DIR: Path = PROJECT_ROOT / "data"
 """运行期数据目录（Qdrant 存储、registry.db、日志；已 gitignore）。"""
 
 DEFAULT_QDRANT_URL = "http://127.0.0.1:6333"
+
+LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s %(message)s"
+LOG_MAX_BYTES = 5 * 1024 * 1024
+LOG_BACKUP_COUNT = 3
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,6 +46,8 @@ class Settings:
         ingest_workers: 摄取时嵌入推理的并发批次数。
         collection: 检索目标 collection；``None`` 表示用契约默认名
             （``recall__bge-m3@v1__md``）。A/B 评测时用 ``RECALL_COLLECTION`` 切库。
+        log_to_file: 是否把结构化日志同时写进 ``log_dir``（``RECALL_LOG_TO_FILE=0`` 可关；
+            测试关掉以免污染 ``data/``）。
     """
 
     qdrant_url: str
@@ -53,6 +62,7 @@ class Settings:
     port: int
     ingest_workers: int
     collection: str | None
+    log_to_file: bool
 
     @classmethod
     def from_env(cls, dotenv_path: Path | None = None) -> Settings:
@@ -84,4 +94,48 @@ class Settings:
             port=int(os.getenv("RECALL_PORT", "8000")),
             ingest_workers=int(os.getenv("RECALL_INGEST_WORKERS", "1")),
             collection=collection_raw or None,
+            log_to_file=os.getenv("RECALL_LOG_TO_FILE", "1").strip() not in {"0", "false", "False"},
         )
+
+
+def configure_logging(
+    settings: Settings, *, level: str = "INFO", component: str = "recall"
+) -> None:
+    """配置结构化日志：控制台 + ``data/logs/<component>.log``（tech.md §11）。
+
+    两件在 Windows 上必须做的事：
+
+    1. stdout/stderr 切到 UTF-8（``errors="replace"``）——控制台默认 GBK，
+       笔记标题里的 emoji 会让收尾打印抛 ``UnicodeEncodeError``；
+    2. 文件日志用 ``RotatingFileHandler``，避免长跑进程把磁盘写满。
+
+    幂等：重复调用只会复用已装好的 handler（uvicorn reload / 多次入口调用安全）。
+
+    Args:
+        settings: 运行配置（读 ``log_dir`` / ``log_to_file``）。
+        level: 日志级别名，如 ``INFO`` / ``WARNING``。
+        component: 日志文件名（不含扩展名），如 ``ingest`` / ``api``。
+    """
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            reconfigure(encoding="utf-8", errors="replace")
+
+    handlers: list[logging.Handler] = [logging.StreamHandler(sys.stderr)]
+    if settings.log_to_file:
+        settings.log_dir.mkdir(parents=True, exist_ok=True)
+        handlers.append(
+            logging.handlers.RotatingFileHandler(
+                settings.log_dir / f"{component}.log",
+                maxBytes=LOG_MAX_BYTES,
+                backupCount=LOG_BACKUP_COUNT,
+                encoding="utf-8",
+            )
+        )
+    logging.basicConfig(
+        level=getattr(logging, level.upper(), logging.INFO),
+        format=LOG_FORMAT,
+        handlers=handlers,
+        force=True,
+    )
+    logging.getLogger("httpx").setLevel(logging.WARNING)

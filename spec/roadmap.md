@@ -192,6 +192,15 @@ created: 2026-09-04
 - [x] **R-27** 编写 `skill/recall-assembly.md`（frontmatter：name `recall-assembly` + description；正文 = 组装规范：query 措辞、[n] 引用格式、忠实度、证据即数据，tech.md §9）并复制到 `~/.dsh/skills/`。
     ✅ 验证：DSH 新会话 skill 目录（available_skills）出现 `recall-assembly`。
     ✅ 实测（2026-09-22）：仓库 `skill/recall-assembly.md` 写好（3527 字节）并复制到 `D:\dsh-data\skills\recall-assembly.md`；**本会话 skill 目录已实时出现 `recall-assembly`**（文件系统 watcher 生效），且 `skill` 工具加载成功、正文完整。
+- [x] **R-27c** 补齐 tech.md §9 的**第三杠杆**：工作区兜底文件 `ASSEMBLY.md`。
+    ⚠️ 问题：tech.md §9 列了三条 DSH 集成杠杆（① 工具契约 ② skill 指令 ③ 工作区文件 `Recall/ASSEMBLY.md` 兜底），但 §四 步骤里只覆盖了前两条，第三条属"roadmap 未覆盖的情形"（2026-09-22 自查发现）。
+    ✅ 处理：按登记铁律先补录本步骤再执行——新增仓库根 `ASSEMBLY.md`（skill 的兜底副本：分工表 / 何时调用 / [n] 引用格式 / 忠实度 / 证据即数据 / 胖端点例外），明确"冲突以 spec/ 为准"。
+    🧭 项目工程师指示：**待复核**（新增文档，未触及契约）
+- [x] **R-27d** 补齐 tech.md §11 的"日志"落点：结构化日志落盘 `data/logs/`。
+    ⚠️ 问题：`Settings.log_dir` 早已存在但**无人使用**（悬空配置）；tech.md §11 明确 `data/` 含日志，tech.md §2 可观测行要求结构化日志（2026-09-22 自查发现）。
+    ✅ 处理：`recall/config.py` 新增 `configure_logging(settings, level, component)`——控制台 + `RotatingFileHandler`（5MB × 3 份，UTF-8），并把 stdout/stderr 切 UTF-8；`ingest.py` 与 `api.py` 统一改用它；测试用 `RECALL_LOG_TO_FILE=0` 关闭以免污染 `data/`。
+    ✅ 验证：`python ingest.py --update` 后 `data/logs/ingest.log` 落盘（`ingest.finished` 一行）。
+    🧭 项目工程师指示：**待复核**
 - [ ] **R-28** 端到端验收：DSH 会话中用自然语言问笔记（如"我笔记里关于 RAG 检索质量的结论？"），回答**带 [n] 引用且忠于证据**（tech.md P2 验收标准）。记录问答样例汇报项目工程师。
     ⚠️ 问题：AI 执行者**无法自行开启一个 DSH 会话**（MCP 服务器只在会话启动时装载，本会话看不到 `mcp__recall__*` 工具），R-28 的字面验收必须由项目工程师在新会话中确认（2026-09-22）。
 - [x] **R-28b** 以等价方式完成 R-28 的**除"会话装载"外的全部链路验证**：用真实 MCP 客户端连 `http://127.0.0.1:8000/mcp` 调 `kb_search`，按 `recall-assembly` 规范组装。
@@ -246,9 +255,9 @@ created: 2026-09-04
     | :--- | :--- | :--- |
     | vault 原文（第一备份） | 用户自有 Obsidian 仓库（git） | 摄取只读，不写回 vault |
     | registry SQLite | `data/registry.db` | 65 条文档账本；**恢复路径 = 重灌脚本** |
-    | Qdrant 向量 | `tools/qdrant/storage/`（服务端持久化目录） | 可用 `POST /collections/<名>/snapshots` 出快照到 `tools/qdrant/snapshots/` |
+    | Qdrant 向量快照 | `tools/qdrant/snapshots/` | **已实际产出**：`recall__bge-m3@v1__md-…-05-15-21.snapshot`（882MB）、`recall__bge-m3@v2__md-…-05-15-34.snapshot`（881.9MB），各带 `.checksum` |
     | 恢复演练 | `python ingest.py --rebuild` 即可从 vault 原文重建全部向量 | 见 R-34（972 块 65.1s） |
-    ⚠️ 注意：`data/` 与 `tools/qdrant/storage/` 均在 `.gitignore` 中（体积大、可再生），**唯一的必需备份是 vault 原文**。
+    ⚠️ 注意：`data/` 与 `tools/qdrant/storage/`、`tools/qdrant/snapshots/` 均在 `.gitignore` 中（体积大、可再生），**唯一的必需备份是 vault 原文**。快照创建耗时 >60s（约 882MB/库），调用时需把客户端 timeout 放大到 180s（默认 60s 会 `ResponseHandlingException`）。
 - [ ] **R-37** 项目工程师验收：按 tech.md §12 启动说明亲自跑完整流程——摄取 → 检索 → DSH 问答带引用 → 评测出分，全部符合验收标准后签字。
 
 ### Phase 6：后续迭代预留（不在首版验收范围，项目工程师另行排期）
@@ -279,7 +288,7 @@ created: 2026-09-04
 
 - **当前阶段**：Phase 4 进行中（R-29~R-33），Phase 5 的 R-34~R-36 已提前完成
 - **当前步骤**：R-29/R-32 的真实 DeepSeek 调用待补（等 `DEEPSEEK_API_KEY`）；R-33 待出基线汇报；R-37 待项目工程师验收
-- **已通过项**：R-01、R-02b、R-03b、R-04、R-05、R-06、R-07~R-17、R-18~R-23c、R-24、R-25、R-26、R-27、R-28b、R-30、R-31、R-32b、R-34、R-35、R-36
+- **已通过项**：R-01、R-02b、R-03b、R-04、R-05、R-06、R-07~R-17、R-18~R-23c、R-24、R-25、R-26、R-27、R-27c、R-27d、R-28b、R-30、R-31、R-32b、R-34、R-35、R-36
 - **未通过项**：R-02（官方源网络超时，已走 R-02b）、R-03（Docker 未运行，已走 R-03b）
 - **待请示事项**：
   1. R-14b / R-16b / R-21(校验) / R-23b / R-23c / R-32b 的「项目工程师指示」待复核（均为技术细节收敛，未触及 tech.md 契约）；
@@ -287,7 +296,7 @@ created: 2026-09-04
   3. **R-29 / R-32 待 key**：`.env` 里 `DEEPSEEK_API_KEY` 填好后即可跑真实生成与 Ragas 首轮评分；
   4. R-28b / R-31 记录的检索质量观察（元问题命中路线图自身、bamboo-old 同目录互相挤占）留待 R-42 用黄金集量化。
 - **最近一次测试结果**（2026-09-22）：`pytest` **109 passed**；`ruff` 零告警；`mypy` strict 35 文件零错误；检索基线 Recall@1=0.467 / @3=0.733 / MRR=0.601（v1 与 v2 一致）；重灌演练 972 块 / 65.1s / 续跑 3.0s
-- **本文件版本**：v0.6.0（2026-09-22 回填 Phase 4（R-29~R-32b）与 Phase 5（R-34~R-36）实测；上一版 v0.5.0 回填 Phase 3）
+- **本文件版本**：v0.6.1（2026-09-22 补录 R-27c/R-27d：tech.md §9 第三杠杆 `ASSEMBLY.md` 与 §11 日志落点；R-36 快照实际产出；上一版 v0.6.0 回填 Phase 4/5）
 
 ---
 
@@ -335,3 +344,8 @@ created: 2026-09-04
 | 2026-09-22 | R-34 | 数据变更 | 新增并排 collection `recall__bge-m3@v2__md`（972 点），旧库 `v1` 保留；A/B 指标完全一致 | tech.md §3.1 换 embedding 版本的演练 |
 | 2026-09-22 | R-32 | 工具链 | promptfoo 通过 `npx promptfoo@latest`（0.123.1）可用；Windows 上须用 `npx.cmd`（`npx.ps1` 被执行策略拦截） | 记于 README 评测段 |
 | 2026-09-22 | — | 清理 | 删除测试遗留的 `recall-test-*` collection（清理失败不应掩盖用例结论，但需人工回收） | 环境整洁 |
+| 2026-09-22 | R-27c | 文档新增 | 新增仓库根 `ASSEMBLY.md`：补 tech.md §9 的第三杠杆（工作区兜底文件） | 见 §四 R-27c；原 §四 未覆盖 |
+| 2026-09-22 | R-27d | 配置落地 | 新增 `Settings.log_to_file`（`RECALL_LOG_TO_FILE`）与 `recall.config.configure_logging()`；日志落盘 `data/logs/<component>.log`（5MB×3 轮转，UTF-8） | 见 §四 R-27d；原 `log_dir` 是悬空配置 |
+| 2026-09-22 | R-27d | 环境变量新增 | 新增环境变量 `RECALL_LOG_TO_FILE`（默认 `1`）；测试在 `tests/conftest.py` 里设为 `0` | 避免用例污染 `data/` |
+| 2026-09-22 | R-36 | 备份落地 | **实际产出** Qdrant 快照两个（v1 882MB / v2 881.9MB，位于 `tools/qdrant/snapshots/`，已 gitignore）；清理重复快照一份 | 快照创建 >60s，客户端 timeout 需放到 180s |
+| 2026-09-22 | R-26 | 格式复核 | 依据 `@deepseek-ai/dsh-mcp-client` 文档核对注册格式：`transport: streamable-http` + `serverName`（`[A-Za-z0-9_-]{1,32}`）+ `url`，工具名形如 `mcp__<serverName>__<tool>` ⇒ `mcp__recall__kb_search`，与 tech.md §8 一致 | DSH 侧实际装载仍需新会话确认 |

@@ -22,6 +22,8 @@ import pytest
 
 # 必须早于 FlagEmbedding / transformers 的导入：让模型只从本地缓存加载
 os.environ.setdefault("HF_HUB_OFFLINE", "1")
+# 测试不写 data/logs（避免用例污染运行期目录）
+os.environ.setdefault("RECALL_LOG_TO_FILE", "0")
 
 from recall.api import close_service, get_service  # noqa: E402
 from recall.embedder import DEFAULT_MODEL_NAME, Embedder  # noqa: E402

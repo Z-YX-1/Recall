@@ -31,7 +31,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from recall.assemble import Candidate, assemble, assemble_evidence
 from recall.auth import InvalidFilterError, effective_filter, get_identity
 from recall.chunker import CHUNKER_NAME
-from recall.config import Settings
+from recall.config import Settings, configure_logging
 from recall.embedder import DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_VERSION, Embedder
 from recall.llm import DeepSeekClient, LlmNotConfiguredError
 from recall.models import (
@@ -101,6 +101,7 @@ class Service:
         """
         registry = Registry(settings.registry_db)
         await registry.initialize()
+        configure_logging(settings, component="api")
         return cls(
             settings=settings,
             store=QdrantStore(settings.qdrant_url),
