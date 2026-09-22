@@ -243,6 +243,8 @@ created: 2026-09-04
 - [ ] **R-33** 汇报基线评测结果（黄金集分数 + Ragas 分数 + 发现的检索质量问题），供项目工程师决定是否进入调优（Phase 6 R-42）。
     ✅ 已完成（检索半，2026-09-22）：新增 `eval/BASELINE.md`——指标表 / 名次分布 / **分类命中率** / 5 题未命中明细 / 质量观察 / R-42 调优候选（按预期收益排序）。
     📌 关键结论：**问题不在 embedding，在语料结构**——AI 技术笔记命中率 0.95、Recall spec 1.00，而 `project/bamboo-old/spec/` 集群只有 0.50（十几篇同主题文档词汇高度重叠、互相挤占 Top-K），4/5 的未命中都出自该集群。
+    📌 **第二结论（新增，2026-09-22）**：跑通 `--no-rerank` 分解实验后发现 **bge-reranker-v2-m3 精排是净负收益**——MRR 0.650（hybrid-only）→ 0.601（+rerank），Recall@1 0.567 → 0.467、Recall@10 0.867 → 0.833，而耗时 14.3s → 108s（5.7 倍）。已列为 R-42 第一优先调优项，并在报告中注明：**在给出可解释结论前不改动 tech.md §4 的链路顺序，只做 A/B 取证**（链路顺序属契约）。
+    ✅ 顺带验证：`eval_retrieval.py --no-rerank` 这条此前从未执行过的分支已跑通；`eval_ragas.py` 在无 key 时**干净退出**（依赖链导入全通过，链路已验到 key 边界）。
     ⏳ **Ragas 半待补**：`eval/eval_ragas.py` 已就绪，等 `.env` 里的 `DEEPSEEK_API_KEY`；跑完把 `faithfulness` / `answer_relevancy` 与引用一致性补进 `eval/BASELINE.md` §6。
 
 ### Phase 5：集成验收与运维演练
@@ -305,9 +307,9 @@ created: 2026-09-04
   1. R-14b / R-16b / R-21(校验) / R-23b / R-23c / R-32b 的「项目工程师指示」待复核（均为技术细节收敛，未触及 tech.md 契约）；
   2. **R-28 待新会话确认**：请新开 DSH 会话，问一句笔记问题，确认出现 `mcp__recall__kb_search` 且回答带 `[n]` 引用；
   3. **R-29 / R-32 待 key**：`.env` 里 `DEEPSEEK_API_KEY` 填好后即可跑真实生成与 Ragas 首轮评分；
-  4. R-28b / R-31 记录的检索质量观察（元问题命中路线图自身、bamboo-old 同目录互相挤占）留待 R-42 用黄金集量化。
-- **最近一次测试结果**（2026-09-22）：`pytest` **109 passed**；`ruff` 零告警；`mypy` strict 35 文件零错误；检索基线 Recall@1=0.467 / @3=0.733 / MRR=0.601（v1 与 v2 一致）；重灌演练 972 块 / 65.1s / 续跑 3.0s
-- **本文件版本**：v0.6.4（2026-09-22 补录 R-27e/R-27f：spec 回写与悬空配置清理；tech.md §14 检查点勾选；上一版 v0.6.3 新增 R-33 检索半报告）
+  4. R-28b / R-31 / R-33 记录的检索质量观察留待 R-42 用黄金集量化；其中 **精排净负收益（MRR 0.650→0.601）已升为 R-42 第一优先项**，但**链路顺序属 tech.md §4 契约，需项目工程师拍板后才能改**。
+- **最近一次测试结果**（2026-09-22）：`pytest` **109 passed**；`ruff` 零告警；`mypy` strict 35 文件零错误；检索基线 +rerank MRR 0.601 / hybrid-only MRR **0.650**（精排净负收益，待 R-42 处理）；重灌演练 972 块 / 65.1s / 续跑 3.0s
+- **本文件版本**：v0.6.5（2026-09-22 补录 R-33 的 `--no-rerank` 分解实验：精排净负收益；上一版 v0.6.4 为 R-27e/R-27f）
 
 ---
 
@@ -367,3 +369,6 @@ created: 2026-09-04
 | 2026-09-22 | R-27f | 入口新增 | `recall/api.py` 增加 `main()`：`python -m recall.api` 按 `Settings.host/port` 启动服务；README 运行拓扑同步 | 让 `host`/`port` 真正生效 |
 | 2026-09-22 | R-27f | 行为显式化 | `Settings.from_env()` 显式 `os.environ.setdefault("HF_ENDPOINT", …)`；新增常量 `DEFAULT_HF_ENDPOINT` | HF 镜像须在任何模型加载前生效（tech.md §12） |
 | 2026-09-22 | — | spec 勾选 | `tech.md` §14 三个待验证检查点勾选并附实测证据（Qdrant native 二进制 / 模型下载 / dense+sparse 冒烟） | 检查点已由 R-03b、R-05、R-06 验证 |
+| 2026-09-22 | R-33 | 实测补录 | `--no-rerank` 分解实验：hybrid-only MRR 0.650 vs +rerank 0.601（Recall@1 0.567 vs 0.467），延迟 14.3s vs 108s ⇒ **精排净负收益**，列为 R-42 第一优先项 | 见 `eval/BASELINE.md` §1；**不改链路顺序**（属 tech.md §4 契约），只取证 |
+| 2026-09-22 | R-33 | 新增产物 | `eval/baseline_v1_hybrid_only.json`（hybrid-only 逐题明细） | 供 R-42 A/B |
+| 2026-09-22 | R-32 | 边界验证 | `eval/eval_ragas.py` 无 key 时干净退出（ragas/langchain/openai 依赖链导入全通过）⇒ 链路已验到 key 边界 | 补齐"未执行过即未验证"的缺口 |

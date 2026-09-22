@@ -7,10 +7,29 @@
 
 | collection | mode | Recall@1 | Recall@3 | Recall@5 | Recall@10 | MRR |
 | :--- | :--- | ---: | ---: | ---: | ---: | ---: |
-| `recall__bge-m3@v1__md` | hybrid + rerank | 0.467 | 0.733 | 0.767 | 0.833 | 0.601 |
+| `recall__bge-m3@v1__md` | hybrid + rerank（生产链路） | 0.467 | 0.733 | 0.767 | 0.833 | 0.601 |
+| `recall__bge-m3@v1__md` | **hybrid-only**（`--no-rerank`） | **0.567** | 0.667 | 0.733 | **0.867** | **0.650** |
 | `recall__bge-m3@v2__md` | hybrid + rerank | 0.467 | 0.733 | 0.767 | 0.833 | 0.601 |
 
-两库指标完全一致 ⇒ **重灌忠实**（同模型、同切分器，R-34）。
+v1/v2 完全一致 ⇒ **重灌忠实**（同模型、同切分器，R-34）。
+
+### ⚠️ 关键发现：当前的 bge-reranker-v2-m3 精排是**净负收益**
+
+| 指标 | hybrid-only | +rerank | 变化 |
+| :--- | ---: | ---: | :--- |
+| Recall@1 | 0.567 | 0.467 | **−0.100** |
+| Recall@3 | 0.667 | 0.733 | +0.066 |
+| Recall@5 | 0.733 | 0.767 | +0.034 |
+| Recall@10 | 0.867 | 0.833 | **−0.034** |
+| **MRR** | **0.650** | **0.601** | **−0.049** |
+
+解读：精排把一部分**原本排第 1 的正确文档压到第 2~3**（Recall@1 ↓、Recall@3 ↑），
+但从第 10 名之后捞回来的更少（Recall@10 ↓），**综合 MRR 反而下降**。
+另注意 hybrid-only 只用 14.3s，rerank 版要 108s——**5.7 倍延迟换来更差的 MRR**。
+
+这是 R-42 的**第一优先调优项**：在没有解释清楚之前，不应默认开启精排。
+候选排查方向：reranker 的 `MAX_LENGTH=1024` 是否截断了长块 / 是否该用
+`query_instruction_for_rerank` / 是否该只对 hybrid 的前 N 名做精排再与前几名做加权融合。
 
 `--no-rerank` 模式（只评测混合召回）尚未跑基线，留作 R-42 的"召回 vs 精排"分解实验。
 
@@ -57,12 +76,21 @@
 - **同文档多块占位**：`Temperature 怎么影响输出的确定性？` 的 Top-3 全部来自同一篇笔记的
   不同小节——`assemble` 的同文档合并只合并 `chunk_index` 连续的块，跨小节不合并，
   因此会把同一篇文档的多个片段一起返回。若希望"多来源优先"，可在 R-42 里加多样性重排。
+- **精排的净收益为负**（见第 1 节）：这是最需要项目工程师拍板的一条——
+  它同时影响"是否继续按 tech.md §4 的固定链路走"这一契约问题，
+  因此在 R-42 给出可解释的结论之前，**不建议改动链路顺序**，只做 A/B 取证。
 
 ## 6. 待补：Ragas 分数
 
 `eval/eval_ragas.py` 已就绪（真跑 kb_answer → 校验 `citations` ↔ `references` ↔ 正文角标 →
 Ragas `aevaluate`，DeepSeek 当裁判、本地 bge-m3 当 embedding），**等待 `.env` 里的
-`DEEPSEEK_API_KEY`**。跑完后本节补上：
+`DEEPSEEK_API_KEY`**。
+
+已完成的验证（2026-09-22）：在无 key 情况下运行 `python eval/eval_ragas.py --limit 2`——
+ragas / langchain / openai 依赖链导入全部通过，脚本在 Settings 检查处**干净退出**并打印
+`缺少 DEEPSEEK_API_KEY：Ragas 需要裁判 LLM（写进 .env 后重跑）`。即：链路已验到 key 边界。
+
+跑完后本节补上：
 
 ```powershell
 python eval/eval_ragas.py --limit 10 --output eval/ragas_baseline.json
@@ -72,9 +100,9 @@ python eval/eval_ragas.py --limit 10 --output eval/ragas_baseline.json
 
 | 候选 | 依据 | 预期 |
 | :--- | :--- | :--- |
-| 切分粒度 A/B（当前 MAX=800 / overlap≈100） | tech.md §2 提示粒度是 recall 最大单一参数 | 提升 Recall@3 的主杠杆 |
+| **查清精排的净负收益**（保留 / 去掉 / 改融合） | 第 1 节：MRR 0.650 → 0.601，延迟 14.3s → 108s | **最高优先**；可能直接砍掉 5.7 倍延迟 |
 | 对 `project/**/spec/**` 集群加多样性约束（MMR 或每文档限流） | 第 3/4 节：该集群互相挤占 | 直接修复 4/5 未命中 |
-| `--no-rerank` 分解实验 | 尚未测 | 判断精排是净收益还是引入偏置 |
+| 切分粒度 A/B（当前 MAX=800 / overlap≈100） | tech.md §2 提示粒度是 recall 最大单一参数 | 提升 Recall@3 |
 | 是否排除 spec 类文档 / query 意图分类 | 第 5 节元问题观察 | 改善"元问题"类 query |
 | 块文本是否前置 `heading_path` 再嵌入 | 当前直接嵌入块原文 | 可能提升短块的语义完整度 |
 

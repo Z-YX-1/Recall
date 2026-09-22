@@ -1,0 +1,586 @@
+{
+  "collection": "recall__bge-m3@v1__md",
+  "mode": "hybrid-only",
+  "golden": "golden_set.jsonl",
+  "total": 30,
+  "recall_at": {
+    "1": 0.5666666666666667,
+    "3": 0.6666666666666666,
+    "5": 0.7333333333333333,
+    "10": 0.8666666666666667
+  },
+  "mrr": 0.6501190476190476,
+  "elapsed_s": 14.254896400001599,
+  "results": [
+    {
+      "question": "Embedding 向量的几何意义是什么？",
+      "expected": [
+        "AI/ai-Embedding (向量) 的几何意义.md"
+      ],
+      "returned": [
+        "Embedding (向量) 的几何意义.md",
+        "AI/ai-Embedding (向量) 的几何意义.md",
+        "AI/ai-Embedding (嵌入模型) 原理.md",
+        "AI/ai-Embedding (嵌入模型) 原理.md",
+        "AI/ai-Embedding (向量) 的几何意义.md",
+        "AI/ai-Embedding (嵌入模型) 原理.md",
+        "Embedding (向量) 的几何意义.md",
+        "Embedding (向量) 的几何意义.md",
+        "AI/ai-向量相似度计算.md",
+        "AI/ai-Embedding (嵌入模型) 原理.md"
+      ],
+      "rank": 2
+    },
+    {
+      "question": "嵌入模型（Embedding Model）的原理是什么？",
+      "expected": [
+        "AI/ai-Embedding (嵌入模型) 原理.md"
+      ],
+      "returned": [
+        "AI/ai-Embedding (嵌入模型) 原理.md",
+        "AI/ai-Embedding (嵌入模型) 原理.md",
+        "AI/ai-Embedding (嵌入模型) 原理.md",
+        "AI/ai-Embedding (嵌入模型) 原理.md",
+        "AI/ai-Embedding (嵌入模型) 原理.md",
+        "AI/ai-Embedding (嵌入模型) 原理.md",
+        "AI/ai-Embedding (向量) 的几何意义.md",
+        "AI/ai-轻量级向量数据库选型.md",
+        "AI/ai-Embedding (向量) 的几何意义.md",
+        "AI/ai-Embedding (向量) 的几何意义.md"
+      ],
+      "rank": 1
+    },
+    {
+      "question": "Function Calling 函数调用是怎么工作的？",
+      "expected": [
+        "AI/ai-Function Calling (函数调用) 原理.md"
+      ],
+      "returned": [
+        "AI/ai-Function Calling (函数调用) 原理.md",
+        "AI/ai-Function Calling (函数调用) 原理.md",
+        "AI/ai-Function Calling (函数调用) 原理.md",
+        "AI/ai-Function Calling (函数调用) 原理.md",
+        "AI/ai-Function Calling (函数调用) 原理.md",
+        "AI/ai-Function Calling (函数调用) 原理.md",
+        "project/bamboo-old/spec/知识点词表-v0.md",
+        "AI/ai-Function Calling (函数调用) 原理.md",
+        "AI/ai-Function Calling (函数调用) 原理.md",
+        "AI/ai-Function Calling (函数调用) 原理.md"
+      ],
+      "rank": 1
+    },
+    {
+      "question": "怎么让大模型稳定输出 JSON？",
+      "expected": [
+        "AI/ai-JSON 模式与结构化输出.md"
+      ],
+      "returned": [
+        "AI/ai-JSON 模式与结构化输出.md",
+        "AI/ai-JSON 模式与结构化输出.md",
+        "AI/ai-自回归生成与注意力机制.md",
+        "大模型速成开发MOC.md",
+        "AI/ai-Temperature 与确定性控制.md",
+        "project/bamboo-old/engine/README.md",
+        "AI/ai-JSON 模式与结构化输出.md",
+        "AI/ai-JSON 模式与结构化输出.md",
+        "AI/ai-JSON 模式与结构化输出.md",
+        "project/bamboo-old/spec/路线图.md"
+      ],
+      "rank": 1
+    },
+    {
+      "question": "多轮对话的上下文是怎么管理的？",
+      "expected": [
+        "AI/ai-Message History (多轮对话上下文管理).md"
+      ],
+      "returned": [
+        "AI/ai-Message History (多轮对话上下文管理).md",
+        "Message History (多轮对话上下文管理).md",
+        "Message History (多轮对话上下文管理).md",
+        "AI/ai-Message History (多轮对话上下文管理).md",
+        "AI/ai-Message History (多轮对话上下文管理).md",
+        "AI/ai-上下文窗口溢出处理.md",
+        "AI/ai-Message History (多轮对话上下文管理).md",
+        "AI/ai-上下文窗口溢出处理.md",
+        "AI/ai-Message History (多轮对话上下文管理).md",
+        "project/bamboo-old/spec/知识点词表-v0.md"
+      ],
+      "rank": 1
+    },
+    {
+      "question": "System Prompt 系统提示词为什么重要？",
+      "expected": [
+        "AI/ai-System Prompt 的威力.md"
+      ],
+      "returned": [
+        "AI/ai-System Prompt 的威力.md",
+        "System Prompt (系统提示词) 的威力.md",
+        "AI/ai-System Prompt 的威力.md",
+        "AI/ai-System Prompt 的威力.md",
+        "project/bamboo-old/spec/知识点词表-v0.md",
+        "AI/ai-System Prompt 的威力.md",
+        "AI/ai-System Prompt 的威力.md",
+        "AI/ai-System Prompt 的威力.md",
+        "AI/ai-System Prompt 的威力.md",
+        "AI/ai-System Prompt 的威力.md"
+      ],
+      "rank": 1
+    },
+    {
+      "question": "Temperature 怎么影响输出的确定性？",
+      "expected": [
+        "AI/ai-Temperature 与确定性控制.md"
+      ],
+      "returned": [
+        "AI/ai-Temperature 与确定性控制.md",
+        "AI/ai-Temperature 与确定性控制.md",
+        "AI/ai-Temperature 与确定性控制.md",
+        "AI/ai-Temperature 与确定性控制.md",
+        "AI/ai-Temperature 与确定性控制.md",
+        "AI/ai-Temperature 与确定性控制.md",
+        "AI/ai-Temperature 与确定性控制.md",
+        "AI/ai-Embedding (向量) 的几何意义.md",
+        "AI/ai-轻量级向量数据库选型.md",
+        "AI/ai-Token (词元) 的计费与拆分机制.md"
+      ],
+      "rank": 1
+    },
+    {
+      "question": "Token 是怎么计费和拆分的？",
+      "expected": [
+        "AI/ai-Token (词元) 的计费与拆分机制.md"
+      ],
+      "returned": [
+        "AI/ai-Token (词元) 的计费与拆分机制.md",
+        "project/bamboo-old/spec/知识点词表-v0.md",
+        "Token (词元) 的计费与拆分机制.md",
+        "AI/ai-自回归生成与注意力机制.md",
+        "Token (词元) 的计费与拆分机制.md",
+        "AI/ai-Token (词元) 的计费与拆分机制.md",
+        "AI/ai-Embedding (嵌入模型) 原理.md",
+        "AI/ai-Token (词元) 的计费与拆分机制.md",
+        "Token (词元) 的计费与拆分机制.md",
+        "AI/ai-Token (词元) 的计费与拆分机制.md"
+      ],
+      "rank": 1
+    },
+    {
+      "question": "上下文窗口溢出了该怎么处理？",
+      "expected": [
+        "AI/ai-上下文窗口溢出处理.md"
+      ],
+      "returned": [
+        "AI/ai-上下文窗口溢出处理.md",
+        "上下文窗口 (Context Window) 溢出处理.md",
+        "AI/ai-上下文窗口溢出处理.md",
+        "AI/ai-上下文窗口溢出处理.md",
+        "AI/ai-上下文窗口溢出处理.md",
+        "AI/ai-上下文窗口溢出处理.md",
+        "上下文窗口 (Context Window) 溢出处理.md",
+        "project/bamboo-old/spec/知识点词表-v0.md",
+        "AI/ai-Message History (多轮对话上下文管理).md",
+        "AI/ai-上下文窗口溢出处理.md"
+      ],
+      "rank": 1
+    },
+    {
+      "question": "向量相似度是怎么计算的？",
+      "expected": [
+        "AI/ai-向量相似度计算.md"
+      ],
+      "returned": [
+        "AI/ai-向量相似度计算.md",
+        "AI/ai-向量相似度计算.md",
+        "AI/ai-向量相似度计算.md",
+        "AI/ai-向量相似度计算.md",
+        "AI/ai-向量相似度计算.md",
+        "AI/ai-向量相似度计算.md",
+        "AI/ai-向量相似度计算.md",
+        "AI/ai-向量相似度计算.md",
+        "AI/ai-向量相似度计算.md",
+        "AI/ai-向量相似度计算.md"
+      ],
+      "rank": 1
+    },
+    {
+      "question": "大模型 API 怎么做鉴权和基础调用？",
+      "expected": [
+        "AI/ai-大模型 API 鉴权与基础调用.md"
+      ],
+      "returned": [
+        "AI/ai-大模型 API 鉴权与基础调用.md",
+        "大模型 API 鉴权与基础调用.md",
+        "AI/ai-大模型 API 鉴权与基础调用.md",
+        "AI/ai-大模型 API 鉴权与基础调用.md",
+        "大模型 API 鉴权与基础调用.md",
+        "AI/ai-大模型 API 鉴权与基础调用.md",
+        "project/bamboo-old/spec/知识点词表-v0.md",
+        "大模型 API 鉴权与基础调用.md",
+        "AI/ai-大模型 API 鉴权与基础调用.md",
+        "AI/ai-大模型 API 鉴权与基础调用.md"
+      ],
+      "rank": 1
+    },
+    {
+      "question": "文本切分器的粒度该选多大？",
+      "expected": [
+        "AI/ai-文本切分器 (Text Splitter).md"
+      ],
+      "returned": [
+        "AI/ai-文本切分器 (Text Splitter).md",
+        "AI/ai-文本切分器 (Text Splitter).md",
+        "AI/ai-文本切分器 (Text Splitter).md",
+        "AI/ai-文本切分器 (Text Splitter).md",
+        "AI/ai-文本切分器 (Text Splitter).md",
+        "AI/ai-文本切分器 (Text Splitter).md",
+        "AI/ai-文本切分器 (Text Splitter).md",
+        "AI/ai-文本切分器 (Text Splitter).md",
+        "project/bamboo-old/spec/知识点词表-v0.md",
+        "AI/ai-文本切分器 (Text Splitter).md"
+      ],
+      "rank": 1
+    },
+    {
+      "question": "流式输出 Streaming 的原理是什么？",
+      "expected": [
+        "AI/ai-流式输出 (Streaming) 原理.md"
+      ],
+      "returned": [
+        "AI/ai-流式输出 (Streaming) 原理.md",
+        "AI/ai-流式输出 (Streaming) 原理.md",
+        "project/bamboo-old/spec/知识点词表-v0.md",
+        "AI/ai-流式输出 (Streaming) 原理.md",
+        "AI/ai-流式输出 (Streaming) 原理.md",
+        "AI/ai-流式输出 (Streaming) 原理.md",
+        "AI/ai-流式输出 (Streaming) 原理.md",
+        "AI/ai-流式输出 (Streaming) 原理.md",
+        "AI/ai-Function Calling (函数调用) 原理.md",
+        "AI/ai-流式输出 (Streaming) 原理.md"
+      ],
+      "rank": 1
+    },
+    {
+      "question": "轻量级向量数据库该怎么选型？",
+      "expected": [
+        "AI/ai-轻量级向量数据库选型.md"
+      ],
+      "returned": [
+        "AI/ai-轻量级向量数据库选型.md",
+        "AI/ai-轻量级向量数据库选型.md",
+        "AI/ai-轻量级向量数据库选型.md",
+        "AI/ai-轻量级向量数据库选型.md",
+        "AI/ai-轻量级向量数据库选型.md",
+        "AI/ai-轻量级向量数据库选型.md",
+        "AI/ai-轻量级向量数据库选型.md",
+        "AI/ai-向量相似度计算.md",
+        "AI/ai-轻量级向量数据库选型.md",
+        "AI/ai-轻量级向量数据库选型.md"
+      ],
+      "rank": 1
+    },
+    {
+      "question": "模型的能力对齐与缩放定律讲的是什么？",
+      "expected": [
+        "AI/ai-模型的能力对齐与缩放定律.md"
+      ],
+      "returned": [
+        "project/bamboo-old/spec/知识点词表-v0.md",
+        "AI/ai-模型的能力对齐与缩放定律.md",
+        "AI/ai-模型的能力对齐与缩放定律.md",
+        "AI/ai-Embedding (嵌入模型) 原理.md",
+        "AI/ai-联网搜索与RAG原理.md",
+        "AI/ai-Embedding (嵌入模型) 原理.md",
+        "Token (词元) 的计费与拆分机制.md",
+        "AI/ai-模型的能力对齐与缩放定律.md",
+        "AI/ai-Temperature 与确定性控制.md",
+        "AI/ai-模型的能力对齐与缩放定律.md"
+      ],
+      "rank": 2
+    },
+    {
+      "question": "联网搜索和 RAG 的原理是什么？",
+      "expected": [
+        "AI/ai-联网搜索与RAG原理.md"
+      ],
+      "returned": [
+        "AI/ai-联网搜索与RAG原理.md",
+        "project/bamboo-old/spec/知识点词表-v0.md",
+        "AI/ai-联网搜索与RAG原理.md",
+        "AI/ai-文本切分器 (Text Splitter).md",
+        "AI/ai-Function Calling (函数调用) 原理.md",
+        "AI/ai-Embedding (向量) 的几何意义.md",
+        "AI/ai-JSON 模式与结构化输出.md",
+        "AI/ai-Embedding (向量) 的几何意义.md",
+        "AI/ai-文本切分器 (Text Splitter).md",
+        "AI/ai-Embedding (向量) 的几何意义.md"
+      ],
+      "rank": 1
+    },
+    {
+      "question": "自回归生成与注意力机制是怎么回事？",
+      "expected": [
+        "AI/ai-自回归生成与注意力机制.md"
+      ],
+      "returned": [
+        "project/bamboo-old/spec/知识点词表-v0.md",
+        "AI/ai-模型的能力对齐与缩放定律.md",
+        "AI/ai-上下文窗口溢出处理-问答自测.md",
+        "AI/ai-Temperature 与确定性控制.md",
+        "AI/ai-自回归生成与注意力机制.md",
+        "AI/ai-流式输出 (Streaming) 原理.md",
+        "AI/ai-自回归生成与注意力机制.md",
+        "AI/ai-联网搜索与RAG原理.md",
+        "AI/ai-联网搜索与RAG原理.md",
+        "AI/ai-上下文窗口溢出处理.md"
+      ],
+      "rank": 5
+    },
+    {
+      "question": "大模型开发架构大纲都包含哪些内容？",
+      "expected": [
+        "AI大模型开发架构大纲MOC.md"
+      ],
+      "returned": [
+        "AI/ai-JSON 模式与结构化输出.md",
+        "大模型速成开发MOC.md",
+        "AI/ai-Embedding (向量) 的几何意义.md",
+        "大模型测试MOC.md",
+        "大模型速成开发MOC.md",
+        "AI/ai-Embedding (嵌入模型) 原理.md",
+        "大模型速成开发MOC.md",
+        "AI大模型开发架构大纲MOC.md",
+        "AI/ai-Embedding (向量) 的几何意义.md",
+        "大模型测试MOC.md"
+      ],
+      "rank": 8
+    },
+    {
+      "question": "大模型测试 MOC 里列了哪些测试方向？",
+      "expected": [
+        "大模型测试MOC.md"
+      ],
+      "returned": [
+        "大模型测试MOC.md",
+        "AI/ai-Temperature 与确定性控制.md",
+        "三阶段方案评审与路线图.md",
+        "AI大模型开发架构大纲MOC.md",
+        "大模型测试MOC.md",
+        "大模型速成开发MOC.md",
+        "Praxis本地运行指南.md",
+        "AI/ai-System Prompt 的威力.md",
+        "project/Recall/spec/tech.md",
+        "System Prompt (系统提示词) 的威力.md"
+      ],
+      "rank": 1
+    },
+    {
+      "question": "Recall 这个项目为什么选 Qdrant 做向量库、选 bge-m3 做 embedding？",
+      "expected": [
+        "project/Recall/spec/tech.md"
+      ],
+      "returned": [
+        "AI/ai-向量相似度计算.md",
+        "project/Recall/spec/tech.md",
+        "project/Recall/spec/tech.md",
+        "project/Recall/spec/tech.md",
+        "AI/ai-向量相似度计算.md",
+        "AI/ai-向量相似度计算.md",
+        "AI/ai-向量相似度计算.md",
+        "AI/ai-轻量级向量数据库选型.md",
+        "AI/ai-向量相似度计算.md",
+        "project/Recall/spec/tech.md"
+      ],
+      "rank": 2
+    },
+    {
+      "question": "Recall 的代码规范对 ruff 和 mypy 有什么要求？",
+      "expected": [
+        "project/Recall/spec/code_standards.md"
+      ],
+      "returned": [
+        "project/Recall/spec/code_standards.md",
+        "AI/ai-Embedding (向量) 的几何意义.md",
+        "AI/ai-JSON 模式与结构化输出.md",
+        "project/Recall/spec/roadmap.md",
+        "project/Recall/spec/tech.md",
+        "project/Recall/spec/tech.md",
+        "project/Recall/spec/code_standards.md",
+        "project/Recall/spec/tech.md",
+        "AI/ai-Embedding (嵌入模型) 原理.md",
+        "project/Recall/spec/roadmap.md"
+      ],
+      "rank": 1
+    },
+    {
+      "question": "Recall 的开发路线图分哪几个阶段？",
+      "expected": [
+        "project/Recall/spec/roadmap.md"
+      ],
+      "returned": [
+        "project/Recall/spec/tech.md",
+        "AI/ai-Embedding (向量) 的几何意义.md",
+        "project/Recall/spec/tech.md",
+        "project/Recall/spec/roadmap.md",
+        "project/Recall/spec/tech.md",
+        "project/Recall/spec/roadmap.md",
+        "project/Recall/spec/tech.md",
+        "AI/ai-Embedding (向量) 的几何意义.md",
+        "AI/ai-Embedding (嵌入模型) 原理.md",
+        "project/Recall/spec/tech.md"
+      ],
+      "rank": 4
+    },
+    {
+      "question": "代码教练的引擎是怎么设计的？",
+      "expected": [
+        "project/bamboo-old/spec/教练引擎设计.md"
+      ],
+      "returned": [
+        "project/bamboo-old/spec/文档一致性核查.md",
+        "project/bamboo-old/README.md",
+        "project/bamboo-old/spec/教学注释-设计.md",
+        "project/bamboo-old/engine/README.md",
+        "project/bamboo-old/AGENTS.local.md",
+        "project/bamboo-old/spec/路线图.md",
+        "project/bamboo-old/spec/教练守则-v1.md",
+        "project/bamboo-old/spec/DSH扩展点-实测.md",
+        "project/bamboo-old/spec/教练引擎-格式与模板.md",
+        "project/bamboo-old/README.md"
+      ],
+      "rank": null
+    },
+    {
+      "question": "教练引擎的格式与模板规定了什么？",
+      "expected": [
+        "project/bamboo-old/spec/教练引擎-格式与模板.md"
+      ],
+      "returned": [
+        "project/bamboo-old/engine/README.md",
+        "project/bamboo-old/spec/教练引擎设计.md",
+        "project/bamboo-old/engine/README.md",
+        "project/bamboo-old/spec/代码教练-项目蓝图.md",
+        "project/bamboo-old/spec/文档一致性核查.md",
+        "project/bamboo-old/AGENTS.local.md",
+        "project/bamboo-old/plugin/README.md",
+        "project/bamboo-old/spec/文档一致性核查.md",
+        "project/bamboo-old/spec/教练守则-v1.md",
+        "project/bamboo-old/README.md"
+      ],
+      "rank": null
+    },
+    {
+      "question": "教学注释是怎么设计的？",
+      "expected": [
+        "project/bamboo-old/spec/教学注释-设计.md"
+      ],
+      "returned": [
+        "project/bamboo-old/spec/教学注释-设计.md",
+        "project/bamboo-old/spec/路线图.md",
+        "project/bamboo-old/AGENTS.local.md",
+        "Praxis源码拆解.md",
+        "project/bamboo-old/spec/路线图.md",
+        "project/bamboo-old/spec/教学注释-设计.md",
+        "project/bamboo-old/spec/文档一致性核查.md",
+        "project/bamboo-old/spec/教学注释-设计.md",
+        "project/bamboo-old/spec/路线图.md",
+        "project/bamboo-old/spec/教学注释-设计.md"
+      ],
+      "rank": 1
+    },
+    {
+      "question": "知识点词表 v0 里收了哪些知识点？",
+      "expected": [
+        "project/bamboo-old/spec/知识点词表-v0.md"
+      ],
+      "returned": [
+        "project/bamboo-old/spec/教练守则-v1.md",
+        "project/bamboo-old/spec/教练引擎设计.md",
+        "project/bamboo-old/spec/文档一致性核查.md",
+        "project/bamboo-old/spec/文档一致性核查.md",
+        "project/bamboo-old/spec/教练引擎设计.md",
+        "project/bamboo-old/README.md",
+        "project/bamboo-old/spec/文档一致性核查.md",
+        "project/bamboo-old/spec/路线图.md",
+        "project/bamboo-old/spec/教练引擎-格式与模板.md",
+        "AI/ai-Token (词元) 的计费与拆分机制.md"
+      ],
+      "rank": null
+    },
+    {
+      "question": "bamboo-old 的路线图是怎么规划的？",
+      "expected": [
+        "project/bamboo-old/spec/路线图.md"
+      ],
+      "returned": [
+        "project/bamboo-old/spec/代码教练-设计草案.md",
+        "project/bamboo-old/spec/技术栈.md",
+        "project/bamboo-old/spec/DSH右栏插件-可行性报告.md",
+        "project/bamboo-old/spec/DSH右栏插件-可行性报告.md",
+        "project/bamboo-old/spec/教学注释-设计.md",
+        "project/bamboo-old/plugin/README.md",
+        "project/bamboo-old/spec/路线图.md",
+        "project/bamboo-old/spec/代码教练-项目蓝图.md",
+        "project/bamboo-old/spec/DSH右栏插件-可行性报告.md",
+        "project/bamboo-old/spec/教练守则-v1.md"
+      ],
+      "rank": 7
+    },
+    {
+      "question": "DSH 的扩展点实测结论是什么？",
+      "expected": [
+        "project/bamboo-old/spec/DSH扩展点-实测.md"
+      ],
+      "returned": [
+        "project/bamboo-old/spec/技术栈.md",
+        "project/bamboo-old/spec/代码教练-设计草案.md",
+        "project/bamboo-old/spec/技术栈.md",
+        "project/bamboo-old/spec/路线图.md",
+        "project/bamboo-old/spec/技术栈.md",
+        "project/bamboo-old/spec/技术栈.md",
+        "project/bamboo-old/spec/代码教练-项目蓝图.md",
+        "project/bamboo-old/spec/技术栈.md",
+        "project/bamboo-old/README.md",
+        "project/bamboo-old/spec/技术栈.md"
+      ],
+      "rank": null
+    },
+    {
+      "question": "代码教练项目的蓝图是什么？",
+      "expected": [
+        "project/bamboo-old/spec/代码教练-项目蓝图.md"
+      ],
+      "returned": [
+        "project/bamboo-old/spec/教练守则-v1.md",
+        "project/bamboo-old/spec/代码教练-设计草案.md",
+        "project/bamboo-old/README.md",
+        "project/bamboo-old/spec/文档一致性核查.md",
+        "project/bamboo-old/spec/教学注释-设计.md",
+        "project/bamboo-old/README.md",
+        "project/bamboo-old/spec/代码教练-项目蓝图.md",
+        "project/bamboo-old/spec/路线图.md",
+        "三阶段方案评审与路线图.md",
+        "Praxis源码拆解.md"
+      ],
+      "rank": 7
+    },
+    {
+      "question": "Praxis 的源码是怎么拆解的？",
+      "expected": [
+        "Praxis源码拆解.md"
+      ],
+      "returned": [
+        "project/bamboo-old/spec/代码教练-设计草案.md",
+        "project/praxis/README.md",
+        "三阶段方案评审与路线图.md",
+        "三阶段方案评审与路线图.md",
+        "编程练习-4周计划.md",
+        "Praxis本地运行指南.md",
+        "Praxis源码拆解.md",
+        "Praxis源码拆解.md",
+        "三阶段方案评审与路线图.md",
+        "Praxis源码拆解.md"
+      ],
+      "rank": 7
+    }
+  ]
+}
