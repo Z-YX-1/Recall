@@ -56,21 +56,38 @@ uvicorn recall.api:app --host 127.0.0.1 --port 8000
 ## 质量门槛
 
 ```powershell
-ruff check recall ingest.py tests      # 零告警
-ruff format --check recall ingest.py tests
-mypy recall ingest.py tests            # strict，零错误
-pytest -q                              # 全绿；依赖不可用的集成用例会 skip 并给出原因
+ruff check recall ingest.py eval tests   # 零告警
+ruff format --check recall ingest.py eval tests
+mypy recall ingest.py eval tests         # strict，零错误
+pytest -q                                # 全绿；依赖不可用的集成用例会 skip 并给出原因
 ```
+
+## 评测（tech.md §10）
+
+```powershell
+# 检索指标：Recall@K / MRR（--collection 参数化 ⇒ 新旧库并排 A/B）
+python eval/eval_retrieval.py --collection recall__bge-m3@v1__md --k 1,3,5,10 --output eval/baseline_v1.json
+python eval/eval_retrieval.py --collection recall__bge-m3@v1__md --no-rerank   # 只看混合召回
+
+# RAG 质量：Ragas faithfulness / answer relevancy（需要 DEEPSEEK_API_KEY）
+pip install -e ".[eval]"
+python eval/eval_ragas.py --limit 10 --output eval/ragas_baseline.json
+
+# prompt 回归（需要服务在跑）：npx promptfoo@latest eval -c eval/promptfoo/promptfooconfig.yaml
+```
+
+当前基线（`recall__bge-m3@v1__md`，30 题）：Recall@1=0.467 / Recall@3=0.733 / MRR=0.601。
 
 ## 幂等三机制（tech.md §5）
 
 | 机制 | 作用 |
 | --- | --- |
-| 文档级 hash 跳过 | `sha256(归一化全文)` 未变 ⇒ 整篇跳过 |
+| 文档级 hash 跳过 | `sha256(归一化全文)` 未变 ⇒ 整篇跳过（`--update`） |
 | 块级内容寻址 | `point_id = uuid5(doc_id, chunk_index, content_hash)` ⇒ 未变块原地覆盖 |
 | 孤儿清理 | 重灌后按 `doc_id` 扫出旧 point，删除不在新 id 集合中的点 |
 
-断点续传 = 直接重跑：未写完 registry 的文档下次会被重新处理。
+跳过语义：`--update` 走账本快路径；`--rebuild` 忽略账本但目标库已一致时跳过（可断点续传）；
+`--force` 无条件重新嵌入。
 
 ## 仓库
 

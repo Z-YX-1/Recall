@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from qdrant_client import models
+
 from ingest import run_ingest
 from tests.helpers import IngestEnv, ingest_args, write_note
 
@@ -31,13 +33,58 @@ async def test_ingest_run_is_idempotent(ingest_env: IngestEnv) -> None:
     assert await ingest_env.store.count_points(ingest_env.collection) == first.indexed_chunks
 
 
-async def test_rebuild_reprocesses_every_document(ingest_env: IngestEnv) -> None:
+async def test_rebuild_into_new_collection_keeps_the_old_one(ingest_env: IngestEnv) -> None:
+    """换 embedding 版本并排重灌：新库全量写入，**旧库不删**（tech.md §3.1）。"""
+    write_note(ingest_env.vault, "甲.md", "# 甲\n\n正文\n")
+    await run_ingest(ingest_args(ingest_env))
+    assert await ingest_env.store.count_points(ingest_env.collection, "甲") == 1
+
+    fresh = f"{ingest_env.collection}-v2"
+    try:
+        report = await run_ingest(
+            ingest_args(ingest_env, mode="rebuild", extra=["--collection", fresh])
+        )
+        assert report.skipped == 0  # 目标库为空 ⇒ 全量重灌
+        assert report.indexed_docs == 1
+        assert await ingest_env.store.count_points(fresh, "甲") == 1
+        # 旧库原样保留，供评测与回滚
+        assert await ingest_env.store.count_points(ingest_env.collection, "甲") == 1
+    finally:
+        await ingest_env.store.client.delete_collection(fresh)
+
+
+async def test_rebuild_resumes_without_reembedding(ingest_env: IngestEnv) -> None:
+    """断点续传：目标库已与本次切分一致 ⇒ 跳过；缺块时只补该文档（tech.md §5）。"""
+    write_note(ingest_env.vault, "甲.md", "# 甲\n\n正文\n")
+    write_note(ingest_env.vault, "乙.md", "# 乙\n\n正文\n")
+    await run_ingest(ingest_args(ingest_env))
+
+    resumed = await run_ingest(ingest_args(ingest_env, mode="rebuild"))
+    assert resumed.skipped == 2
+    assert resumed.indexed_docs == 0
+    assert resumed.indexed_chunks == 0
+
+    # 模拟"上次写到一半就中断"：把甲的点全删掉
+    ids = await ingest_env.store.scroll_doc_ids(ingest_env.collection, "甲")
+    await ingest_env.store.client.delete(
+        ingest_env.collection,
+        points_selector=models.PointIdsList(points=sorted(ids)),
+        wait=True,
+    )
+
+    repaired = await run_ingest(ingest_args(ingest_env, mode="rebuild"))
+    assert repaired.indexed_docs == 1  # 只补甲
+    assert repaired.skipped == 1  # 乙原样跳过
+    assert await ingest_env.store.count_points(ingest_env.collection, "甲") == 1
+
+
+async def test_force_reembeds_even_when_target_matches(ingest_env: IngestEnv) -> None:
     write_note(ingest_env.vault, "甲.md", "# 甲\n\n正文\n")
     await run_ingest(ingest_args(ingest_env))
 
-    report = await run_ingest(ingest_args(ingest_env, mode="rebuild"))
-    assert report.skipped == 0
-    assert report.indexed_docs == 1
+    forced = await run_ingest(ingest_args(ingest_env, extra=["--force"]))
+    assert forced.skipped == 0
+    assert forced.indexed_docs == 1
     assert await ingest_env.store.count_points(ingest_env.collection, "甲") == 1
 
 

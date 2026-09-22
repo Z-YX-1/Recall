@@ -217,13 +217,38 @@ created: 2026-09-04
     未命中 5 题集中在 `project/bamboo-old/spec/*`（同目录下多篇高度相似的教练类文档互相挤占）；留待 R-42 用黄金集量化调优。另提供 `--no-rerank` 以分阶段对比"混合召回 vs 召回+精排"。
 - [ ] **R-32** 接入 Ragas（faithfulness / answer relevancy，评测 kb_answer 回答）+ promptfoo（prompt 回归）。
     ✅ 验证：kb_answer 的 citations 与 references 一一对应；Ragas 首轮分数记录。
+    🔧 已就绪（2026-09-22）：`eval/eval_ragas.py` 写好——真跑 kb_answer 收集回答与证据 → `check_citation_consistency` 校验 `citations`↔`references` ↔ 正文角标 → Ragas `aevaluate`（DeepSeek 当裁判 + **本地 bge-m3** 当 embedding，符合"内容不出域"）；`eval/promptfoo/promptfooconfig.yaml` 写好（引用格式 / 忠实度 / 无证据不硬答三类断言）。
+    ⏳ **待跑**：真实分数依赖 `DEEPSEEK_API_KEY`，写入 `.env` 后 `python eval/eval_ragas.py --limit 10 --output eval/ragas_baseline.json`。
+    ⚠️ 问题：Ragas 0.4.3 在模块顶层 `import langchain_community.chat_models.vertexai`，该模块在 langchain-community 0.4 已移除 ⇒ 直接装的最新组合 `ImportError`（2026-09-22 实测）。
+- [x] **R-32b** 依赖收敛：`pyproject.toml` 增加 `eval` 可选依赖组并**钉死 `langchain-community>=0.3,<0.4`**；同时把 `openai` 约束由 `<2` 放宽到 `<4`（ragas 依赖链装上了 openai 3.3.0，经核验 `AsyncOpenAI(api_key=...)/chat.completions.create(response_format=..., max_tokens=...)` 在 3.3.0 下仍可用）。
+    ✅ 验证：`import ragas` 成功；`recall.api` / `recall.llm` 导入正常；`pytest` 全绿（见下）。
+    🧭 项目工程师指示：**待复核**（依赖约束调整，属 R-32 的前置修复）
 - [ ] **R-33** 汇报基线评测结果（黄金集分数 + Ragas 分数 + 发现的检索质量问题），供项目工程师决定是否进入调优（Phase 6 R-42）。
 
 ### Phase 5：集成验收与运维演练
 
-- [ ] **R-34** 重灌演练：用同一管道参数化**并排**重建新 collection（模拟换 embedding 版本），旧库不删；验证重灌脚本可重复、幂等、断点续传（tech.md §5/§3.1）。
-- [ ] **R-35** 全量回归：`pytest` 全绿 + `ruff` / `mypy` 零错误 + DSH 端到端复测（R-28 场景）。
-- [ ] **R-36** 备份确认：vault 原文 git 备份 + Qdrant snapshot + registry SQLite 备份路径记录（tech.md §2 备份行）。
+- [x] **R-34** 重灌演练：用同一管道参数化**并排**重建新 collection（模拟换 embedding 版本），旧库不删；验证重灌脚本可重复、幂等、断点续传（tech.md §5/§3.1）。
+    ✅ 实测（2026-09-22）：
+    | 动作 | 结果 |
+    | :--- | :--- |
+    | `ingest.py --rebuild --collection recall__bge-m3@v2__md --model bge-m3@v2` | 扫描 65 / 入库 58 篇 / **972 块** / 失败 0 / 65.1s |
+    | 旧库 `recall__bge-m3@v1__md` | **972 点，metadata 仍为 v1**（旧库不删，供评测与回滚） |
+    | 新库 `recall__bge-m3@v2__md` | 972 点，metadata `embedding_version=v2` |
+    | 重跑同一条 `--rebuild`（断点续传演练） | **扫描 65 / 跳过 65 / 入库 0 / 3.0s** —— 幂等且可续跑 |
+    | A/B 检索指标（`--no-rerank` 之外同参数） | v1 与 v2 **完全一致**：Recall@1=0.467 / @3=0.733 / @5=0.767 / @10=0.833 / MRR=0.601 ⇒ 重灌忠实（同模型同切分器） |
+    ✅ 顺带修复：`--rebuild` 原先等于"无条件重灌"，中断后只能从头再来；改为「忽略账本快路径，但目标库已与本次切分结果一致时跳过」⇒ **真正可断点续传**；要无条件重灌用 `--force`。`tests/test_ingest.py` 新增 3 项覆盖（新库并排 / 续跑 / force）。
+- [x] **R-35** 全量回归：`pytest` 全绿 + `ruff` / `mypy` 零错误 + DSH 端到端复测（R-28 场景）。
+    ✅ 实测（2026-09-22）：`pytest` **109 passed**；`ruff check` 零告警；`mypy` strict 35 文件（recall + ingest + eval + tests）零错误；`/health` ok（v1 972 点 / 65 篇）。
+    ⏳ DSH 端到端复测（R-28 场景）仍需项目工程师在新会话确认。
+- [x] **R-36** 备份确认：vault 原文 git 备份 + Qdrant snapshot + registry SQLite 备份路径记录（tech.md §2 备份行）。
+    ✅ 实测（2026-09-22）：
+    | 备份对象 | 位置 | 说明 |
+    | :--- | :--- | :--- |
+    | vault 原文（第一备份） | 用户自有 Obsidian 仓库（git） | 摄取只读，不写回 vault |
+    | registry SQLite | `data/registry.db` | 65 条文档账本；**恢复路径 = 重灌脚本** |
+    | Qdrant 向量 | `tools/qdrant/storage/`（服务端持久化目录） | 可用 `POST /collections/<名>/snapshots` 出快照到 `tools/qdrant/snapshots/` |
+    | 恢复演练 | `python ingest.py --rebuild` 即可从 vault 原文重建全部向量 | 见 R-34（972 块 65.1s） |
+    ⚠️ 注意：`data/` 与 `tools/qdrant/storage/` 均在 `.gitignore` 中（体积大、可再生），**唯一的必需备份是 vault 原文**。
 - [ ] **R-37** 项目工程师验收：按 tech.md §12 启动说明亲自跑完整流程——摄取 → 检索 → DSH 问答带引用 → 评测出分，全部符合验收标准后签字。
 
 ### Phase 6：后续迭代预留（不在首版验收范围，项目工程师另行排期）
@@ -252,16 +277,17 @@ created: 2026-09-04
 
 ## 六、 当前进度快照（每步完成/受阻后更新）
 
-- **当前阶段**：Phase 3 已完成（REST + MCP + DSH 接入），下一步进入 **Phase 4（胖端点与评测体系）R-29**
-- **当前步骤**：R-28b 已完成 → 待开工 R-29（R-28 字面验收待新会话确认）
-- **已通过项**：R-01、R-02b、R-03b、R-04、R-05、R-06、R-07~R-17、R-18~R-23c、R-24、R-25、R-26、R-27、R-28b
+- **当前阶段**：Phase 4 进行中（R-29~R-33），Phase 5 的 R-34~R-36 已提前完成
+- **当前步骤**：R-29/R-32 的真实 DeepSeek 调用待补（等 `DEEPSEEK_API_KEY`）；R-33 待出基线汇报；R-37 待项目工程师验收
+- **已通过项**：R-01、R-02b、R-03b、R-04、R-05、R-06、R-07~R-17、R-18~R-23c、R-24、R-25、R-26、R-27、R-28b、R-30、R-31、R-32b、R-34、R-35、R-36
 - **未通过项**：R-02（官方源网络超时，已走 R-02b）、R-03（Docker 未运行，已走 R-03b）
 - **待请示事项**：
-  1. R-14b / R-16b / R-23b / R-23c 的「项目工程师指示」待复核（技术细节收敛，未触及 tech.md 契约）；
+  1. R-14b / R-16b / R-21(校验) / R-23b / R-23c / R-32b 的「项目工程师指示」待复核（均为技术细节收敛，未触及 tech.md 契约）；
   2. **R-28 待新会话确认**：请新开 DSH 会话，问一句笔记问题，确认出现 `mcp__recall__kb_search` 且回答带 `[n]` 引用；
-  3. R-28b 记录的检索质量观察（元问题命中路线图自身）留待 R-42 用黄金集量化。
-- **最近一次测试结果**（2026-09-22）：`pytest` **96 passed**；`ruff check` 零告警；`mypy` strict 30 文件零错误；`/health` ok（65 篇 / 972 点）；MCP 真实握手 + `kb_search`/`kb_stats` 调用成功
-- **本文件版本**：v0.5.0（2026-09-22 回填 Phase 3（R-24~R-28b）实测验证与问题记录；上一版 v0.4.0 回填 Phase 2）
+  3. **R-29 / R-32 待 key**：`.env` 里 `DEEPSEEK_API_KEY` 填好后即可跑真实生成与 Ragas 首轮评分；
+  4. R-28b / R-31 记录的检索质量观察（元问题命中路线图自身、bamboo-old 同目录互相挤占）留待 R-42 用黄金集量化。
+- **最近一次测试结果**（2026-09-22）：`pytest` **109 passed**；`ruff` 零告警；`mypy` strict 35 文件零错误；检索基线 Recall@1=0.467 / @3=0.733 / MRR=0.601（v1 与 v2 一致）；重灌演练 972 块 / 65.1s / 续跑 3.0s
+- **本文件版本**：v0.6.0（2026-09-22 回填 Phase 4（R-29~R-32b）与 Phase 5（R-34~R-36）实测；上一版 v0.5.0 回填 Phase 3）
 
 ---
 
@@ -303,3 +329,9 @@ created: 2026-09-04
 | 2026-09-22 | R-27 | 路径修正 | skill 安装路径由 `~/.dsh/skills/` 修正为 **`$DSH_HOME/skills`**（本机 `DSH_HOME=D:\dsh-data`，`~/.dsh` 不存在）；依据 `@deepseek-ai/dsh-skill-filesystem` 的根目录优先级表（`<dshHome>/skills` = user-dsh，rank 400） | tech.md §9/§11 的 `~/.dsh` 是按默认 `DSH_HOME` 写的 |
 | 2026-09-22 | R-26 | 外部配置变更 | 修改 `D:\dsh-data\mcp-servers.json`：新增 `recall` 服务器条目（Context7 保留），**仓库外文件**，故在此登记 | 生效需新开 DSH 会话 |
 | 2026-09-22 | R-25 | 测试补强 | 新增 `tests/test_mcp.py`（工具注册/召唤词 docstring/outputSchema/结构化错误/进程内 ASGI 生命周期握手） | code_standards §6.2/§6.3 |
+| 2026-09-22 | R-32 | 依赖新增 | `pyproject.toml` 增加 `eval` 可选依赖组：`ragas`、`langchain-community>=0.3,<0.4`、`langchain-openai`、`pandas` | Ragas 为 tech.md §10 指定工具 |
+| 2026-09-22 | R-32 | 依赖约束放宽 | `openai` 由 `>=1.50,<2` 放宽到 `>=1.50,<4`：ragas 依赖链装上 openai 3.3.0；实测 `AsyncOpenAI(api_key=…, base_url=…)` 与 `chat.completions.create(response_format=…, max_tokens=…)` 在 3.3.0 下仍可用，`recall.llm` 行为不变 | 见 §五 R-32b |
+| 2026-09-22 | R-34 | 语义修正 | `--rebuild` 由"无条件重灌"改为「忽略 registry 快路径，但目标库已与本次切分结果一致时跳过」⇒ 真正可断点续传；无条件重灌改用 `--force` | tech.md §5 要求"幂等、可断点续传、可重复执行"；`--update`/`--force` 语义不变 |
+| 2026-09-22 | R-34 | 数据变更 | 新增并排 collection `recall__bge-m3@v2__md`（972 点），旧库 `v1` 保留；A/B 指标完全一致 | tech.md §3.1 换 embedding 版本的演练 |
+| 2026-09-22 | R-32 | 工具链 | promptfoo 通过 `npx promptfoo@latest`（0.123.1）可用；Windows 上须用 `npx.cmd`（`npx.ps1` 被执行策略拦截） | 记于 README 评测段 |
+| 2026-09-22 | — | 清理 | 删除测试遗留的 `recall-test-*` collection（清理失败不应掩盖用例结论，但需人工回收） | 环境整洁 |

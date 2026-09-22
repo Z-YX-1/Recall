@@ -1,0 +1,79 @@
+# Recall · prompt 回归（promptfoo）
+#
+# 用途：kb_answer 的组装模板 / 忠实度规则 / 引用格式每次变更后重跑（tech.md §10 触发点）。
+#
+# 前置：
+#   1. Qdrant 在跑（tools/qdrant/qdrant.exe）
+#   2. python -m uvicorn recall.api:app --host 127.0.0.1 --port 8000
+#   3. .env 里配好 DEEPSEEK_API_KEY
+#
+# 运行：
+#   npx promptfoo@latest eval -c eval/promptfoo/promptfooconfig.yaml
+#   npx promptfoo@latest view
+
+description: Recall kb_answer 回归（引用格式 / 忠实度 / 无证据不硬答）
+
+prompts:
+  - '{{query}}'
+
+providers:
+  - id: http
+    label: recall-kb-answer
+    config:
+      url: http://127.0.0.1:8000/kb/answer
+      method: POST
+      headers:
+        Content-Type: application/json
+      body:
+        query: '{{query}}'
+        max_tokens: 3000
+      transformResponse: json
+
+defaultTest:
+  assert:
+    # 统一错误信封：出现 error 字段即视为失败（code_standards §6.1）
+    - type: javascript
+      value: '!output.error'
+    # 答案非空
+    - type: javascript
+      value: 'typeof output.answer === "string" && output.answer.length > 0'
+    # citations 与 references 一一对应：每个引用编号都必须能索引到出处（code_standards §8）
+    - type: javascript
+      value: |
+        const cited = output.citations || [];
+        const refs = output.references || [];
+        return cited.every(n => Number.isInteger(n) && n >= 1 && n <= refs.length);
+    # 正文里的 [n] 角标必须都在 citations 里声明（防引用幻觉）
+    - type: javascript
+      value: |
+        const declared = new Set((output.citations || []).map(String));
+        const used = [...String(output.answer || '').matchAll(/\[(\d+)\]/g)].map(m => m[1]);
+        return used.every(n => declared.has(n));
+
+tests:
+  - vars:
+      query: 混合检索是怎么把两路召回结果融合起来的？
+    assert:
+      - type: javascript
+        value: '(output.citations || []).length > 0'
+
+  - vars:
+      query: 文本切分器的粒度该怎么选？
+    assert:
+      - type: javascript
+        value: 'output.references.some(r => r.source_uri.includes("文本切分器"))'
+
+  - vars:
+      query: Temperature 怎么影响输出的确定性？
+    assert:
+      - type: javascript
+        value: 'output.references.some(r => r.source_uri.includes("Temperature"))'
+
+  # 忠实度：库里没有的主题，必须说"没检索到"，禁止硬答（code_standards §5）
+  - vars:
+      query: 请给出 2026 年诺贝尔物理学奖得主的详细履历
+    assert:
+      - type: javascript
+        value: |
+          const a = output.answer || '';
+          return (output.citations || []).length === 0 || a.includes('没有') || a.includes('未');

@@ -3,9 +3,16 @@
 用法::
 
     python ingest.py --update                       # 增量摄取（默认模式）
-    python ingest.py --rebuild                      # 忽略 hash 跳过，整篇重灌同库
+    python ingest.py --rebuild                      # 重灌同库（可断点续传，见下）
     python ingest.py --rebuild --collection recall__bge-m3@v2__md --model bge-m3@v2
-    python ingest.py --update --force               # 强制重灌
+    python ingest.py --update --force               # 无条件重灌（重新嵌入）
+
+三种跳过语义：
+
+- ``--update``：registry 命中同 ``content_hash`` ⇒ 整篇跳过（不切分、不编码）；
+- ``--rebuild``：忽略账本快路径，但**目标 collection 已与本次切分结果一致时跳过**
+  —— 换 embedding 版本并排重灌时目标库是空的，等于全量重灌；中断后重跑只补没写完的部分；
+- ``--force``：无条件重新嵌入 + 原地覆盖。
 
 **幂等三机制**（顺序固定，code_standards §4.2）：
 
@@ -38,7 +45,14 @@ from recall.embedder import (
     DEFAULT_MODEL_NAME,
     Embedder,
 )
-from recall.models import ChunkPayload, DocRecord, RawDoc, chunk_content_hash, chunk_point_id
+from recall.models import (
+    Chunk,
+    ChunkPayload,
+    DocRecord,
+    RawDoc,
+    chunk_content_hash,
+    chunk_point_id,
+)
 from recall.registry import Registry
 from recall.store import ChunkPoint, QdrantStore, collection_name
 
@@ -103,7 +117,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Recall 摄取管道（幂等、可重复执行）")
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--update", action="store_true", help="增量摄取（默认）")
-    mode.add_argument("--rebuild", action="store_true", help="忽略 hash 跳过，整篇重灌")
+    mode.add_argument(
+        "--rebuild",
+        action="store_true",
+        help="重灌：忽略 registry 快路径，但目标库已与本次切分一致时跳过（可断点续传）",
+    )
     parser.add_argument("--collection", default=None, help="目标 collection 名（默认按契约生成）")
     parser.add_argument(
         "--model",
@@ -122,7 +140,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="逗号分隔的跳过目录名；默认用 DEFAULT_SKIP_DIRS（含 node_modules 等工程产物）",
     )
-    parser.add_argument("--force", action="store_true", help="忽略文档级 hash 跳过")
+    parser.add_argument("--force", action="store_true", help="无条件重灌（重新嵌入 + 原地覆盖）")
     parser.add_argument("--max-tokens", type=int, default=MAX_CHUNK_TOKENS, help="单块 token 上限")
     parser.add_argument(
         "--batch-size", type=int, default=DEFAULT_BATCH_SIZE, help="嵌入批大小（16~32）"
@@ -152,7 +170,6 @@ async def run_ingest(args: argparse.Namespace) -> IngestReport:
     if not vault.is_dir():
         raise SystemExit(f"vault 路径不存在或不是目录：{vault}")
 
-    force = bool(args.force or args.rebuild)
     report = IngestReport(mode="rebuild" if args.rebuild else "update", collection=collection)
 
     registry = Registry(settings.registry_db)
@@ -188,7 +205,8 @@ async def run_ingest(args: argparse.Namespace) -> IngestReport:
                 embedder=embedder,
                 collection=collection,
                 max_tokens=args.max_tokens,
-                force=force,
+                rebuild=bool(args.rebuild),
+                force=bool(args.force),
                 report=report,
             )
 
@@ -238,15 +256,25 @@ async def _ingest_one(
     embedder: Embedder,
     collection: str,
     max_tokens: int,
+    rebuild: bool,
     force: bool,
     report: IngestReport,
 ) -> None:
-    """处理单个文档：hash 跳过 → 切分 → 嵌入 → upsert → 孤儿清理 → 记账。"""
+    """处理单个文档：跳过判定 → 切分 → 嵌入 → upsert → 孤儿清理 → 记账。
+
+    三种跳过语义（tech.md §5 幂等机制 1 + 断点续传）：
+
+    - ``--update``：registry 命中同 ``content_hash`` ⇒ 整篇跳过（不切分、不编码）；
+    - ``--rebuild``：忽略上面的账本快路径，但**目标 collection 已与本次切分结果一致时跳过**
+      —— 这就是断点续传：中断后重跑只补没写完的文档；
+    - ``--force``：无条件重灌（重新嵌入 + 原地覆盖）。
+    """
     try:
         content_hash = connector.hash_of(doc)
         existing = await registry.get(doc.doc_id)
         if (
-            not force
+            not rebuild
+            and not force
             and existing is not None
             and existing.error is None
             and existing.content_hash == content_hash
@@ -255,6 +283,21 @@ async def _ingest_one(
             return
 
         chunks = chunk_markdown(doc.text, max_tokens=max_tokens)
+        if (
+            rebuild
+            and not force
+            and await _target_already_matches(store, collection, doc.doc_id, chunks)
+        ):
+            report.skipped += 1
+            await _record_doc(
+                registry=registry,
+                connector=connector,
+                doc=doc,
+                content_hash=content_hash,
+                chunk_count=len(chunks),
+            )
+            return
+
         embeddings = await embedder.encode([chunk.text for chunk in chunks])
         updated_at_ts = _to_unix_seconds(doc.updated_at)
         groups: list[str] = []
@@ -287,21 +330,12 @@ async def _ingest_one(
         report.orphans_deleted += await store.delete_orphans(
             collection, doc.doc_id, {point.point_id for point in points}
         )
-        await registry.upsert(
-            DocRecord(
-                doc_id=doc.doc_id,
-                source_type=connector.source_type,
-                source_uri=doc.source_uri,
-                title=_title_of(doc),
-                frontmatter=doc.frontmatter,
-                content_hash=content_hash,
-                updated_at=doc.updated_at,
-                indexed_at=_now_iso(),
-                owner="me",
-                visibility="private",
-                chunk_count=len(points),
-                error=None,
-            )
+        await _record_doc(
+            registry=registry,
+            connector=connector,
+            doc=doc,
+            content_hash=content_hash,
+            chunk_count=len(points),
         )
         report.indexed_docs += 1
         report.indexed_chunks += len(points)
@@ -322,6 +356,47 @@ async def _ingest_one(
             doc.doc_id, connector.source_type, doc.source_uri, f"{type(exc).__name__}: {exc}"
         )
         report.failed.append(f"{doc.source_uri}: {type(exc).__name__}: {exc}")
+
+
+async def _target_already_matches(
+    store: QdrantStore, collection: str, doc_id: str, chunks: list[Chunk]
+) -> bool:
+    """目标 collection 是否已持有该文档**本次切分结果**对应的全部 point（断点续传判定）。
+
+    利用内容寻址的确定性：只要 block 切分结果一致，point id 集合就该完全相等。
+    """
+    expected = {
+        chunk_point_id(doc_id, index, chunk_content_hash(chunk.text))
+        for index, chunk in enumerate(chunks)
+    }
+    return await store.scroll_doc_ids(collection, doc_id) == expected
+
+
+async def _record_doc(
+    *,
+    registry: Registry,
+    connector: Connector,
+    doc: RawDoc,
+    content_hash: str,
+    chunk_count: int,
+) -> None:
+    """写 registry 账本（摄取成功的统一落账点）。"""
+    await registry.upsert(
+        DocRecord(
+            doc_id=doc.doc_id,
+            source_type=connector.source_type,
+            source_uri=doc.source_uri,
+            title=_title_of(doc),
+            frontmatter=doc.frontmatter,
+            content_hash=content_hash,
+            updated_at=doc.updated_at,
+            indexed_at=_now_iso(),
+            owner="me",
+            visibility="private",
+            chunk_count=chunk_count,
+            error=None,
+        )
+    )
 
 
 async def _reconcile_deleted(
