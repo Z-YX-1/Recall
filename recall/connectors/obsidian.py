@@ -71,11 +71,6 @@ class ObsidianConnector(BaseConnector):
         self._skip_dirs = frozenset(DEFAULT_SKIP_DIRS if skip_dirs is None else skip_dirs)
 
     @property
-    def vault_path(self) -> Path:
-        """vault 根目录。"""
-        return self._vault
-
-    @property
     def skip_dirs(self) -> frozenset[str]:
         """被跳过的目录名集合。"""
         return self._skip_dirs

@@ -236,6 +236,8 @@ async def run_ingest(args: argparse.Namespace) -> IngestReport:
         extra={
             "collection": collection,
             "mode": report.mode,
+            "model": str(model_ref),
+            "chunker": args.chunker,
             "scanned": report.scanned,
             "skipped": report.skipped,
             "indexed_docs": report.indexed_docs,
