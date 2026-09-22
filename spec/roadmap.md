@@ -296,7 +296,7 @@ created: 2026-09-04
   3. **R-29 / R-32 待 key**：`.env` 里 `DEEPSEEK_API_KEY` 填好后即可跑真实生成与 Ragas 首轮评分；
   4. R-28b / R-31 记录的检索质量观察（元问题命中路线图自身、bamboo-old 同目录互相挤占）留待 R-42 用黄金集量化。
 - **最近一次测试结果**（2026-09-22）：`pytest` **109 passed**；`ruff` 零告警；`mypy` strict 35 文件零错误；检索基线 Recall@1=0.467 / @3=0.733 / MRR=0.601（v1 与 v2 一致）；重灌演练 972 块 / 65.1s / 续跑 3.0s
-- **本文件版本**：v0.6.1（2026-09-22 补录 R-27c/R-27d：tech.md §9 第三杠杆 `ASSEMBLY.md` 与 §11 日志落点；R-36 快照实际产出；上一版 v0.6.0 回填 Phase 4/5）
+- **本文件版本**：v0.6.2（2026-09-22 code_standards §15 回写：Connector 协议示例 + tech.md §16 决策记录；上一版 v0.6.1 补录 R-27c/R-27d）
 
 ---
 
@@ -349,3 +349,4 @@ created: 2026-09-04
 | 2026-09-22 | R-27d | 环境变量新增 | 新增环境变量 `RECALL_LOG_TO_FILE`（默认 `1`）；测试在 `tests/conftest.py` 里设为 `0` | 避免用例污染 `data/` |
 | 2026-09-22 | R-36 | 备份落地 | **实际产出** Qdrant 快照两个（v1 882MB / v2 881.9MB，位于 `tools/qdrant/snapshots/`，已 gitignore）；清理重复快照一份 | 快照创建 >60s，客户端 timeout 需放到 180s |
 | 2026-09-22 | R-26 | 格式复核 | 依据 `@deepseek-ai/dsh-mcp-client` 文档核对注册格式：`transport: streamable-http` + `serverName`（`[A-Za-z0-9_-]{1,32}`）+ `url`，工具名形如 `mcp__<serverName>__<tool>` ⇒ `mcp__recall__kb_search`，与 tech.md §8 一致 | DSH 侧实际装载仍需新会话确认 |
+| 2026-09-22 | — | spec 回写 | **code_standards §15**：`Connector` 协议补 Google 风格 `Example:`（完整可抄的最小来源实现，供 R-41 参考）；**tech.md 新增 §16 决策记录 9~12**（模型缓存+装载锁 / `--rebuild` 可续跑 / 摄取排除工程产物 / MCP 工具名与 REST 处理函数改名） | 影响架构的决策必须回写 spec 并追加 tech.md 决策记录 |

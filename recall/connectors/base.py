@@ -35,7 +35,44 @@ class SourceError:
 
 
 class Connector(Protocol):
-    """摄取来源协议（tech.md §2 摄取行的 Connector 接口）。"""
+    """摄取来源协议（tech.md §2 摄取行的 Connector 接口）。
+
+    新增来源（飞书 / 语雀 / 网页）只实现本协议，**不改管道其余部分**（tech.md §5）。
+    建议同时继承 :class:`BaseConnector` 以获得错误缓冲与默认 ``hash_of``。
+
+    Example:
+        一个最小可用来源（供 R-41 新 Connector 参考）::
+
+            from collections.abc import Iterator
+            from pathlib import Path
+
+            from recall.connectors.base import BaseConnector
+            from recall.models import RawDoc
+
+
+            class SingleFileConnector(BaseConnector):
+                \"\"\"把单个文本文件当作来源。\"\"\"
+
+                source_type = "single-file"
+
+                def __init__(self, path: Path) -> None:
+                    super().__init__()
+                    self._path = path
+
+                def list(self) -> Iterator[RawDoc]:
+                    try:
+                        text = self._path.read_text(encoding="utf-8")
+                    except OSError as exc:      # 单文档失败只记账，不中断 run
+                        self._record_error(
+                            self._path.stem, self._path.name, f"{type(exc).__name__}: {exc}"
+                        )
+                        return
+                    yield RawDoc(
+                        doc_id=self._path.stem,       # 稳定 slug 主键
+                        source_uri=self._path.name,   # 相对来源根目录的展示路径
+                        text=normalize_text(text),    # 归一化后再交给切分器
+                    )
+    """
 
     source_type: str
 

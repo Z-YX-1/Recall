@@ -258,3 +258,25 @@ $env:HF_ENDPOINT = "https://hf-mirror.com"                    # 国内下载镜�
 6. **重灌脚本 + 版本号** ≠ 追新模型，而是让"不换"成为默认、换时是显式可评测可回滚的决策
 7. **隐私红线**：本地 embedding（bge-m3），笔记不出域；公网暴露（Coze 接入）时才上 API key 网关
 8. **PointId 修正**（2026-09-04，Context7 核实）：Qdrant PointId 只接受 uint64/UUID，64 位 hex sha256 不能直接当主键 → chunk id 改用 uuid5（sha256 存 payload.content_hash，详见 code_standards.md §3.1）
+
+---
+
+## 16. 关键决策记录（2026-09-22，实现期追加）
+
+9. **进程级模型缓存 + 装载锁**：`6GB` 显存容不下 bge-m3 / reranker 的多份副本，且
+   transformers 5.x 的权重装载走内部线程池并行 materialize——**两个线程同时装载即触发
+   `Windows fatal exception: access violation`**（2026-09-22 实测）。故新增
+   `recall/model_cache.py`：按 `(模型名, fp16, 设备)` 命中缓存复用，装载在进程锁内串行完成。
+   副作用：embedder / reranker 变为无状态门面，`Service` 单例不再持有模型所有权。
+10. **`--rebuild` 改为可断点续传**（实现期修正 tech.md §5 的语义）：原实现把 `--rebuild` 当
+    "无条件重灌"，中断后只能从头再来，与 §5「幂等、可断点续传」不符。现语义 =
+    「忽略 registry 账本快路径，但**目标 collection 已持有本次切分结果对应的全部 point 时跳过**」；
+    换 embedding 版本并排重灌时目标库为空 ⇒ 等价全量重灌，中断后重跑只补未写完的文档。
+    要无条件重新嵌入用 `--force`。
+11. **摄取范围默认排除工程产物目录**：真实 vault 里混着 `project/*/node_modules/**`，
+    首轮 268 篇中 203 篇是第三方 CHANGELOG/LICENSE，严重稀释检索质量。故
+    `DEFAULT_SKIP_DIRS` 含 `node_modules`/`dist`/`build`/`.venv`/`venv`/`__pycache__`，
+    并开放 `--skip-dirs` 覆盖。
+12. **MCP 工具名 = 函数名 ⇒ REST 处理函数改名**：FastMCP 由函数名派生工具名
+    （code_standards §6.2），而 `kb_search` 同时是 REST 端点语义；二者不能同名，
+    故 REST 处理函数更名为 `kb_search_endpoint`，**工具名与端点路径均不变**。
