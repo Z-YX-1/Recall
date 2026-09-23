@@ -48,7 +48,12 @@ from recall.models import (
 )
 from recall.registry import Registry
 from recall.rerank import Reranker, build_rerank_document
-from recall.store import RECALL_TOP_K, QdrantStore, collection_name
+from recall.store import (
+    RECALL_TOP_K,
+    QdrantStore,
+    StoreUnavailableError,
+    collection_name,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -172,7 +177,11 @@ async def kb_search_core(request: SearchRequest, identity: Identity | None = Non
     except InvalidFilterError as exc:
         raise ApiError("invalid_filter", str(exc), 400) from exc
 
-    if not await service.store.collection_exists(service.collection):
+    try:
+        collection_ready = await service.store.collection_exists(service.collection)
+    except StoreUnavailableError as exc:
+        raise _qdrant_unavailable(exc) from exc
+    if not collection_ready:
         raise ApiError(
             "collection_not_found",
             f"collection {service.collection!r} 不存在，请先运行 python ingest.py --update",
@@ -181,15 +190,18 @@ async def kb_search_core(request: SearchRequest, identity: Identity | None = Non
 
     embeddings = await service.embedder.encode([request.query])
     embedding = embeddings[0]
-    hits = await service.store.hybrid_search(
-        service.collection,
-        dense=embedding.dense,
-        sparse_indices=embedding.sparse_indices,
-        sparse_values=embedding.sparse_values,
-        top_k=RECALL_TOP_K,
-        query_filter=query_filter,
-        limit=RECALL_TOP_K,
-    )
+    try:
+        hits = await service.store.hybrid_search(
+            service.collection,
+            dense=embedding.dense,
+            sparse_indices=embedding.sparse_indices,
+            sparse_values=embedding.sparse_values,
+            top_k=RECALL_TOP_K,
+            query_filter=query_filter,
+            limit=RECALL_TOP_K,
+        )
+    except StoreUnavailableError as exc:
+        raise _qdrant_unavailable(exc) from exc
 
     if not hits:
         logger.info(
@@ -431,6 +443,23 @@ def _error_response(status_code: int, code: str, message: str) -> JSONResponse:
     return JSONResponse(
         status_code=status_code, content={"error": {"code": code, "message": message}}
     )
+
+
+def _qdrant_unavailable(exc: Exception) -> ApiError:
+    """把"连不上 Qdrant"转成语义化的 503（而不是带堆栈的 500）。"""
+    return ApiError(
+        "qdrant_unavailable",
+        f"知识库服务不可用（Qdrant 未响应）：{exc}。请确认 tools/qdrant/qdrant.exe 已启动。",
+        503,
+    )
+
+
+@app.exception_handler(StoreUnavailableError)
+async def _handle_store_unavailable(request: Request, exc: StoreUnavailableError) -> JSONResponse:
+    """兜住所有未在 core 层转换的 Qdrant 不可达（例如 ``/kb/ingest``）。"""
+    del request
+    error = _qdrant_unavailable(exc)
+    return _error_response(error.status_code, error.code, error.message)
 
 
 @app.exception_handler(ApiError)

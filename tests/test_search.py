@@ -170,6 +170,35 @@ async def test_kb_answer_reports_missing_collection_too(
     assert excinfo.value.code == "collection_not_found"
 
 
+async def test_kb_search_reports_qdrant_down_as_semantic_503(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Qdrant 没启动时必须是干净的 503，而不是带堆栈的 500（code_standards §6.1）。
+
+    回归点：2026-09-23 实战日志里 ``POST /kb/search`` 返回了 500 + 完整堆栈。
+    """
+    import dataclasses
+
+    from recall.api import close_service
+    from recall.config import Settings
+
+    dead = await Service.create(
+        dataclasses.replace(Settings.from_env(), qdrant_url="http://127.0.0.1:1"),
+        collection="recall__whatever",
+    )
+    monkeypatch.setattr("recall.api._service", dead)
+    try:
+        with pytest.raises(ApiError) as excinfo:
+            await kb_search_core(SearchRequest(query="任何问题"))
+    finally:
+        await close_service()
+
+    assert excinfo.value.code == "qdrant_unavailable"
+    assert excinfo.value.status_code == 503
+    assert "Qdrant" in excinfo.value.message
+    assert "qdrant.exe" in excinfo.value.message  # 告诉用户怎么修
+
+
 async def test_rest_endpoints_and_error_envelope(
     ingest_env: IngestEnv, api_service: object
 ) -> None:

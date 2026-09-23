@@ -21,6 +21,7 @@ from datetime import date
 from typing import Any, TypeVar, cast
 from uuid import UUID
 
+import httpx
 from qdrant_client import AsyncQdrantClient, models
 
 from recall.embedder import DENSE_DIM, Embedding
@@ -48,6 +49,14 @@ _T = TypeVar("_T")
 
 class CollectionMismatchError(RuntimeError):
     """目标 collection 的建库参数与本次写入请求不一致（禁止混合写入）。"""
+
+
+class StoreUnavailableError(RuntimeError):
+    """Qdrant 不可达或请求超时（重试已耗尽）。
+
+    单列出来是为了让 API 层能把它映射成语义化的 **503**，而不是一个带堆栈的 500
+    （code_standards §6.1）。真实场景：用户没启动 Qdrant 就调 ``/kb/search``。
+    """
 
 
 def collection_name(model: str, version: str, chunker: str) -> str:
@@ -84,7 +93,9 @@ async def with_retry(
         ``func`` 的返回值。
 
     Raises:
-        Exception: 所有尝试均失败时抛出最后一次异常。
+        StoreUnavailableError: 重试耗尽且失败原因是**连不上 Qdrant**（超时/连接被拒）——
+            调用方应转成 503 而不是 500（code_standards §6.1 语义化状态码）。
+        Exception: 其它情况下抛出最后一次异常。
     """
     last_error: Exception | None = None
     for attempt in range(1, attempts + 1):
@@ -106,7 +117,35 @@ async def with_retry(
             )
             await asyncio.sleep(delay)
     assert last_error is not None
+    if _is_connectivity_error(last_error):
+        raise StoreUnavailableError(
+            f"{operation} 失败：Qdrant 不可达或超时（已重试 {attempts} 次）"
+        ) from last_error
     raise last_error
+
+
+_CONNECTIVITY_ERRORS = (
+    httpx.ConnectError,
+    httpx.ConnectTimeout,
+    httpx.ReadTimeout,
+    httpx.WriteTimeout,
+    httpx.PoolTimeout,
+    httpx.RemoteProtocolError,
+)
+
+
+def _is_connectivity_error(exc: BaseException) -> bool:
+    """异常链里是否含"连不上 / 超时"。
+
+    qdrant-client 会把底层 ``httpx.ConnectError`` 包一层 ``ResponseHandlingException``，
+    所以必须沿 ``__cause__`` / ``__context__`` 往下找，不能只看最外层类型。
+    """
+    current: BaseException | None = exc
+    while current is not None:
+        if isinstance(current, _CONNECTIVITY_ERRORS):
+            return True
+        current = current.__cause__ or current.__context__
+    return False
 
 
 @dataclass(frozen=True, slots=True)

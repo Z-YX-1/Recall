@@ -16,6 +16,7 @@ from recall.store import (
     ChunkPoint,
     CollectionMismatchError,
     QdrantStore,
+    StoreUnavailableError,
     collection_name,
     with_retry,
 )
@@ -144,6 +145,19 @@ async def test_ping_reports_unreachable_service() -> None:
     store = QdrantStore("http://127.0.0.1:1", timeout=2)
     try:
         assert await store.ping() is False
+    finally:
+        await store.close()
+
+
+async def test_unreachable_qdrant_raises_store_unavailable() -> None:
+    """连不上 Qdrant 时抛 ``StoreUnavailableError``（API 层据此返回语义化 503）。
+
+    回归点：2026-09-23 实战中 Qdrant 未启动时 ``/kb/search`` 返回了带堆栈的 500。
+    """
+    store = QdrantStore("http://127.0.0.1:1", timeout=2)
+    try:
+        with pytest.raises(StoreUnavailableError):
+            await store.collection_exists("recall__whatever")
     finally:
         await store.close()
 

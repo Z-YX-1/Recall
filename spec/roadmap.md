@@ -237,8 +237,15 @@ created: 2026-09-04
     ✅ 顺带改进：`recall/llm.py` 抽出常量 `RETRY_BASE_DELAY`（退避基数可被测试注入，生产默认 0.5s 不变）。
     ✅ 验证：`pytest` **129 passed**（本轮 +16 项）；ruff/mypy 零错误。
     🧭 项目工程师指示：**待复核**
+- [x] **R-27i** Qdrant 不可达时返回语义化 503 而不是带堆栈的 500（**由实战日志发现**）。
+    ⚠️ 问题：2026-09-23 17:40 的运行日志里，Qdrant 未启动时 `POST /kb/search` 返回 **500 Internal Server Error**，日志打出十几层 `httpcore.ConnectError` 堆栈，错误码是笼统的 `internal_error`。违反 code_standards §6.1「语义化 HTTP 状态码」——对 DSH agent 而言，它拿到的是 `internal_error: ResponseHandlingException: All connection attempts failed`，而不是「Qdrant 没启动，去开 qdrant.exe」。
+    ✅ 处理：`recall/store.py` 新增 `StoreUnavailableError`——`with_retry` 重试耗尽后沿 `__cause__`/`__context__` 判断异常链里是否有连接/超时类错误（qdrant-client 会把 `httpx.ConnectError` 包一层 `ResponseHandlingException`，只看最外层类型判断不出来），是则转成该异常；`recall/api.py` 在 `kb_search_core` 的两个 Qdrant 调用点转成 `ApiError("qdrant_unavailable", …, 503)`，并额外注册全局异常处理器兜住 `/kb/ingest` 等路径。错误信息带可操作提示（"请确认 tools/qdrant/qdrant.exe 已启动"）。
+    ✅ 测试：`tests/test_store.py::test_unreachable_qdrant_raises_store_unavailable`、`tests/test_search.py::test_kb_search_reports_qdrant_down_as_semantic_503`（把服务指向死端口，断言 503 + `qdrant_unavailable` + 提示文案）。
+    ✅ 验证：`pytest` **134 passed**；ruff/mypy 零错误。
+    🧭 项目工程师指示：**待复核**
 - [ ] **R-28** 端到端验收：DSH 会话中用自然语言问笔记（如"我笔记里关于 RAG 检索质量的结论？"），回答**带 [n] 引用且忠于证据**（tech.md P2 验收标准）。记录问答样例汇报项目工程师。
     ⚠️ 问题：AI 执行者**无法自行开启一个 DSH 会话**（MCP 服务器只在会话启动时装载，本会话看不到 `mcp__recall__*` 工具），R-28 的字面验收必须由项目工程师在新会话中确认（2026-09-22）。
+    📌 追加（2026-09-23，来自实战日志）：项目工程师实测期间访问了 `GET /kb/stats` → **404**。按 tech.md §8，`kb_stats` 只作为 **MCP 工具**存在，REST 只有 `/health`、`/kb/search`、`/kb/answer`、`/kb/ingest` 四个端点，所以 404 是符合契约的行为。**若希望 REST 也提供统计端点，属契约新增，需项目工程师确认后再加。**
 - [x] **R-28b** 以等价方式完成 R-28 的**除"会话装载"外的全部链路验证**：用真实 MCP 客户端连 `http://127.0.0.1:8000/mcp` 调 `kb_search`，按 `recall-assembly` 规范组装。
     ✅ 实测（2026-09-22）：问题「我笔记里关于 RAG 检索质量的结论？」→ 返回 5 条证据、`references` 与 `[n]` 一一对应，Top-1 = `project/Recall/spec/roadmap.md`（0.9348）、Top-2 = `AI/ai-文本切分器 (Text Splitter).md`（0.5731，"粒度是整条 RAG 链路里影响 recall 最大的单一参数"）、Top-3 = `AI/ai-Embedding (向量) 的几何意义.md`（0.4550，"文档实际用的是 Recall@K"）。
     ⚠️ 检索质量观察：Top-1 命中的是 vault 里的 **Recall 路线图自身**（含大量 RAG/检索字样）而非技术笔记；`query="我笔记里关于 RAG 检索质量的结论？"` 属"元问题"，与笔记正文的措辞分布不匹配。留待 R-42 用黄金集量化（tech.md §10 触发点）。
@@ -337,8 +344,8 @@ created: 2026-09-04
   2. **R-28 待新会话确认**：请新开 DSH 会话，问一句笔记问题，确认出现 `mcp__recall__kb_search` 且回答带 `[n]` 引用；
   3. **R-29 / R-32 待 key**：`.env` 里 `DEEPSEEK_API_KEY` 填好后即可跑真实生成与 Ragas 首轮评分；
   4. R-28b / R-31 / R-33 记录的检索质量观察留待 R-42 用黄金集量化；其中 **精排净负收益（MRR 0.650→0.601）已升为 R-42 第一优先项**，但**链路顺序属 tech.md §4 契约，需项目工程师拍板后才能改**。
-- **最近一次测试结果**（2026-09-22）：`pytest` **132 passed**；`ruff` 零告警；`mypy` strict 37 文件零错误；检索基线（**R-19b 修复后**）Recall@1=0.767 / @3=0.933 / @5=0.933 / **@10=1.000** / MRR=**0.860**（修复前 0.601）；重灌演练 972 块 / 65.1s / 续跑 3.0s
-- **本文件版本**：v0.7.0（2026-09-22 新增 R-19b：精排喂入标题路径，检索质量闭环；上一版 v0.6.7 为 R-27h 测试补齐）
+- **最近一次测试结果**（2026-09-23）：`pytest` **134 passed**；`ruff` 零告警；`mypy` strict 37 文件零错误；检索基线（R-19b 修复后）Recall@1=0.767 / @3=0.933 / @5=0.933 / **@10=1.000** / MRR=**0.860**；重灌演练 972 块 / 65.1s / 续跑 3.0s
+- **本文件版本**：v0.7.1（2026-09-23 新增 R-27i：Qdrant 不可达时返回语义化 503；该问题由项目工程师实战日志发现）
 
 ---
 
@@ -401,6 +408,8 @@ created: 2026-09-04
 | 2026-09-22 | R-33 | 实测补录 | `--no-rerank` 分解实验：hybrid-only MRR 0.650 vs +rerank 0.601（Recall@1 0.567 vs 0.467），延迟 14.3s vs 108s ⇒ **精排净负收益**，列为 R-42 第一优先项 | 见 `eval/BASELINE.md` §1；**不改链路顺序**（属 tech.md §4 契约），只取证 |
 | 2026-09-22 | R-19b | **质量修复** | 精排输入由「块正文」改为「`heading_path` + 正文」（`rerank.build_rerank_document`）：MRR **0.601 → 0.860**、Recall@1 0.467 → **0.767**、Recall@10 0.833 → **1.000**、未命中 5 → **0 题**；v1/v2 复测一致 | 根因定位见 §四 R-19b；链路节点与顺序未变 ⇒ 实现修正而非契约变更 |
 | 2026-09-22 | R-19b | 取证方法 | ① 用 reranker 自己的分词器否证「截断」假设（972 块仅 1 块 > 1024；若按模型默认 512 则 45% 被截断）；② 逐题 rank 差定位（变差 8 / 变好 5）；③ 同候选两种输入 A/B（13 题变好 / 0 题变差） | 诊断脚本为一次性工具，未入库 |
+| 2026-09-23 | R-27i | **Bug 修复** | Qdrant 未启动时 `/kb/search` 返回 500 + 十几层堆栈、错误码 `internal_error` → 新增 `StoreUnavailableError`（沿异常链识别连接/超时错误）并在 API 层转成 **503 `qdrant_unavailable`** + 可操作提示 | 由项目工程师实战日志发现；code_standards §6.1 |
+| 2026-09-23 | R-28 | 观察记录 | 实测期间 `GET /kb/stats` → 404。按 tech.md §8 `kb_stats` 仅为 MCP 工具，REST 四个端点中无此项 ⇒ 404 符合契约；若要新增 REST 统计端点属契约变更，待项目工程师确认 | 不改实现 |
 | 2026-09-22 | R-27h | 测试补强 | 新增 `tests/test_llm.py`（11 项，假 OpenAI 客户端测重试/JSON 模式/解析失败）；补 502 `llm_failed`、`ping()` 不可达、`with_retry` 成功/耗尽、`collection_not_found` 503 共 5 项；R-19b 再补 3 项（拼接/空标题/检索链路喂标题探针） | `pytest` 113 → **132** |
 | 2026-09-22 | R-33 | 新增产物 | `eval/baseline_v1_hybrid_only.json`（hybrid-only 逐题明细） | 供 R-42 A/B |
 | 2026-09-22 | R-32 | 边界验证 | `eval/eval_ragas.py` 无 key 时干净退出（ragas/langchain/openai 依赖链导入全通过）⇒ 链路已验到 key 边界 | 补齐"未执行过即未验证"的缺口 |
