@@ -101,8 +101,25 @@ MRR 0.860 同时显著优于"干脆不要精排"的 0.650 —— 精排是净收
 | 2 | 同上（另一形态） | 模型**复述整段证据**导致输出被 `max_tokens` 截断，JSON 不闭合 | 长度规则搬进系统提示词（≤300 字 + 写完立即闭合）；输出上限 2048 → 3072 |
 | 3 | 证据明明相关却答"没有相关内容" | 只写"证据不足就拒答"会诱发**过度拒答** | 忠实度规则第 2 条改为**双向约束**（相关就必须答；确实不涉及才拒答） |
 | 4 | `answer_relevancy` 指标直接缺席 | ragas 有两套 embedding 接口（`text/texts` 与 `query/documents`），只实现前者 ⇒ `AttributeError: no attribute 'embed_query'` | 适配器两套都实现 |
+| 5 | **并发下 `/kb/answer` 直接 500**（promptfoo 并发 4 触发；单线程从未复现） | `FlagReranker.compute_score` **每次调用都改模型**（`if self.use_fp16: self.model.half()`），而模型缓存让多个请求共享同一实例 ⇒ `RuntimeError: expected scalar type Float but found Half` | `model_cache` 新增 `inference_lock()`，embedder/reranker 的推理段串行化；实测并发 6 请求全部 200 |
 
 已补 8 项单测（`tests/test_llm.py`）覆盖 JSON 容错解析与报错可诊断性。
+
+### prompt 回归（promptfoo）
+
+`npx promptfoo@latest eval -c eval/promptfoo/promptfooconfig.yaml`（并发 4）：
+
+| 结果 | 数量 |
+| :--- | ---: |
+| ✓ 通过 | 3 |
+| ✗ 失败 | 1 |
+| 错误 | **0** |
+
+- 通过：引用格式合规（`citations` 全部可索引到 `references`、正文角标与 `citations` 一致）、
+  两题正确命中期望来源（切分器 / Temperature）、统一错误信封未触发。
+- 唯一失败：**问笔记外主题（2026 年诺贝尔物理学奖）时没有拒答**，而是拿"联网搜索原理"
+  的证据作答 —— 正是下一节要决策的忠实度缺口。
+- 该次运行同时是并发回归验证：并发 4 下 **0 错误**（修复前并发即 500，见下）。
 
 ### ⚠️ 尚未解决的忠实度缺口（需你决定，属 R-42 范围）
 

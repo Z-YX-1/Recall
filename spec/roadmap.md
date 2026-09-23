@@ -257,7 +257,17 @@ created: 2026-09-04
 - [x] **R-29** 实现 `kb_answer`（胖端点）：内部 = kb_search + 组装 + DeepSeek 生成；**JSON 模式约束** `{"answer","citations":[n,...]}` 防引用幻觉；`references` 与 [n] 一一对应（code_standards §8）；MCP 侧同步暴露，描述显式声明副作用。
     ✅ 实测（2026-09-22）：新增 `recall/llm.py`（DeepSeek OpenAI 兼容 + JSON 模式 + 指数退避重试，密钥不入日志）；`assemble()` 纯函数产出 `(prompt, ref_map)`（code_standards §8 签名）；`kb_answer_core` = kb_search → 组装 → 生成 → 引用清洗；REST `POST /kb/answer` + MCP 工具 `kb_answer`（描述显式声明"会把证据发到 DeepSeek"）。
     ✅ `tests/test_answer.py` 11 项全绿（LLM 用注入桩，其余链路真跑）：prompt 含规则/编号证据/JSON 契约；预算生效；**无证据时不调 LLM 且返回"没检索到"**（禁止硬答）；越界/重复/非数字引用被剔除；未配 key → 503 `llm_not_configured` + 统一错误信封；MCP 四个工具都显式声明副作用。
-    ⏳ **待补**：真实 DeepSeek 调用验证（等 `DEEPSEEK_API_KEY` 写入 `.env`）。
+    ✅ **真实 DeepSeek 调用验证通过（2026-09-23，项目工程师填入 key 后）**：3 个真实问题全部返回结构化回答，`citations` 全部合法、正文角标齐全、无越界编号（引用一致性 3/3）。
+    ⚠️ 问题：真实调用暴露 4 个"整段回答作废"级缺陷（英文双引号截断 JSON / 复述证据致输出截断 / 过度拒答 / JSON 前后夹带文字）——详见 R-29b。
+- [x] **R-29b** 修复胖端点的 4 个生成健壮性缺陷（全部由真实调用暴露）。
+    | # | 现象 | 根因 | 修复 |
+    | :--- | :--- | :--- | :--- |
+    | 1 | `LlmError: 返回体不是合法 JSON`，整段作废 | 模型在 JSON 字符串里塞**未转义的英文双引号**（原文 `把不可计算的"意思"变成"坐标"`）⇒ `Expecting ',' delimiter` | 系统提示词硬性规则：answer 内禁用英文双引号，需要时用「」 |
+    | 2 | 同上（另一形态） | 模型**复述整段证据** ⇒ 输出被 `max_tokens` 截断 ⇒ JSON 不闭合 | 长度规则搬进系统提示词（≤300 字 + 写完立即闭合）；上限 2048 → 3072 |
+    | 3 | 证据明明相关却答"没有相关内容" | 只写"证据不足就拒答"会诱发**过度拒答** | 忠实度规则第 2 条改**双向约束**（相关必须答；确实不涉及才拒答） |
+    | 4 | 模型在 JSON 前后夹带说明文字 / 字符串含裸换行 | 直接 `json.loads` 太严 | 新增 `llm.parse_json_object()`：`strict=False` + 扫描首个配对完整的 `{...}`；**只救完整对象**（截断的半截 JSON 仍判失败） |
+    ✅ 验证：3 个真实问题连续复跑全部解析成功；`tests/test_llm.py` 新增 7 项覆盖容错解析与报错可诊断性。
+    🧭 项目工程师指示：**待复核**
 - [x] **R-30** 创建黄金集 `eval/golden_set.jsonl` 初版 20~30 题（`{"question","expected_sources"[]}`，每数据源覆盖，版本化，code_standards §11）。
     ✅ 实测（2026-09-22）：**30 题**，字段严格为 `question` + `expected_sources`；覆盖 17 篇 AI 技术笔记、2 篇 MOC、3 篇 Recall 自身 spec、8 篇 bamboo-old/项目文档；答案来源取自真实 registry 的 `source_uri`（逐条核对存在）。
 - [x] **R-31** 实现 `eval/eval_retrieval.py`：`--collection` 参数化，输出 Recall@K / MRR；**query 必须用该 collection 的 embedding 模型编码**。
@@ -271,8 +281,27 @@ created: 2026-09-04
 - [ ] **R-32** 接入 Ragas（faithfulness / answer relevancy，评测 kb_answer 回答）+ promptfoo（prompt 回归）。
     ✅ 验证：kb_answer 的 citations 与 references 一一对应；Ragas 首轮分数记录。
     🔧 已就绪（2026-09-22）：`eval/eval_ragas.py` 写好——真跑 kb_answer 收集回答与证据 → `check_citation_consistency` 校验 `citations`↔`references` ↔ 正文角标 → Ragas `aevaluate`（DeepSeek 当裁判 + **本地 bge-m3** 当 embedding，符合"内容不出域"）；`eval/promptfoo/promptfooconfig.yaml` 写好（引用格式 / 忠实度 / 无证据不硬答三类断言）。
-    ⏳ **待跑**：真实分数依赖 `DEEPSEEK_API_KEY`，写入 `.env` 后 `python eval/eval_ragas.py --limit 10 --output eval/ragas_baseline.json`。
-    ⚠️ 问题：Ragas 0.4.3 在模块顶层 `import langchain_community.chat_models.vertexai`，该模块在 langchain-community 0.4 已移除 ⇒ 直接装的最新组合 `ImportError`（2026-09-22 实测）。
+    ✅ **已完成（2026-09-23）**：
+    | 项 | 结果 |
+    | :--- | :--- |
+    | 引用一致性 | **1.000**（10/10 题：citations 全部落在 references 范围内且正文都有角标） |
+    | Ragas faithfulness | **0.705** |
+    | Ragas answer_relevancy | **0.678** |
+    | promptfoo 回归（并发 4） | **3 通过 / 1 失败 / 0 错误**，26s |
+    ⚠️ 说明：① 单次 Ragas 分数有明显**裁判方差**（同实现两次 faithfulness 得 0.867 / 0.705），趋势对比需多次取均值；② promptfoo 唯一失败项正是「问笔记外主题时未拒答」——已作为**待决策缺口**记录在 `eval/BASELINE.md` §5 与下方 R-32c；③ 该次 promptfoo 运行同时充当**并发回归**验证（并发 4 下 0 错误）。
+    ⚠️ 问题：`answer_relevancy` 首次运行直接缺席——ragas 有两套 embedding 接口（`text/texts` 与 `query/documents`），适配器只实现了前者 ⇒ `AttributeError: no attribute 'embed_query'`；已两套都实现。
+    ⚠️ 问题：promptfoo 并发 4 触发 `/kb/answer` **500**——见 R-32c。
+- [x] **R-32c** 修复"共享模型被并发踩坏"（**严重**，由 promptfoo 并发暴露）。
+    ⚠️ 问题：`RuntimeError: expected scalar type Float but found Half`，栈在 `FlagEmbedding/inference/reranker/encoder_only/base.py:115 if self.use_fp16: self.model.half()`。
+    根因：`FlagReranker.compute_score` **每次调用都会改模型本身**，而 R-23b 引入的模型缓存让多个请求**共享同一个实例** ⇒ 并发时一边变形一边推理。**单线程调用从未复现**，所以此前所有验证都是绿的。
+    ✅ 处理：`recall/model_cache.py` 新增 `inference_lock()`（`threading.Lock`，进程内唯一、跨事件循环安全），`Embedder._encode_sync` 与 `Reranker._rerank_sync` 的推理段串行化。单卡上并发推理本来也没有收益。
+    ✅ 验证：并发 **6** 个 `/kb/answer` 全部 200（修复前并发即 500）；promptfoo 并发 4 复跑 **0 错误**；新增 2 项单测（锁唯一性 + 临界区不重叠）。
+    🧭 项目工程师指示：**待复核**
+- [x] **R-32d** 记录待决策的忠实度缺口（**未改实现**）。
+    ⚠️ 问题：问**笔记里完全没有的主题**时，检索仍返回 top-K 条"最不相关"的证据，模型拿它们硬答（实测：问 2026 年诺贝尔物理学奖，答了一大段"联网搜索原理"），而不是回答"笔记里没有相关内容"。**citation 一致性检查看不出来**——它内部自洽。
+    根因：**混合检索没有相关性下限**，所以 code_standards §5 的"空结果不硬答"条款永远不会触发。tech.md §2 之所以要求 rerank `normalize=True`（"跨查询不可直接比"），本意正是为了能跨查询设阈值，但目前没有用上。
+    ✅ 已记录：`eval/BASELINE.md` §5 与 promptfoo 的"无证据不硬答"断言都留了这条；候选修法 = 给证据加 rerank 分数阈值，需先用黄金集量出"真问题 vs 无关问题"的分数分布再定阈值。
+    🧭 项目工程师指示：**待确认**——属 R-42 调优范围，未获确认前不改检索实现。
 - [x] **R-32b** 依赖收敛：`pyproject.toml` 增加 `eval` 可选依赖组并**钉死 `langchain-community>=0.3,<0.4`**；同时把 `openai` 约束由 `<2` 放宽到 `<4`（ragas 依赖链装上了 openai 3.3.0，经核验 `AsyncOpenAI(api_key=...)/chat.completions.create(response_format=..., max_tokens=...)` 在 3.3.0 下仍可用）。
     ✅ 验证：`import ragas` 成功；`recall.api` / `recall.llm` 导入正常；`pytest` 全绿（见下）。
     🧭 项目工程师指示：**待复核**（依赖约束调整，属 R-32 的前置修复）
@@ -283,6 +312,8 @@ created: 2026-09-04
     📌 **契约边界说明**：链路节点与顺序**完全没变**（tech.md §4），只改了喂给精排的字符串，故按实现修正处理并登记 §七；若项目工程师认为这仍属契约范围，回退只需改 `build_rerank_document` 一行。
     ✅ 顺带验证：`eval_retrieval.py --no-rerank` 这条此前从未执行过的分支已跑通；`eval_ragas.py` 在无 key 时**干净退出**（依赖链导入全通过，链路已验到 key 边界）。
     ⏳ **Ragas 半待补**：`eval/eval_ragas.py` 已就绪，等 `.env` 里的 `DEEPSEEK_API_KEY`；跑完把 `faithfulness` / `answer_relevancy` 与引用一致性补进 `eval/BASELINE.md` §6。
+    ✅ **已完成（2026-09-23，两半齐了）**：`eval/BASELINE.md` 已含检索指标（R-19b 修复后 Recall@1=0.767 / @3=0.933 / **@10=1.000** / MRR=0.860）、Ragas 分数（faithfulness 0.705 / answer_relevancy 0.678 / 引用一致性 1.000）、promptfoo 结果（3 通过 / 1 失败 / 0 错误）、5 个已修缺陷、1 个待决策缺口、R-42 调优候选（按预期收益排序）。
+    📌 本轮新增结论：**修复精排输入后 Recall@10 达 1.000**（30 题全部命中前 10）；**胖端点在并发下曾整段 500**，已修（R-32c）；**检索无相关性下限导致笔记外问题被硬答**，待决策（R-32d）。
 
 ### Phase 5：集成验收与运维演练
 
@@ -336,17 +367,18 @@ created: 2026-09-04
 
 ## 六、 当前进度快照（每步完成/受阻后更新）
 
-- **当前阶段**：Phase 4 进行中（R-29~R-33），Phase 5 的 R-34~R-36 已提前完成
-- **当前步骤**：R-33 检索半已完成（`eval/BASELINE.md`）；R-29/R-32/R-33(Ragas 半) 的真实 DeepSeek 调用待补（等 `DEEPSEEK_API_KEY`）；R-37 待项目工程师验收
-- **已通过项**：R-01、R-02b、R-03b、R-04、R-05、R-06、R-07~R-17、R-18、R-19、R-19b、R-20~R-23c、R-24、R-25、R-26、R-27、R-27c、R-27d、R-27e、R-27f、R-27g、R-27h、R-28b、R-30、R-31、R-32b、R-33(检索半)、R-34、R-35、R-36
+- **当前阶段**：Phase 0~4 完成；Phase 5 的 R-34~R-36 完成，R-37 待验收
+- **当前步骤**：R-29 / R-32 / R-33 已全部完成（真实 DeepSeek 调用打通）；剩 **R-28**（新会话确认）与 **R-37**（项目工程师验收）
+- **已通过项**：R-01、R-02b、R-03b、R-04、R-05、R-06、R-07~R-17、R-18、R-19、R-19b、R-20~R-23c、R-24、R-25、R-26、R-27、R-27c~R-27i、R-28b、R-29、R-29b、R-30、R-31、R-32、R-32b、R-32c、R-33、R-34、R-35、R-36
 - **未通过项**：R-02（官方源网络超时，已走 R-02b）、R-03（Docker 未运行，已走 R-03b）
 - **待请示事项**：
-  1. R-14b / R-16b / R-21(校验) / R-23b / R-23c / R-32b 的「项目工程师指示」待复核（均为技术细节收敛，未触及 tech.md 契约）；
-  2. **R-28 待新会话确认**：请新开 DSH 会话，问一句笔记问题，确认出现 `mcp__recall__kb_search` 且回答带 `[n]` 引用；
-  3. **R-29 / R-32 待 key**：`.env` 里 `DEEPSEEK_API_KEY` 填好后即可跑真实生成与 Ragas 首轮评分；
-  4. R-28b / R-31 / R-33 记录的检索质量观察留待 R-42 用黄金集量化；其中 **精排净负收益（MRR 0.650→0.601）已升为 R-42 第一优先项**，但**链路顺序属 tech.md §4 契约，需项目工程师拍板后才能改**。
-- **最近一次测试结果**（2026-09-23）：`pytest` **134 passed**；`ruff` 零告警；`mypy` strict 37 文件零错误；检索基线（R-19b 修复后）Recall@1=0.767 / @3=0.933 / @5=0.933 / **@10=1.000** / MRR=**0.860**；重灌演练 972 块 / 65.1s / 续跑 3.0s
-- **本文件版本**：v0.7.1（2026-09-23 新增 R-27i：Qdrant 不可达时返回语义化 503；该问题由项目工程师实战日志发现）
+  1. **R-28 待新会话确认**：请新开 DSH 会话，问一句笔记问题，确认出现 `mcp__recall__kb_search` 且回答带 `[n]` 引用；
+  2. **R-32d 待确认**：检索无相关性下限 ⇒ 笔记外问题被硬答；修法（rerank 分数阈值）属 R-42，需你点头；
+  3. R-14b / R-16b / R-21 / R-23b / R-23c / R-27c~R-27i / R-29b / R-32c 的「项目工程师指示」待复核（技术细节收敛，未触及 tech.md 契约）；
+  4. **R-37 项目工程师验收**；
+  5. ~~R-19b 是否属契约变更~~ → **已确认（2026-09-23）**，并已按指示回写 `tech.md` §4 与 §17 决策记录 13。
+- **最近一次测试结果**（2026-09-23）：`pytest` **144 passed**；`ruff` 零告警；`mypy` strict 37 文件零错误；检索 Recall@10=**1.000** / MRR=0.860；Ragas faithfulness=0.705 / answer_relevancy=0.678 / 引用一致性=1.000；promptfoo 3 通过 / 1 失败 / **0 错误**；并发 6 请求全 200
+- **本文件版本**：v0.8.0（2026-09-23 打通真实 DeepSeek 调用：R-29 验证 + R-29b 四项生成健壮性修复 + R-32 Ragas/promptfoo 基线 + R-32c 并发严重缺陷修复 + R-32d 待决策缺口）
 
 ---
 
@@ -411,6 +443,11 @@ created: 2026-09-04
 | 2026-09-22 | R-19b | 取证方法 | ① 用 reranker 自己的分词器否证「截断」假设（972 块仅 1 块 > 1024；若按模型默认 512 则 45% 被截断）；② 逐题 rank 差定位（变差 8 / 变好 5）；③ 同候选两种输入 A/B（13 题变好 / 0 题变差） | 诊断脚本为一次性工具，未入库 |
 | 2026-09-23 | R-27i | **Bug 修复** | Qdrant 未启动时 `/kb/search` 返回 500 + 十几层堆栈、错误码 `internal_error` → 新增 `StoreUnavailableError`（沿异常链识别连接/超时错误）并在 API 层转成 **503 `qdrant_unavailable`** + 可操作提示 | 由项目工程师实战日志发现；code_standards §6.1 |
 | 2026-09-23 | R-28 | 观察记录 | 实测期间 `GET /kb/stats` → 404。按 tech.md §8 `kb_stats` 仅为 MCP 工具，REST 四个端点中无此项 ⇒ 404 符合契约；若要新增 REST 统计端点属契约变更，待项目工程师确认 | 不改实现 |
+| 2026-09-23 | R-29b | **质量修复 ×4** | 胖端点 4 个"整段回答作废"级缺陷：英文双引号截断 JSON / 复述证据致输出截断 / 过度拒答 / JSON 夹带文字；分别用系统提示词硬性规则 ×2、忠实度规则双向约束、`parse_json_object()` 容错解析修复 | 详见 §四 R-29b；全部由真实调用暴露 |
+| 2026-09-23 | R-32c | **严重 Bug 修复** | 并发下 `/kb/answer` 500：`FlagReranker.compute_score` 每次调用都改模型（`self.model.half()`），模型缓存让多请求共享实例 ⇒ `expected scalar type Float but found Half`。新增 `inference_lock()` 串行化推理段；并发 6 请求实测全 200 | 由 promptfoo 并发 4 暴露；单线程从未复现 |
+| 2026-09-23 | R-32 | 依赖/接口修正 | ragas 两套 embedding 接口（`text/texts` 与 `query/documents`）都实现，`answer_relevancy` 才出分 | 首次运行该指标直接缺席 |
+| 2026-09-23 | R-32d | 待决策记录 | 检索无相关性下限 ⇒ 笔记外问题被硬答；候选修法（rerank 分数阈值）属 R-42，未获确认前不改 | 见 §四 R-32d |
+| 2026-09-23 | R-32 | 环境记录 | 本机出网**间歇性不可达**（WinINET 配了本地代理 127.0.0.1:3067，开关切换时 httpx 连接挂起）；模型加载默认会回连 HF Hub，缓存已存在也会卡 40s+ ⇒ 评测/验证建议 `HF_HUB_OFFLINE=1` | 已写进 BASELINE.md 与最终汇报 |
 | 2026-09-22 | R-27h | 测试补强 | 新增 `tests/test_llm.py`（11 项，假 OpenAI 客户端测重试/JSON 模式/解析失败）；补 502 `llm_failed`、`ping()` 不可达、`with_retry` 成功/耗尽、`collection_not_found` 503 共 5 项；R-19b 再补 3 项（拼接/空标题/检索链路喂标题探针） | `pytest` 113 → **132** |
 | 2026-09-22 | R-33 | 新增产物 | `eval/baseline_v1_hybrid_only.json`（hybrid-only 逐题明细） | 供 R-42 A/B |
 | 2026-09-22 | R-32 | 边界验证 | `eval/eval_ragas.py` 无 key 时干净退出（ragas/langchain/openai 依赖链导入全通过）⇒ 链路已验到 key 边界 | 补齐"未执行过即未验证"的缺口 |
