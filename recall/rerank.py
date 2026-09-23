@@ -17,7 +17,7 @@ from typing import Any
 
 from FlagEmbedding import FlagReranker
 
-from recall.model_cache import load_once
+from recall.model_cache import inference_lock, load_once
 
 logger = logging.getLogger(__name__)
 
@@ -129,11 +129,14 @@ class Reranker:
 
     def _rerank_sync(self, query: str, documents: list[str], top_n: int) -> list[RerankHit]:
         model = self._ensure_model()
-        raw_scores = model.compute_score(
-            [[query, document] for document in documents],
-            batch_size=self.batch_size,
-            max_length=MAX_LENGTH,
-        )
+        # ⚠️ 必须加锁：compute_score 每次调用都会改模型（self.model.half()），
+        # 并发调用共享实例会抛 "expected scalar type Float but found Half"。
+        with inference_lock():
+            raw_scores = model.compute_score(
+                [[query, document] for document in documents],
+                batch_size=self.batch_size,
+                max_length=MAX_LENGTH,
+            )
         scores = _as_score_list(raw_scores)
         if len(scores) != len(documents):
             raise RuntimeError(

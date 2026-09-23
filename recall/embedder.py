@@ -18,7 +18,7 @@ from typing import Any, cast
 import numpy as np
 from FlagEmbedding import BGEM3FlagModel
 
-from recall.model_cache import load_once
+from recall.model_cache import inference_lock, load_once
 
 logger = logging.getLogger(__name__)
 
@@ -123,14 +123,18 @@ class Embedder:
         )
 
     def _encode_sync(self, texts: list[str], batch_size: int) -> list[Embedding]:
-        output = self._ensure_model().encode(
-            texts,
-            batch_size=batch_size,
-            max_length=MAX_SEQ_LENGTH,
-            return_dense=True,
-            return_sparse=True,
-            return_colbert_vecs=False,
-        )
+        model = self._ensure_model()
+        # ⚠️ 必须加锁：模型实例在进程内共享，FlagEmbedding 的推理路径会改模型状态
+        # （reranker 每次调用都 self.model.half()），并发调用会互相踩。
+        with inference_lock():
+            output = model.encode(
+                texts,
+                batch_size=batch_size,
+                max_length=MAX_SEQ_LENGTH,
+                return_dense=True,
+                return_sparse=True,
+                return_colbert_vecs=False,
+            )
         dense_matrix = cast(np.ndarray, output["dense_vecs"])
         lexical_weights = cast("list[dict[str, float]]", output["lexical_weights"])
 

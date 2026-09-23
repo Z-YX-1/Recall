@@ -78,21 +78,44 @@ MRR 0.860 同时显著优于"干脆不要精排"的 0.650 —— 精排是净收
 - **同文档多块占位**：`assemble` 的同文档合并只合并 `chunk_index` 连续的块，跨小节不合并，
   因此同一篇文档的多个片段可能一起进入 Top-3。若希望"多来源优先"，可在 R-42 加多样性重排。
 
-## 5. 待补：Ragas 分数
+## 5. RAG 质量：Ragas 评分（已跑通）
 
-`eval/eval_ragas.py` 已就绪（真跑 kb_answer → 校验 `citations` ↔ `references` ↔ 正文角标 →
-Ragas `aevaluate`，DeepSeek 当裁判、本地 bge-m3 当 embedding），**等待 `.env` 里的
-`DEEPSEEK_API_KEY`**。
+`eval/eval_ragas.py --limit 10`（生成与裁判都用 DeepSeek；embedding 用**本地 bge-m3**）：
 
-已完成的验证（2026-09-22）：在无 key 情况下运行 `python eval/eval_ragas.py --limit 2`——
-ragas / langchain / openai 依赖链导入全部通过，脚本在 Settings 检查处**干净退出**并打印
-`缺少 DEEPSEEK_API_KEY：Ragas 需要裁判 LLM（写进 .env 后重跑）`。即：链路已验到 key 边界。
+| 指标 | 分数 | 说明 |
+| :--- | ---: | :--- |
+| **引用一致性** | **1.000** | 10/10 题：`citations` 全部落在 `references` 范围内，且正文都有对应 `[n]` 角标 |
+| **faithfulness** | **0.705** | 回答是否只依据检索到的证据（LLM 裁判） |
+| **answer_relevancy** | **0.678** | 回答是否切题 |
 
-跑完后本节补上：
+> ⚠️ 单次运行的 Ragas 分数有**明显裁判方差**：同一套实现连跑两次，faithfulness 得到
+> 0.867 与 0.705。要做趋势对比至少跑 3 次取均值，别把单次小数位差异当回归。
 
-```powershell
-python eval/eval_ragas.py --limit 10 --output eval/ragas_baseline.json
-```
+结果落盘 `eval/ragas_baseline.json`。
+
+### 为了让胖端点跑通，本轮修掉的四个真实缺陷（都由实测暴露）
+
+| # | 现象 | 根因 | 修复 |
+| :--- | :--- | :--- | :--- |
+| 1 | 回答整段作废：`LlmError: 返回体不是合法 JSON` | 模型在 JSON 字符串里塞**未转义的英文双引号**（原文：`把不可计算的"意思"变成"坐标"`）⇒ 字符串提前结束，`Expecting ',' delimiter` | 系统提示词加硬性规则：**answer 内禁用英文双引号，需要时用「」** |
+| 2 | 同上（另一形态） | 模型**复述整段证据**导致输出被 `max_tokens` 截断，JSON 不闭合 | 长度规则搬进系统提示词（≤300 字 + 写完立即闭合）；输出上限 2048 → 3072 |
+| 3 | 证据明明相关却答"没有相关内容" | 只写"证据不足就拒答"会诱发**过度拒答** | 忠实度规则第 2 条改为**双向约束**（相关就必须答；确实不涉及才拒答） |
+| 4 | `answer_relevancy` 指标直接缺席 | ragas 有两套 embedding 接口（`text/texts` 与 `query/documents`），只实现前者 ⇒ `AttributeError: no attribute 'embed_query'` | 适配器两套都实现 |
+
+已补 8 项单测（`tests/test_llm.py`）覆盖 JSON 容错解析与报错可诊断性。
+
+### ⚠️ 尚未解决的忠实度缺口（需你决定，属 R-42 范围）
+
+问一个**笔记里完全没有的主题**时，检索仍会返回 top-K 条"最不相关"的证据，
+模型会拿它们硬答（实测：问 2026 年诺贝尔物理学奖，它答了一大段"联网搜索原理"），
+而不是回答"笔记里没有相关内容"。citation 一致性检查**看不出来**——它内部自洽。
+
+根因：**混合检索没有相关性下限**，所以 code_standards §5 的"空结果不硬答"条款
+永远不会触发。tech.md §2 之所以要求 rerank `normalize=True`（"跨查询不可直接比"），
+本意正是为了能跨查询设阈值，但目前没有用上。
+
+候选修法：给证据加 **rerank 分数下限**（低于阈值视为无证据）。这需要先用黄金集量出
+"真问题 vs 无关问题"的分数分布再定阈值，属 R-42 调优范围，**未获确认前不改**。
 
 ## 6. 给 R-42 的调优候选（数据驱动，按预期收益排序）
 

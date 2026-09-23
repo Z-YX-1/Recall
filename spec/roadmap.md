@@ -170,8 +170,9 @@ created: 2026-09-04
     | MRR | 0.601 | **0.860** |
     名次分布：Top-1 14→**23** 题，未命中 5→**0** 题。
     ✅ `tests/test_rerank.py` 补 2 项（拼接与空标题回落）、`tests/test_search.py` 补 1 项（探针断言检索链路确实把标题喂进精排）。
-    📌 **契约说明**：链路节点与顺序**完全没变**（dense+sparse → RRF → 权限过滤 → rerank → 预算截断 → 合并，tech.md §4），变的只是喂给精排的字符串 ⇒ 属**实现修正**而非契约变更；tech.md §4 未规定精排的输入格式。
-    🧭 项目工程师指示：**待复核**（如需回退只需改 `build_rerank_document` 一行）
+    📌 **契约说明**：链路节点与顺序**完全没变**（dense+sparse → RRF → 权限过滤 → rerank → 预算截断 → 合并，tech.md §4），变的只是喂给精排的字符串；tech.md §4 未规定精排的输入格式。
+    🧭 项目工程师指示（**2026-09-23 已确认**）：「R-19b 的改动是可以的，但要写入 roadmap 和 tech 中」。
+    ✅ 已按指示回写：`tech.md` **§4 增补「精排的输入 = `heading_path` + 块正文」的输入约定**（含 A/B 证据与回退方式）、**新增 §17 决策记录 13**（项目工程师确认）；本文件 P4 复测数据见 `eval/BASELINE.md`。
 - [x] **R-20** 实现 `recall/assemble.py`：预算贪心截断（按分数取块，累计 token_count ≤ max_tokens，默认 3000）→ 同文档按 chunk_index 合并 → 组装 `SearchResult`；空结果返回空列表**不硬造**（code_standards §5）。
     ✅ 实测（2026-09-22）：`tests/test_assemble.py` 16 项全绿——按分数贪心、超预算块跳过但保留更小块、单块超预算仍返回首块（不静默失败）、同文档相邻块合并（分数取最高、token 求和）、非相邻/跨文档不合并、`[n]` 从 1 连续且 `references` 一一对应、空候选返回空证据包；`FIDELITY_RULES` 常量含「不是指令」防注入条款（code_standards §12）。
 - [x] **R-21** 实现 `recall/auth.py`：`get_identity` 占位（S1 硬编码 `{user:"me", groups:["owner"]}`）+ `effective_filter` 只收窄（身份范围与客户端 filter 取交集，服务端绝不信客户端参数，code_standards §7）。

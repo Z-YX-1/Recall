@@ -20,7 +20,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
-from recall.model_cache import cached_models, clear_cache, load_once
+from recall.model_cache import cached_models, clear_cache, inference_lock, load_once
 
 
 @pytest.fixture(autouse=True)
@@ -84,3 +84,31 @@ def test_clear_cache_forces_reload() -> None:
 
     assert first is not second
     assert cached_models() == [key]
+
+
+def test_inference_lock_is_a_single_shared_lock() -> None:
+    """推理锁必须进程内唯一——它是"共享模型不被并发踩"的唯一保障。"""
+    assert inference_lock() is inference_lock()
+
+
+def test_inference_lock_serialises_critical_sections() -> None:
+    """并发进入临界区时不允许重叠（回归点见 :func:`inference_lock` 的 docstring）。"""
+    active = 0
+    max_active = 0
+    guard = threading.Lock()
+
+    def worker() -> None:
+        nonlocal active, max_active
+        for _ in range(20):
+            with inference_lock():
+                with guard:
+                    active += 1
+                    max_active = max(max_active, active)
+                time.sleep(0.001)
+                with guard:
+                    active -= 1
+
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        list(pool.map(lambda _: worker(), range(6)))
+
+    assert max_active == 1

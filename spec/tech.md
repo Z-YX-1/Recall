@@ -114,6 +114,16 @@ query → bge-m3 同模型编码(dense+sparse)
       → 返回证据包 { evidence[], references[] }
 ```
 
+**精排的输入 = `heading_path` + 块正文**（`recall/rerank.py::build_rerank_document`）。
+
+> ⚠️ 标题不能省。实测（2026-09-22/23，30 题黄金集，其余条件完全相同）：
+> 只喂块正文时 MRR=0.591、Recall@1=0.467；加上标题后 **MRR=0.859、Recall@1=0.767**，
+> 逐题 **13 题变好、0 题变差**。原因是这类笔记的话题信号大部分在标题里
+> （如「🎲 ai-Temperature 与确定性控制 —— 全景解析」），只喂正文会让 cross-encoder
+> 失去最强判别特征，把 RRF 原本排第 1 的文档压到第 2~3。
+> 端到端（生产链路）修复效果：MRR 0.601 → **0.860**、Recall@10 0.833 → **1.000**。
+> 详见 `eval/BASELINE.md` §1 与 roadmap R-19b。
+
 ## 5. 摄取管道（幂等三机制）
 
 | 机制 | 作用 | 触发 |
@@ -283,3 +293,17 @@ $env:HF_ENDPOINT = "https://hf-mirror.com"                    # 国内下载镜�
 12. **MCP 工具名 = 函数名 ⇒ REST 处理函数改名**：FastMCP 由函数名派生工具名
     （code_standards §6.2），而 `kb_search` 同时是 REST 端点语义；二者不能同名，
     故 REST 处理函数更名为 `kb_search_endpoint`，**工具名与端点路径均不变**。
+
+---
+
+## 17. 关键决策记录（2026-09-23，项目工程师确认）
+
+13. **精排输入恒含 `heading_path`**（项目工程师 2026-09-23 确认）。`bge-reranker-v2-m3`
+    接收的文本由 `recall/rerank.py::build_rerank_document(heading_path, text)` 统一构造，
+    即「标题路径 + 换行 + 块正文」；标题为空时只用正文。
+    - **依据**：30 题黄金集 A/B，加标题后 MRR 0.591 → 0.859、Recall@1 0.467 → 0.767，
+      逐题 13 题变好 / 0 题变差；端到端复测 MRR 0.601 → 0.860、Recall@10 → 1.000。
+    - **边界**：链路**节点与顺序未变**（§4 的 dense+sparse → RRF → 权限过滤 → rerank →
+      预算截断 → 合并），变更仅在"喂给精排的字符串"这一实现细节，故 §4 仅补注输入约定。
+    - **回退方式**：改 `build_rerank_document` 一处即可。
+    - 记录位置：§4 输入约定、`eval/BASELINE.md` §1、roadmap R-19b 与 §七。

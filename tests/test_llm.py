@@ -16,7 +16,7 @@ from typing import Any, cast
 import pytest
 
 from recall.config import Settings
-from recall.llm import DeepSeekClient, LlmError, LlmNotConfiguredError
+from recall.llm import DeepSeekClient, LlmError, LlmNotConfiguredError, parse_json_object
 
 
 class _FakeCompletions:
@@ -132,13 +132,72 @@ async def test_invalid_json_is_not_retried() -> None:
     assert fake.completions.calls == 1
 
 
+# ------------------------------------------------------------------ JSON 容错解析
+
+
+def test_parse_json_object_accepts_plain_object() -> None:
+    assert parse_json_object('{"answer": "hi", "citations": [1]}') == {
+        "answer": "hi",
+        "citations": [1],
+    }
+
+
+def test_parse_json_object_tolerates_surrounding_prose() -> None:
+    """回归点：实测 DeepSeek 会在 JSON 前后附说明文字，直接 json.loads 会报「多余数据」。"""
+    raw = '好的，这是结果：{"answer": "hi", "citations": [1]} 希望有帮助'
+    assert parse_json_object(raw) == {"answer": "hi", "citations": [1]}
+
+
+def test_parse_json_object_tolerates_code_fence_and_braces_in_strings() -> None:
+    fenced = '```json\n{"answer": "a {b} c", "citations": []}\n```'
+    assert parse_json_object(fenced) == {"answer": "a {b} c", "citations": []}
+
+
+def test_parse_json_object_tolerates_raw_newlines_in_strings() -> None:
+    """回归点：DeepSeek 会在 JSON 字符串里塞未转义换行，标准解析器直接报错。
+
+    实测 2026-09-23：303 字符的回答体看着完整，却因一个裸换行让整段回答作废。
+    """
+    raw = '{"answer": "第一行\n第二行", "citations": [1]}'
+    assert parse_json_object(raw) == {"answer": "第一行\n第二行", "citations": [1]}
+
+
+def test_parse_json_object_rejects_truncated_object() -> None:
+    """被 max_tokens 截断的半截 JSON 必须判失败，不能把半截答案当好答案。"""
+    assert parse_json_object('{"answer": "很长的正文被截断了') is None
+
+
+def test_parse_json_object_rejects_non_object_json() -> None:
+    assert parse_json_object("[1, 2, 3]") is None
+    assert parse_json_object('"just a string"') is None
+
+
+async def test_complete_json_tolerates_surrounding_prose() -> None:
+    client, _ = _client([_response('说明：{"answer": "ok", "citations": []} 完')])
+
+    assert await client.complete_json("提示词") == {"answer": "ok", "citations": []}
+
+
+async def test_error_message_reports_length_and_tail_for_diagnosis() -> None:
+    """报错要能一眼看出是「截断」还是「夹带正文」（首尾都给）。"""
+    truncated = '{"answer": "' + "很长的正文" * 40
+    client, _ = _client([_response(truncated)])
+
+    with pytest.raises(LlmError) as excinfo:
+        await client.complete_json("提示词")
+
+    message = str(excinfo.value)
+    assert str(len(truncated)) in message
+    assert "尾 80" in message
+
+
 async def test_non_object_json_is_rejected() -> None:
     client, _ = _client([_response("[1, 2, 3]")])
 
     with pytest.raises(LlmError) as excinfo:
         await client.complete_json("提示词")
 
-    assert "不是 JSON 对象" in str(excinfo.value)
+    assert "不是合法 JSON" in str(excinfo.value)
 
 
 async def test_empty_content_is_rejected() -> None:

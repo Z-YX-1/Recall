@@ -84,6 +84,30 @@ class LocalBgeEmbedding(BaseRagasEmbedding):
         del kwargs
         return _run_sync(self.aembed_texts(texts))
 
+    # ⚠️ 下面四个方法是 ragas 的 **另一套** embedding 接口（BaseRagasEmbeddings 用的是
+    # query/documents 命名，BaseRagasEmbedding 用的是 text/texts）。
+    # AnswerRelevancy 走的是前者——只实现 text 那一套会报
+    # `AttributeError: 'LocalBgeEmbedding' object has no attribute 'embed_query'`，
+    # 指标直接缺席（2026-09-23 实测）。两套都实现才能覆盖不同 ragas 版本。
+
+    async def aembed_query(self, text: str, **kwargs: Any) -> list[float]:
+        """异步编码单条 query。"""
+        return await self.aembed_text(text, **kwargs)
+
+    async def aembed_documents(self, texts: list[str], **kwargs: Any) -> list[list[float]]:
+        """异步编码一批文档。"""
+        return await self.aembed_texts(texts, **kwargs)
+
+    def embed_query(self, text: str, **kwargs: Any) -> list[float]:
+        """同步编码单条 query。"""
+        del kwargs
+        return _run_sync(self.aembed_query(text))
+
+    def embed_documents(self, texts: list[str], **kwargs: Any) -> list[list[float]]:
+        """同步编码一批文档。"""
+        del kwargs
+        return _run_sync(self.aembed_documents(texts))
+
 
 def _run_sync(coroutine: Coroutine[Any, Any, _T]) -> _T:
     """在独立线程的事件循环里执行协程（避免与已运行的事件循环冲突）。"""
