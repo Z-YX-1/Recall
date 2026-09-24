@@ -101,3 +101,49 @@ def test_mcp_stateless_can_be_turned_off(monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.setenv("RECALL_MCP_STATELESS", "0")
 
     assert Settings.from_env().mcp_stateless is False
+
+
+# --------------------------------------------------------------- R-43b：导入顺序
+
+
+def test_offline_is_patched_into_already_imported_huggingface_hub(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R-43b 回归点：库先于配置导入时，``from_env`` 必须把**库里的常量**也改过来。
+
+    ``huggingface_hub.constants.HF_HUB_OFFLINE`` 是 import 时冻结的常量；
+    而 ``recall.api`` 的导入顺序恰好是"先 HF 栈、后 from_env"，只设环境变量无效
+    （2026-09-24 实测：模型仍回连 Hub，``kb_search`` 42s 超时）。
+    """
+    hf_constants = pytest.importorskip("huggingface_hub.constants")
+    monkeypatch.delenv("HF_HUB_OFFLINE", raising=False)
+    monkeypatch.setattr(hf_constants, "HF_HUB_OFFLINE", False)
+
+    settings = Settings.from_env()
+
+    assert settings.hf_hub_offline is True
+    assert hf_constants.HF_HUB_OFFLINE is True, "库里缓存的常量没被同步 ⇒ 仍会联网"
+
+
+def test_offline_patch_follows_the_escape_hatch(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``HF_HUB_OFFLINE=0``（下载新模型的逃生口）同样要同步到库常量。"""
+    hf_constants = pytest.importorskip("huggingface_hub.constants")
+    monkeypatch.setenv("HF_HUB_OFFLINE", "0")
+    monkeypatch.setattr(hf_constants, "HF_HUB_OFFLINE", True)
+
+    Settings.from_env()
+
+    assert hf_constants.HF_HUB_OFFLINE is False
+
+
+def test_importing_recall_bootstraps_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    """结构性保证：包一被导入就先建配置，"先配置、后加载模型"由导入顺序兜住。"""
+    from recall import _bootstrap_environment
+
+    monkeypatch.delenv("HF_HUB_OFFLINE", raising=False)
+    monkeypatch.delenv("HF_ENDPOINT", raising=False)
+
+    _bootstrap_environment()
+
+    assert _env("HF_HUB_OFFLINE") == "1"
+    assert _env("HF_ENDPOINT")

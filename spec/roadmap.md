@@ -304,6 +304,15 @@ created: 2026-09-04
     根因：**混合检索没有相关性下限**，所以 code_standards §5 的"空结果不硬答"条款永远不会触发。tech.md §2 之所以要求 rerank `normalize=True`（"跨查询不可直接比"），本意正是为了能跨查询设阈值，但目前没有用上。
     ✅ 已记录：`eval/BASELINE.md` §5 与 promptfoo 的"无证据不硬答"断言都留了这条；候选修法 = 给证据加 rerank 分数阈值，需先用黄金集量出"真问题 vs 无关问题"的分数分布再定阈值。
     🧭 项目工程师指示：**待确认**——属 R-42 调优范围，未获确认前不改检索实现。
+    ✅ **已定案（2026-09-24，项目工程师指示）**：改走**回答模板**路线，**不加检索阈值**。项目工程师实测后确认「这种回答我认为还是可以的」，并给出模板要求：
+    > 主要就是要在问到笔记中没有的东西的时候**不要硬答**，而是**通过联网搜索去找答案**，并且也要**回答笔记里没有出现相关内容**，这样才是一个好的回答模板。
+    ✅ 已落实（agent 侧）：
+    - `skill/recall-assembly.md` 新增「**笔记里没有的内容：三段式模板**」——① 先直接回答问题本身（可联网搜索，并说明信息来自联网）；② 显式声明"我按规范检索了你的个人知识库，没有检索到任何关于 X 的内容"；③ 披露命中的相邻主题，说明"这些不是答案、只是相邻内容"并照常标 `[n]`。强调**顺序不能颠倒**、相邻主题的 `[n]` 是"透明披露"而非"答案的证据"。
+    - `ASSEMBLY.md`（工作区兜底副本）同步同一模板。
+    - 已重新同步到 `$DSH_HOME/skills/recall-assembly.md`（5176 字节）。
+    ⚠️ **胖端点（`kb_answer`）试改后回退，附实测证据**：给 `FIDELITY_RULES` 加"若只是相邻主题必须点名、不得当答案"后，**过度拒答复发**——问"文本切分器的粒度该怎么选？"（笔记里明确写过，且上一版能正确作答）被答成"笔记里没有相关内容，证据只涉及相邻主题"。回退后恢复正常。
+    📌 **结论（给 R-42 的新证据）**：**"相关 vs 相邻"这个判断光靠提示词稳不住**，需要在检索侧给信号（如把 rerank 分数作为提示词里的字段，或加分数下限）。但 fat endpoint 是次要路径（tech.md §6 默认由 agent 组装），且 agent 侧有联网搜索 + 更强推理，模板路线在 agent 侧已被验证有效 ⇒ **暂不动检索实现**，把"给胖端点加分数信号"登记为 R-42 候选。
+    📌 另记：项目工程师实测时还遇到 DSH 联网搜索首次 `fetch failed`——那是 **DSH 的 web search 插件**端点配置问题，与 Recall 无关（不在本项目范围内）。
 - [x] **R-32b** 依赖收敛：`pyproject.toml` 增加 `eval` 可选依赖组并**钉死 `langchain-community>=0.3,<0.4`**；同时把 `openai` 约束由 `<2` 放宽到 `<4`（ragas 依赖链装上了 openai 3.3.0，经核验 `AsyncOpenAI(api_key=...)/chat.completions.create(response_format=..., max_tokens=...)` 在 3.3.0 下仍可用）。
     ✅ 验证：`import ragas` 成功；`recall.api` / `recall.llm` 导入正常；`pytest` 全绿（见下）。
     🧭 项目工程师指示：**待复核**（依赖约束调整，属 R-32 的前置修复）
@@ -356,6 +365,15 @@ created: 2026-09-04
     ✅ 处理：`recall/config.py` 新增 `DEFAULT_HF_HUB_OFFLINE = True`、`Settings.hf_hub_offline`（env `HF_HUB_OFFLINE`）与 `_read_bool()`（`0/false/no/off` 为假，与 `log_to_file` 同一套词法）；`Settings.from_env()` 用 `os.environ.setdefault("HF_HUB_OFFLINE", …)` 落盘 ⇒ **真实环境变量优先**，要下载新模型时 `HF_HUB_OFFLINE=0` 依然管用。`.env` 同步写入 `HF_HUB_OFFLINE=1` 与说明。
     ✅ 验证（2026-09-23）：`HF_HUB_OFFLINE=1` 下 `BGEM3FlagModel("BAAI/bge-m3", use_fp16=True)` **离线装载 8.0s、编码 2.0s**（dense 1024 维 / sparse 6 项），此前同一步骤 42s 超时；两个模型（bge-m3 / bge-reranker-v2-m3）快照完整落盘（R-05 已补全，故不会 `IncompleteSnapshotError`）；新增 `tests/test_config.py` 12 项覆盖默认值 / 逃生口 / 词法 / 落盘到 `os.environ`。
     🧭 项目工程师指示：**待复核**（配置默认值调整，未改 tech.md 任何契约；如需"默认在线"改一个常量即可）
+- [x] **R-43b** 修 R-43 的**致命遗漏**：默认离线在服务路径下**根本不生效**（2026-09-24 现场复现）。
+    ⚠️ 问题：R-43 只在"先设环境变量、后 import HF 栈"的顺序下有效。而 `recall.api` 的实际顺序相反——模块顶部 `from recall.embedder import …` 会连带导入 FlagEmbedding → transformers → huggingface_hub，**之后**才在模块级执行 `Settings.from_env()`。而 `huggingface_hub.constants.HF_HUB_OFFLINE` 是在 **import 时**从环境变量读出并固定的常量（源码 `_is_true(os.environ.get("HF_HUB_OFFLINE"))`）⇒ 晚设无效，模型装载照样回连 Hub。
+    ✅ 实证：`import huggingface_hub.constants as C; from recall.config import Settings; Settings.from_env()` ⇒ 环境变量是 `'1'` 而 `C.HF_HUB_OFFLINE` 仍是 `False`；真实调用栈逐字复现 R-43 的那一条 `transformers/utils/hub.py::list_repo_templates → hf_api.list_repo_tree → httpx.ConnectTimeout`。
+    📌 **这解释了为什么项目工程师新会话里 `kb_search` 仍会全量失败**——R-43 的"已修复"是被测试顺序骗过的（单独跑 `Embedder().encode()` 时 `from_env()` 恰好在前，所以通过）。
+    ✅ 双层修复：
+    ① **结构性**：`recall/__init__.py` 增加 `_bootstrap_environment()`——包一被导入就先 `Settings.from_env()`。"先建配置、后加载模型"从此由**导入顺序**保证，不靠调用方自觉；
+    ② **兜底**：`recall/config.py` 新增 `_sync_hf_offline()`——若库已先于配置导入，直接把 `huggingface_hub.constants.HF_HUB_OFFLINE` 改成目标值并记一条 INFO。
+    ✅ 验证：同一失败路径（`kb_answer` 三连问）现在**两个模型全部装载成功、零超时**（此前三问全部 ConnectTimeout 且 `cached models: []`）；"先 import HF 再配置"的顺序下 `C.HF_HUB_OFFLINE` 由 `False` 变 `True`。
+    🧭 项目工程师指示：**待复核**
 - [x] **R-44** MCP Streamable HTTP 默认改为**无会话（stateless）**：把"会话 id 存在服务端内存里"这个隐性依赖去掉，让客户端**不可能**再拿到过期的会话（tech.md §8 端点契约不变）。
     ⚠️ 现场报错（2026-09-24，R-43 修好之后项目工程师新开会话）：多次调用 MCP 工具全部失败——`Error: Streamable HTTP error: Error POSTing to endpoint: {"jsonrpc":"2.0","id":"server-error","error":{"code":-32600,"message":"Session not found"}}`（HTTP 404）。
     根因（三层，逐层取证）：
@@ -389,6 +407,7 @@ created: 2026-09-04
 | 2026-09-22 | R-28 | AI 执行者无法自行开启 DSH 会话：MCP 服务器只在会话启动时装载，本会话看不到 `mcp__recall__*`，R-28 的字面验收无法由 AI 独立完成 | R-28b：用真实 MCP 客户端完成除"会话装载"外的全部链路验证；并在新会话中由项目工程师确认 | **已确认（2026-09-24）**：项目工程师实测新会话与新工作区均可正常问答 | ✅ 已解决 |
 | 2026-09-23 | R-43 | 真实会话里 `mcp__recall__kb_search` **全量失败**（每次 ~42s 后 `fetch failed`），而 `kb_stats` 一直正常；`api.log` 栈指向 `transformers…list_repo_templates` → `hf_api.list_repo_tree` → `httpx.ConnectTimeout`（模型已缓存仍回连 HF Hub，本机出网间歇不可达） | R-43：`HF_HUB_OFFLINE` 升为配置项且**默认离线**（`.env` + `Settings.from_env()` 落盘 `os.environ`，`HF_HUB_OFFLINE=0` 可下载新模型）；新增 `tests/test_config.py` | **待复核**（配置默认值调整，不动契约） | ✅ 已解决 |
 | 2026-09-24 | R-44 | R-43 修好后项目工程师**新开会话**依旧全量失败：`Streamable HTTP error … {"code":-32600,"message":"Session not found"}`（HTTP 404）。服务端会话表在进程内存里（空闲 30 分钟回收 + 进程重启即失效），而 MCP 客户端收到 404 **不会重新 initialize**（SDK 只翻成 `Session terminated` 就 return；DSH mcp-client 只在 transport onclose 时重连）⇒ 客户端永远拿着死 id，且 MCP 连接跨对话复用，"新开会话"也无解 | R-44：MCP 默认改为**无会话**（`Settings.mcp_stateless` / `RECALL_MCP_STATELESS`，`http_app(stateless_http=True)`）；新增过期 id 回归测试 | **待复核**（默认模式调整，tech.md §8 端点契约不变；代价是失去服务端主动推送） | ✅ 已解决 |
+| 2026-09-24 | R-43 | **R-43 的修复实际未生效**：默认离线只在"先设环境变量、后 import HF 栈"的顺序下有效；`recall.api` 是反的（顶部先 import embedder → FlagEmbedding → transformers → huggingface_hub），而 `huggingface_hub.constants.HF_HUB_OFFLINE` 在 import 时冻结 ⇒ 晚设无效，模型装载照样回连 Hub。**这正是项目工程师新会话里 `kb_search` 仍全量失败的真正原因**（R-43 的验证被测试顺序骗过：单跑 `Embedder().encode()` 时 `from_env()` 恰好在前） | R-43b：① `recall/__init__.py` 增加 `_bootstrap_environment()`（包导入即建配置，顺序由导入保证）；② `recall/config.py` 增加 `_sync_hf_offline()`（库已先导入时直接改其常量）；新增 3 项回归测试 | **待复核**（实现层修复，不动契约） | ✅ 已解决 |
 
 ---
 
@@ -400,18 +419,18 @@ created: 2026-09-04
 - **未通过项**：R-02（官方源网络超时，已走 R-02b）、R-03（Docker 未运行，已走 R-03b）
 - **待请示事项**（按"要不要动实现"分两类）：
   - **需你拍板（涉及行为/契约）**：
-    1. **R-32d**：检索无相关性下限 ⇒ 笔记外问题被硬答；是否加 rerank 分数阈值（属 R-42）；
+    1. ~~R-32d 检索相关性下限~~ → **已定案（2026-09-24）**：走**回答模板**路线，不加检索阈值；模板已写入 skill / `ASSEMBLY.md`。**残留**：胖端点 `kb_answer` 靠提示词稳不住"相关 vs 相邻"（试改即过度拒答复发，已回退）⇒ "给胖端点加检索侧信号"登记为 R-42 首选候选；
     2. **R-28 遗留**：`GET /kb/stats` 返回 404 是否符合你的预期；若要在 REST 也提供统计端点，属**契约新增**（tech.md §8 目前只列四个端点）；
   - **需你复核默认值（改一个常量即可回退）**：
-    3. **R-43**：`HF_HUB_OFFLINE` 默认离线（`DEFAULT_HF_HUB_OFFLINE`）；
+    3. **R-43 / R-43b**：`HF_HUB_OFFLINE` 默认离线（`DEFAULT_HF_HUB_OFFLINE`）；
     4. **R-44**：MCP 默认无会话（`RECALL_MCP_STATELESS=0` 可回退到状态化）；
   - **需你背书的实现细节（均未触及 tech.md 契约）**：
-    5. R-14b / R-16b / R-21 / R-23b / R-23c / R-27c~R-27i / R-29b / R-32c 的「项目工程师指示」待复核；
+    5. R-14b / R-16b / R-21 / R-23b / R-23c / R-27c~R-27i / R-29b / R-32c / R-43b 的「项目工程师指示」待复核；
   - **验收**：
-    6. **R-37 项目工程师验收**（Phase 5 收尾）；
+    6. **R-37 项目工程师验收**（Phase 5 收尾；可在 R-32d 之后）；
   - **已决**：~~R-19b 是否属契约变更~~ → **已确认（2026-09-23）**，并已按指示回写 `tech.md` §4 与 §17 决策记录 13。
-- **最近一次测试结果**（2026-09-24）：`pytest` **160 passed**（原 144 + `tests/test_config.py` 14 项 + `test_mcp.py` 会话语义 2 项）；`ruff` 零告警；`mypy` strict 38 文件零错误；检索 Recall@10=**1.000** / MRR=0.860；Ragas faithfulness=0.705 / answer_relevancy=0.678 / 引用一致性=1.000；promptfoo 3 通过 / 1 失败 / **0 错误**；离线装载 bge-m3 8.0s（修复前同一步 42s ConnectTimeout）；过期 session id 不再 404
-- **本文件版本**：v0.10.1（2026-09-24 R-28 验收通过并归档；R-43/R-44 正式入库；待请示事项按"需拍板 / 需复核默认值 / 需背书"重新归类）
+- **最近一次测试结果**（2026-09-24）：`pytest` **163 passed**（160 + R-43b 回归 3 项）；`ruff` 零告警；`mypy` strict 38 文件零错误；检索 Recall@10=**1.000** / MRR=0.860；Ragas faithfulness=0.705 / answer_relevancy=0.678 / 引用一致性=1.000；promptfoo 3 通过 / 1 失败 / **0 错误**；`kb_answer` 三连问零超时（R-43b 修复前全为 ConnectTimeout）
+- **本文件版本**：v0.10.2（2026-09-24 R-32d 定案走模板路线、R-43b 修复"默认离线在服务路径下失效"、R-28 验收归档）
 
 ---
 
@@ -498,3 +517,6 @@ created: 2026-09-04
 | 2026-09-24 | R-44 | 测试补强 | 新增 `tests/test_mcp.py::test_stale_session_id_is_not_rejected`（带过期 id 的 `initialize` 必须 200 且不签发新 id）；`tests/test_config.py` 补 2 项 | 把现场 404 钉成回归点 |
 | 2026-09-24 | R-28 | **验收归档** | R-28 验收通过（项目工程师：「新会话与新工作区问问题都较好完成」），勾选并记入 §五 | 原"AI 无法自行开启会话"的阻塞解除 |
 | 2026-09-24 | R-43,R-44 | 入库补记 | R-43/R-44 的改动此前只落盘未提交，本次正式 commit（`a8a090d`）并复验 gates | 变更登记铁律要求每次改动入库 |
+| 2026-09-24 | R-43b | **严重遗漏修复** | 默认离线在服务路径下失效（`huggingface_hub` 常量 import 时冻结，而 `recall.api` 先 import HF 栈再 `from_env`）⇒ ① `recall/__init__.py` 加 `_bootstrap_environment()`（包导入即建配置）② `recall/config.py` 加 `_sync_hf_offline()` 兜底改常量 ③ 新增 3 项回归测试 | 见 §五 R-43 行；**这解释了 `kb_search` 仍全量超时的真正原因** |
+| 2026-09-24 | R-32d | **定案：走模板路线** | 项目工程师定案**不加检索阈值**，改为回答模板：① `skill/recall-assembly.md` 新增「笔记里没有的内容：三段式模板」（先直接答/可联网 → 显式声明笔记没有 → 披露相邻主题且说明"不是答案"）；② `ASSEMBLY.md` 同步；③ 重新同步到 `$DSH_HOME/skills/`（5176 字节） | 见 §四 R-32d；agent 侧实测有效（项目工程师样例） |
+| 2026-09-24 | R-32d | **试改后回退（附证据）** | 给 `FIDELITY_RULES` 加"相邻主题必须点名"→ **过度拒答复发**：问"切分器粒度怎么选"（笔记明确写过、上一版能正确作答）被答成"笔记里没有相关内容" ⇒ 该条回退，`FIDELITY_RULES` 保持跑出 Ragas 基线的那一版（**基线数字仍有效**） | 结论：**"相关 vs 相邻"光靠提示词稳不住，需检索侧信号** ⇒ 登记为 R-42 首选候选 |

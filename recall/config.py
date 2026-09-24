@@ -83,6 +83,34 @@ def _read_bool(name: str, *, default: bool) -> bool:
     return default
 
 
+def _sync_hf_offline(offline: bool) -> None:
+    """把离线开关同步给**已导入**的 ``huggingface_hub``（兜底，见模块 docstring）。
+
+    ⚠️ 为什么需要：``huggingface_hub.constants.HF_HUB_OFFLINE`` 在 **import 时**
+    就从环境变量读出并固定（源码：``_is_true(os.environ.get("HF_HUB_OFFLINE"))``）。
+    而 ``recall.api`` 会先 import ``recall.embedder`` → FlagEmbedding → transformers
+    → huggingface_hub，**再**调用 :meth:`Settings.from_env`；此时再设环境变量已经晚了，
+    库仍按"在线"处理 ⇒ 模型装载照样回连 Hub（2026-09-24 实测复现：**R-43 的修复在
+    这个导入顺序下完全失效**，`kb_search` 依旧 42s 超时）。
+
+    根治手段是让 ``recall/__init__.py`` 在包导入时就把环境变量设好（顺序正确时
+    本函数会直接返回）；这里改常量只是**双保险**，覆盖"先 import transformers
+    再 import recall"的用法。
+
+    Args:
+        offline: 目标离线状态。
+    """
+    hub_constants = sys.modules.get("huggingface_hub.constants")
+    if hub_constants is None:
+        return  # 库还没导入 ⇒ 稍后它自然会读到正确的环境变量
+    if bool(getattr(hub_constants, "HF_HUB_OFFLINE", offline)) == offline:
+        return
+    setattr(hub_constants, "HF_HUB_OFFLINE", offline)  # noqa: B010 - 动态补丁第三方模块常量
+    logging.getLogger(__name__).info(
+        "config.hf_offline_patched", extra={"offline": offline, "reason": "库已先于配置导入"}
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class Settings:
     """进程级配置快照。
@@ -166,6 +194,7 @@ class Settings:
         if settings.hf_endpoint:
             os.environ.setdefault("HF_ENDPOINT", settings.hf_endpoint)
         os.environ.setdefault("HF_HUB_OFFLINE", "1" if settings.hf_hub_offline else "0")
+        _sync_hf_offline(settings.hf_hub_offline)
         return settings
 
 
