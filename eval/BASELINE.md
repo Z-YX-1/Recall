@@ -144,3 +144,17 @@ MRR 0.860 同时显著优于"干脆不要精排"的 0.650 —— 精排是净收
 | 是否排除 spec 类文档 / query 意图分类 | 第 4 节元问题观察 | 改善"元问题"类 query |
 
 **所有调优都必须回到本报告同一套黄金集 + 指标上对比**（tech.md §10 触发点）。
+
+---
+
+## 附：评测环境的前置条件（2026-09-23 R-43 后已固化）
+
+本报告的全部数字都要求**模型不回连 HF Hub**——transformers 装载 tokenizer 时会调
+`list_repo_templates` 去拉 `chat_template.jinja` 清单，权重已在本地缓存也照样走一次网络；
+本机出网间歇不可达，该请求会挂到 httpx 连接超时（实测 42s，整条检索被拖死）。
+
+- 此前这是**评测时的临时建议**（`HF_HUB_OFFLINE=1`）；
+- 现在已固化为**服务与管道的默认行为**：`Settings.hf_hub_offline`（env `HF_HUB_OFFLINE`，默认 `True`，
+  见 `recall/config.py` 与 roadmap R-43）。要下载新模型时才设 `HF_HUB_OFFLINE=0`。
+- 复现本报告时若发现检索"卡住不动"，先确认这两个模型（bge-m3 / bge-reranker-v2-m3）快照完整，
+  且 `HF_HUB_OFFLINE` 未被显式设成 `0`。

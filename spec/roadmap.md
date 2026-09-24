@@ -244,9 +244,11 @@ created: 2026-09-04
     ✅ 测试：`tests/test_store.py::test_unreachable_qdrant_raises_store_unavailable`、`tests/test_search.py::test_kb_search_reports_qdrant_down_as_semantic_503`（把服务指向死端口，断言 503 + `qdrant_unavailable` + 提示文案）。
     ✅ 验证：`pytest` **134 passed**；ruff/mypy 零错误。
     🧭 项目工程师指示：**待复核**
-- [ ] **R-28** 端到端验收：DSH 会话中用自然语言问笔记（如"我笔记里关于 RAG 检索质量的结论？"），回答**带 [n] 引用且忠于证据**（tech.md P2 验收标准）。记录问答样例汇报项目工程师。
+- [x] **R-28** 端到端验收：DSH 会话中用自然语言问笔记（如"我笔记里关于 RAG 检索质量的结论？"），回答**带 [n] 引用且忠于证据**（tech.md P2 验收标准）。记录问答样例汇报项目工程师。
     ⚠️ 问题：AI 执行者**无法自行开启一个 DSH 会话**（MCP 服务器只在会话启动时装载，本会话看不到 `mcp__recall__*` 工具），R-28 的字面验收必须由项目工程师在新会话中确认（2026-09-22）。
     📌 追加（2026-09-23，来自实战日志）：项目工程师实测期间访问了 `GET /kb/stats` → **404**。按 tech.md §8，`kb_stats` 只作为 **MCP 工具**存在，REST 只有 `/health`、`/kb/search`、`/kb/answer`、`/kb/ingest` 四个端点，所以 404 是符合契约的行为。**若希望 REST 也提供统计端点，属契约新增，需项目工程师确认后再加。**
+    ✅ **验收通过（2026-09-24，项目工程师确认）**：原文 ——「R-28 的我已经确认完毕，不管是打开新会话还是开一个新的工作区问问题，都较好地完成了。」即 `mcp__recall__*` 工具在会话中可用、问答链路端到端成立（tech.md P2 验收标准达成）。
+    📌 遗留（不阻塞 R-28）：`GET /kb/stats` → 404 是否要补一个 REST 统计端点，仍待项目工程师决定（见 §六 待请示事项）。
 - [x] **R-28b** 以等价方式完成 R-28 的**除"会话装载"外的全部链路验证**：用真实 MCP 客户端连 `http://127.0.0.1:8000/mcp` 调 `kb_search`，按 `recall-assembly` 规范组装。
     ✅ 实测（2026-09-22）：问题「我笔记里关于 RAG 检索质量的结论？」→ 返回 5 条证据、`references` 与 `[n]` 一一对应，Top-1 = `project/Recall/spec/roadmap.md`（0.9348）、Top-2 = `AI/ai-文本切分器 (Text Splitter).md`（0.5731，"粒度是整条 RAG 链路里影响 recall 最大的单一参数"）、Top-3 = `AI/ai-Embedding (向量) 的几何意义.md`（0.4550，"文档实际用的是 Recall@K"）。
     ⚠️ 检索质量观察：Top-1 命中的是 vault 里的 **Recall 路线图自身**（含大量 RAG/检索字样）而非技术笔记；`query="我笔记里关于 RAG 检索质量的结论？"` 属"元问题"，与笔记正文的措辞分布不匹配。留待 R-42 用黄金集量化（tech.md §10 触发点）。
@@ -348,6 +350,29 @@ created: 2026-09-04
 - [ ] **R-40** 权限 S2：API key 中间件实现，`get_identity` 换真实实现，审计日志上线。
 - [ ] **R-41** 新 Connector：飞书 / 语雀 / 网页（按 Connector 协议新增，不改管道其余部分）。
 - [ ] **R-42** 检索调优 A/B：top_k / rerank / 切分参数用黄金集 + Recall@K 并排对比，数据驱动决策（tech.md §10 触发点）。
+- [x] **R-43** `HF_HUB_OFFLINE` 升为配置项（**默认离线**）：把"模型加载前不回连 HF Hub"从"评测时的临时建议"变成服务进程的默认行为（tech.md §12 的"先建配置、后加载模型"顺序不变）。
+    ⚠️ 现场证据（2026-09-23 真实 DSH 会话）：`kb_search` **每一次**都在 ~42s 后失败——`mcp__recall__kb_stats` 却全程正常（Qdrant 活着），说明故障不在检索库。`data/logs/api.log` 的异常链给出确切位置：`api.kb_search_core` → `embedder._encode_sync` → `model_cache.load_once` → `BGEM3FlagModel.__init__` → `transformers…tokenization_auto.from_pretrained` → **`transformers/utils/hub.py::list_repo_templates`** → `huggingface_hub.hf_api.list_repo_tree` → `httpx.ConnectTimeout`。
+    根因：transformers 5.x 装载 tokenizer 时会去 Hub 拉 `chat_template.jinja` 清单，**权重已在本地缓存也照样走一次网络**；本机出网间歇不可达（§七 2026-09-23 R-32 环境记录），该请求挂在 TCP 连接上直到 httpx 超时 ⇒ 整个 `kb_search` 被拖死（实测 6 次调用 23:18:09→23:22:08 全部同一栈）。
+    ✅ 处理：`recall/config.py` 新增 `DEFAULT_HF_HUB_OFFLINE = True`、`Settings.hf_hub_offline`（env `HF_HUB_OFFLINE`）与 `_read_bool()`（`0/false/no/off` 为假，与 `log_to_file` 同一套词法）；`Settings.from_env()` 用 `os.environ.setdefault("HF_HUB_OFFLINE", …)` 落盘 ⇒ **真实环境变量优先**，要下载新模型时 `HF_HUB_OFFLINE=0` 依然管用。`.env` 同步写入 `HF_HUB_OFFLINE=1` 与说明。
+    ✅ 验证（2026-09-23）：`HF_HUB_OFFLINE=1` 下 `BGEM3FlagModel("BAAI/bge-m3", use_fp16=True)` **离线装载 8.0s、编码 2.0s**（dense 1024 维 / sparse 6 项），此前同一步骤 42s 超时；两个模型（bge-m3 / bge-reranker-v2-m3）快照完整落盘（R-05 已补全，故不会 `IncompleteSnapshotError`）；新增 `tests/test_config.py` 12 项覆盖默认值 / 逃生口 / 词法 / 落盘到 `os.environ`。
+    🧭 项目工程师指示：**待复核**（配置默认值调整，未改 tech.md 任何契约；如需"默认在线"改一个常量即可）
+- [x] **R-44** MCP Streamable HTTP 默认改为**无会话（stateless）**：把"会话 id 存在服务端内存里"这个隐性依赖去掉，让客户端**不可能**再拿到过期的会话（tech.md §8 端点契约不变）。
+    ⚠️ 现场报错（2026-09-24，R-43 修好之后项目工程师新开会话）：多次调用 MCP 工具全部失败——`Error: Streamable HTTP error: Error POSTing to endpoint: {"jsonrpc":"2.0","id":"server-error","error":{"code":-32600,"message":"Session not found"}}`（HTTP 404）。
+    根因（三层，逐层取证）：
+    ① **服务端**：`mcp` SDK 1.30 的 `StreamableHTTPSessionManager` 只认自己内存里签发的 session id，收到未知 id 直接 **HTTP 404**（本机复现：带假 id POST `/mcp/` ⇒ `404 {"code":-32600,"message":"Session not found"}`，与现场报文逐字一致）。会话表是**进程内存**，两条与代码无关的路径都会让它丢：**空闲 30 分钟被回收**（SDK 默认 `DEFAULT_SESSION_IDLE_TIMEOUT = 1800`；实测日志 `2026-09-24 00:21:04 Session d37ab607… idle timeout`）与**服务进程重启**（23:25 / 01:40 两次重启，此前签发的 id 全部作废）。
+    ② **客户端不回退**：MCP Python SDK 的 `StreamableHTTPClientTransport` 收到 404 只做一件事——把响应翻成 `Session terminated` 错误**并 return**（`client/streamable_http.py:372`），**规范要求的"重新 initialize"没有实现**；DSH 的 `@deepseek-ai/dsh-mcp-client@0.1.5-rc.3` 只在 transport `onclose` 时重连（`lib/index.js:560 generationDown`），而 404 是**正常 HTTP 响应**、不触发 onclose。
+    ③ **所以"新开会话"救不了**：MCP 连接是**每服务器一条、跨对话复用**的（插件激活时建立），新对话不会重新握手 ⇒ 客户端一直拿着死 id，表现为"多次调用全部失败"。
+    ✅ 处理：`recall/config.py` 新增 `DEFAULT_MCP_STATELESS = True` 与 `Settings.mcp_stateless`（env `RECALL_MCP_STATELESS`）；`recall/api.py` 改为 `mcp.http_app(path="/", stateless_http=Settings.from_env().mcp_stateless)`。无会话模式下每个请求自带一次握手、服务端不再签发 session id ⇒ 上面三条路径同时消失。需要服务端推送（`notifications/tools/list_changed`、SSE 续传）时设 `RECALL_MCP_STATELESS=0` 回到状态化。
+    ✅ 验证（2026-09-24，全部实测）：
+    | 动作 | 结果 |
+    | :--- | :--- |
+    | 带**过期 session id** POST `/mcp/` `initialize` | **HTTP 200**（修复前 404），且响应**不签发** `Mcp-Session-Id` |
+    | 同一过期 id 继续 `tools/call kb_stats` | HTTP 200 / `isError=false` / `points=972 docs=65` |
+    | **真实 DSH 会话**（未重开会话）调 `mcp__recall__kb_search` | 成功返回 7 条证据 ⇒ 现场故障消失 |
+    | 日志形态 | 每请求一行 `Terminating session: None`，再无 `Session … idle timeout` |
+    新增 `tests/test_mcp.py::test_stale_session_id_is_not_rejected`（把"过期 id 必须能用"钉成回归点）+ `tests/test_mcp.py::test_stateful_mode_still_rejects_unknown_session`（同一请求在状态化模式下仍是 404，钉死因果）+ `tests/test_config.py` 2 项。
+    ⚠️ 测试隔离坑（本轮踩到，已修）：``StreamableHTTPSessionManager.run()`` **每个实例只能跑一次**（`mcp/server/streamable_http_manager.py:155`），新用例若复用模块级 `mcp_app` 的 lifespan，会在**全量跑**时与"挂载 + lifespan"用例冲突（单跑必过、全量必挂）。改为用例内自建 ``mcp.http_app(...)`` 实例。
+    🧭 项目工程师指示：**待复核**（默认值由"有会话"改为"无会话"；代价是失去服务端主动推送，本项目未使用；回退只需一个环境变量）
 
 ---
 
@@ -361,7 +386,9 @@ created: 2026-09-04
 | 2026-09-22 | R-23 | pytest 会话中连续装载 bge-m3 触发 `Windows fatal exception: access violation`（栈在 `transformers/core_model_loading.py::_materialize_copy`；transforms 5.x 权重装载用内部线程池并行 materialize，两线程同时装载即崩） | R-23b：新增 `recall/model_cache.py`（进程级缓存 + 装载锁），embedder/reranker 统一 `load_once` | **待复核**（实现层基础设施，不动契约） | ✅ 已解决 |
 | 2026-09-22 | R-23 | 真实 vault 首轮摄取 268 篇里 203 篇是 `project/*/node_modules/**` 的第三方 CHANGELOG/LICENSE/README，严重稀释检索质量 | R-23c：`DEFAULT_SKIP_DIRS` 增加工程产物目录 + 开放 `--skip-dirs` 覆盖，重灌后 65 篇 / 972 点 | **待复核**（摄取范围细化，不改 Connector 协议） | ✅ 已解决 |
 | 2026-09-22 | R-21 | Qdrant `Condition` 联合类型含 `Any`，`Filter.model_validate` 对残缺条件照单全收（`{"must":[{"key":"doc_id"}]}` 能通过），坏 filter 会一路带到 Qdrant 变成 500 而不是干净的 400 | 在 `recall/auth.py` 内自建结构校验 `validate_client_filter` | **待复核**（API 错误规范内的实现细节） | ✅ 已解决 |
-| 2026-09-22 | R-28 | AI 执行者无法自行开启 DSH 会话：MCP 服务器只在会话启动时装载，本会话看不到 `mcp__recall__*`，R-28 的字面验收无法由 AI 独立完成 | R-28b：用真实 MCP 客户端完成除"会话装载"外的全部链路验证；并在新会话中由项目工程师确认 | **待确认**（等价验证已通过，等待会话侧确认） | ⏳ 待确认 |
+| 2026-09-22 | R-28 | AI 执行者无法自行开启 DSH 会话：MCP 服务器只在会话启动时装载，本会话看不到 `mcp__recall__*`，R-28 的字面验收无法由 AI 独立完成 | R-28b：用真实 MCP 客户端完成除"会话装载"外的全部链路验证；并在新会话中由项目工程师确认 | **已确认（2026-09-24）**：项目工程师实测新会话与新工作区均可正常问答 | ✅ 已解决 |
+| 2026-09-23 | R-43 | 真实会话里 `mcp__recall__kb_search` **全量失败**（每次 ~42s 后 `fetch failed`），而 `kb_stats` 一直正常；`api.log` 栈指向 `transformers…list_repo_templates` → `hf_api.list_repo_tree` → `httpx.ConnectTimeout`（模型已缓存仍回连 HF Hub，本机出网间歇不可达） | R-43：`HF_HUB_OFFLINE` 升为配置项且**默认离线**（`.env` + `Settings.from_env()` 落盘 `os.environ`，`HF_HUB_OFFLINE=0` 可下载新模型）；新增 `tests/test_config.py` | **待复核**（配置默认值调整，不动契约） | ✅ 已解决 |
+| 2026-09-24 | R-44 | R-43 修好后项目工程师**新开会话**依旧全量失败：`Streamable HTTP error … {"code":-32600,"message":"Session not found"}`（HTTP 404）。服务端会话表在进程内存里（空闲 30 分钟回收 + 进程重启即失效），而 MCP 客户端收到 404 **不会重新 initialize**（SDK 只翻成 `Session terminated` 就 return；DSH mcp-client 只在 transport onclose 时重连）⇒ 客户端永远拿着死 id，且 MCP 连接跨对话复用，"新开会话"也无解 | R-44：MCP 默认改为**无会话**（`Settings.mcp_stateless` / `RECALL_MCP_STATELESS`，`http_app(stateless_http=True)`）；新增过期 id 回归测试 | **待复核**（默认模式调整，tech.md §8 端点契约不变；代价是失去服务端主动推送） | ✅ 已解决 |
 
 ---
 
@@ -375,10 +402,12 @@ created: 2026-09-04
   1. **R-28 待新会话确认**：请新开 DSH 会话，问一句笔记问题，确认出现 `mcp__recall__kb_search` 且回答带 `[n]` 引用；
   2. **R-32d 待确认**：检索无相关性下限 ⇒ 笔记外问题被硬答；修法（rerank 分数阈值）属 R-42，需你点头；
   3. R-14b / R-16b / R-21 / R-23b / R-23c / R-27c~R-27i / R-29b / R-32c 的「项目工程师指示」待复核（技术细节收敛，未触及 tech.md 契约）；
-  4. **R-37 项目工程师验收**；
-  5. ~~R-19b 是否属契约变更~~ → **已确认（2026-09-23）**，并已按指示回写 `tech.md` §4 与 §17 决策记录 13。
-- **最近一次测试结果**（2026-09-23）：`pytest` **144 passed**；`ruff` 零告警；`mypy` strict 37 文件零错误；检索 Recall@10=**1.000** / MRR=0.860；Ragas faithfulness=0.705 / answer_relevancy=0.678 / 引用一致性=1.000；promptfoo 3 通过 / 1 失败 / **0 错误**；并发 6 请求全 200
-- **本文件版本**：v0.8.0（2026-09-23 打通真实 DeepSeek 调用：R-29 验证 + R-29b 四项生成健壮性修复 + R-32 Ragas/promptfoo 基线 + R-32c 并发严重缺陷修复 + R-32d 待决策缺口）
+  4. **R-43 待复核**：`HF_HUB_OFFLINE` 默认改为离线（现场修复 `kb_search` 全量超时）；若你希望"默认在线、按需离线"，把 `DEFAULT_HF_HUB_OFFLINE` 改回 `False` 即可——但在本机出网间歇不可达的前提下，那等于让每次冷启动都可能卡 40s+；
+  5. **R-44 待复核**：MCP 默认改为**无会话**（现场修复 `Session not found` 全量 404）；若日后需要服务端主动推送，设 `RECALL_MCP_STATELESS=0` 回到状态化，但要接受"空闲 30 分钟 / 服务重启后客户端必须重开会话（或重启 Host）"这一约束；
+  6. **R-37 项目工程师验收**；
+  7. ~~R-19b 是否属契约变更~~ → **已确认（2026-09-23）**，并已按指示回写 `tech.md` §4 与 §17 决策记录 13。
+- **最近一次测试结果**（2026-09-24）：`pytest` **160 passed**（原 144 + `tests/test_config.py` 14 项 + `test_mcp.py` 会话语义 2 项）；`ruff` 零告警；`mypy` strict 38 文件零错误；检索 Recall@10=**1.000** / MRR=0.860；Ragas faithfulness=0.705 / answer_relevancy=0.678 / 引用一致性=1.000；promptfoo 3 通过 / 1 失败 / **0 错误**；离线装载 bge-m3 8.0s（修复前同一步 42s ConnectTimeout）；过期 session id 不再 404
+- **本文件版本**：v0.10.0（2026-09-24 现场修复：R-43 `HF_HUB_OFFLINE` 默认离线 + R-44 MCP 默认无会话，分别解决 `kb_search` 全量 ConnectTimeout 与 `Session not found` 全量 404）
 
 ---
 
@@ -455,3 +484,11 @@ created: 2026-09-04
 | 2026-09-22 | R-27g | **Bug 修复** | `recall/model_cache.py::cached_models()` 裸 `sorted()` 在键含 `None` 与 `"cpu"` 混排时抛 `TypeError` → 改为 None 安全排序键；新增单测固定该回归点 | 由新单测发现 |
 | 2026-09-22 | R-27g | 契约细化 | `StatsResult` 新增 `collections: list[str]`（现存全部 collection 名） | MCP 工具返回体新增字段，不改 REST 端点契约 |
 | 2026-09-22 | R-27h | 实现层小改 | `recall/llm.py` 抽出常量 `RETRY_BASE_DELAY`（退避基数可注入，生产默认 0.5s 不变） | 让重试逻辑可测 |
+| 2026-09-23 | R-43 | 配置新增 | 新增 `DEFAULT_HF_HUB_OFFLINE = True`、`Settings.hf_hub_offline`（env `HF_HUB_OFFLINE`）与 `_read_bool()`；`.env` 写入 `HF_HUB_OFFLINE=1` | 见 §四/§五 R-43；默认值可用一个常量回退 |
+| 2026-09-23 | R-43 | 行为显式化 | `Settings.from_env()` 同时 `os.environ.setdefault("HF_HUB_OFFLINE", …)`，与 `HF_ENDPOINT` 同一条"模型加载前生效"约束 | 真实环境变量优先 ⇒ 下载新模型仍可 `HF_HUB_OFFLINE=0` |
+| 2026-09-23 | R-43 | 测试补强 | 新增 `tests/test_config.py`（12 项：默认离线 / 逃生口优先级 / 布尔词法 / 落盘 `os.environ` / 不挤掉 `HF_ENDPOINT`）；`tests/test_llm.py` 的 `Settings(...)` 补 `hf_hub_offline` 字段 | 修 `kb_search` 全量 ConnectTimeout 的回归点 |
+| 2026-09-23 | R-43 | 运维注意 | 服务重启（换进程）后，**已开的 DSH 会话里 `mcp__recall__*` 会持续 `fetch failed`**：DSH 的 MCP 客户端缓存了旧进程的 session id，客户端侧无重连/重试 ⇒ 需**重开 DSH 会话**才恢复（此前 R-28 已记录"服务器只在会话启动时装载"的同源约束） | 本次修复后实测：新会话握手 + `tools/call` 正常（`isError: false`） |
+| 2026-09-23 | R-43 | 文档补记 | `eval/BASELINE.md` 末尾补「评测环境的前置条件」：把 2026-09-23 R-32 行提到的"评测建议 `HF_HUB_OFFLINE=1`"落成文字（该行原写"已写进 BASELINE.md"但正文此前并无此内容），并注明现已固化为默认行为 | 补齐 §七 2026-09-23 R-32 行的承诺 |
+| 2026-09-24 | R-44 | 配置新增 | 新增 `DEFAULT_MCP_STATELESS = True` 与 `Settings.mcp_stateless`（env `RECALL_MCP_STATELESS`） | 见 §四/§五 R-44；回退只需设 `RECALL_MCP_STATELESS=0` |
+| 2026-09-24 | R-44 | 行为变更 | `recall/api.py`：`mcp.http_app(path="/", stateless_http=Settings.from_env().mcp_stateless)` ⇒ `/mcp` 端点默认**不签发会话 id** | tech.md §8 端点路径与工具名不变；仅传输层会话语义变化 |
+| 2026-09-24 | R-44 | 测试补强 | 新增 `tests/test_mcp.py::test_stale_session_id_is_not_rejected`（带过期 id 的 `initialize` 必须 200 且不签发新 id）；`tests/test_config.py` 补 2 项 | 把现场 404 钉成回归点 |

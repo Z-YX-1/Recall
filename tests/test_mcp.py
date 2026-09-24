@@ -5,7 +5,8 @@
 - 工具注册与「召唤词」docstring（何时调用 + [n] 引用规则 + 忠实度）；
 - 返回 Pydantic ⇒ 自动 outputSchema + structuredContent；
 - 工具内异常转**可读错误文本**而非裸抛（code_standards §6.2）；
-- ``/mcp`` 挂载在真实 ASGI 生命周期下可握手（code_standards §6.3 的 lifespan 要点）。
+- ``/mcp`` 挂载在真实 ASGI 生命周期下可握手（code_standards §6.3 的 lifespan 要点）；
+- 端点是**无会话**的：带过期 session id 也不会被 404 拒掉（roadmap R-44）。
 """
 
 from __future__ import annotations
@@ -157,3 +158,72 @@ async def test_mcp_endpoint_handshakes_under_app_lifespan(
             assert data is not None and data["evidence"]
     finally:
         await close_service()
+
+
+def _mcp_initialize_request() -> dict[str, object]:
+    """一条最小可用的 MCP ``initialize`` 请求（探测会话语义用）。"""
+    return {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {
+            "protocolVersion": "2025-06-18",
+            "capabilities": {},
+            "clientInfo": {"name": "stale-session-probe", "version": "0"},
+        },
+    }
+
+
+async def _post_with_stale_session(mcp_asgi: Any) -> httpx.Response:
+    """带一个**过期 session id** POST ``initialize``，返回原始响应。
+
+    ``Accept`` 必须同时含 ``application/json`` 与 ``text/event-stream``（MCP 传输要求）。
+    """
+    transport = httpx.ASGITransport(app=mcp_asgi)
+    async with httpx.AsyncClient(transport=transport, base_url="http://recall.test") as client:
+        return await client.post(
+            "/",
+            json=_mcp_initialize_request(),
+            headers={
+                "Accept": "application/json, text/event-stream",
+                "Mcp-Session-Id": "dead-session-id-from-a-restarted-process",
+            },
+        )
+
+
+async def test_stale_session_id_is_not_rejected() -> None:
+    """回归点（roadmap R-44）：客户端拿着过期 session id 也必须能用。
+
+    现场报错：``Streamable HTTP error: Error POSTing to endpoint:
+    {"code":-32600,"message":"Session not found"}``（HTTP 404）。状态化模式下会话表在
+    服务进程内存里，**空闲 30 分钟**（SDK 默认）或**进程重启**都会让客户端手里的 id
+    失效，而 MCP 客户端收到 404 不会重新握手 ⇒ 之后**每一次**调用都是同一个 404。
+
+    ⚠️ 这里用**自己的** ``http_app`` 实例：``StreamableHTTPSessionManager`` 的
+    ``run()`` 每个实例只能跑一次（``mcp/server/streamable_http_manager.py:155``），
+    而模块级 ``mcp_app`` 会被"挂载 + lifespan"用例占用一次，共用即冲突。
+    """
+    mcp_asgi = mcp.http_app(path="/", stateless_http=True)
+
+    async with mcp_asgi.lifespan(mcp_asgi):
+        response = await _post_with_stale_session(mcp_asgi)
+
+    assert response.status_code == 200, response.text  # 状态化模式下这里是 404
+    assert "Session not found" not in response.text
+    # 无会话 ⇒ 服务端不签发 session id（客户端也就无从持有过期 id）
+    assert "mcp-session-id" not in {key.lower() for key in response.headers}
+
+
+async def test_stateful_mode_still_rejects_unknown_session() -> None:
+    """保留状态化逃生口（``RECALL_MCP_STATELESS=0``）时，404 语义依旧是"未知会话"。
+
+    两条断言一起把 R-44 的因果钉死：**404 来自"会话表里没有这个 id"**，而不是来自
+    请求本身非法——同一个请求在无会话模式下就是 200。
+    """
+    mcp_asgi = mcp.http_app(path="/", stateless_http=False)
+
+    async with mcp_asgi.lifespan(mcp_asgi):
+        response = await _post_with_stale_session(mcp_asgi)
+
+    assert response.status_code == 404
+    assert "Session not found" in response.text

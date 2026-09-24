@@ -659,8 +659,14 @@ async def kb_ingest(mode: str = "update", collection: str | None = None) -> Inge
         raise ToolError(f"摄取失败：{type(exc).__name__}: {exc}") from exc
 
 
-mcp_app = mcp.http_app(path="/")
-"""code_standards §6.3：``http_app(path="/")`` + ``mount("/mcp")`` ⇒ 端点 ``/mcp``。"""
+mcp_app = mcp.http_app(path="/", stateless_http=Settings.from_env().mcp_stateless)
+"""code_standards §6.3：``http_app(path="/")`` + ``mount("/mcp")`` ⇒ 端点 ``/mcp``。
+
+⚠️ ``stateless_http`` 来自配置（默认 **True**，见
+:data:`~recall.config.DEFAULT_MCP_STATELESS` / roadmap R-44）：状态化模式下会话
+存在服务进程内存里，空闲 30 分钟或被重启进程都会让客户端手里那个 id 变成
+HTTP 404 ``Session not found``，而 MCP 客户端不会据此重新握手 ⇒ 默认无会话更稳。
+"""
 
 app.mount("/mcp", mcp_app)
 

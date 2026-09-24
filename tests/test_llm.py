@@ -223,6 +223,8 @@ def test_from_settings_reads_deepseek_config() -> None:
         registry_db=Path("registry.db"),
         log_dir=Path("logs"),
         hf_endpoint="https://hf-mirror.com",
+        hf_hub_offline=True,
+        mcp_stateless=True,
         deepseek_api_key="secret",
         deepseek_base_url="https://api.deepseek.com",
         deepseek_model="deepseek-chat",

@@ -25,9 +25,62 @@ DEFAULT_QDRANT_URL = "http://127.0.0.1:6333"
 DEFAULT_HF_ENDPOINT = "https://hf-mirror.com"
 """HuggingFace 镜像（tech.md §12 国内下载镜像）。"""
 
+DEFAULT_HF_HUB_OFFLINE = True
+"""默认**离线**加载 HuggingFace 模型（``HF_HUB_OFFLINE=1``）。
+
+为什么默认离线：transformers 装载 tokenizer 时会调
+``list_repo_templates`` 去 Hub 拉 ``chat_template.jinja`` 清单，
+**即便权重已在本地缓存**也要走一次网络；本机出网间歇性不可达
+（roadmap §七 2026-09-23 R-32 环境记录），该请求会挂到 httpx 连接超时，
+把整条 ``kb_search`` 拖死（实测 6 次调用全部 42s 后 ConnectTimeout）。
+两个模型（bge-m3 / bge-reranker-v2-m3）都已完整落盘 HF cache，
+离线加载实测正常；需要**下载新模型**时显式设 ``HF_HUB_OFFLINE=0``。
+"""
+
+DEFAULT_MCP_STATELESS = True
+"""MCP Streamable HTTP 默认走**无会话（stateless）**模式（roadmap R-44）。
+
+为什么默认无会话：状态化模式下会话 id 由服务进程生成、**存在内存里**，
+于是两条与代码无关的路径都会把它弄丢，而客户端拿到 404 后**不会**
+重新握手（MCP SDK 只是把 404 翻成 "Session terminated"，DSH 的
+mcp-client 只在 transport 关闭时才重连）：
+
+1. **空闲过期**：SDK 默认 30 分钟没请求就回收会话（实测日志
+   ``Session … idle timeout``），隔半小时再问一次 = 一次 "Session not found"；
+2. **服务进程重启**：内存里的会话表随之消失，此后**每一次**调用都是
+   HTTP 404 ``{"code":-32600,"message":"Session not found"}``。
+
+无会话模式下每个请求自带一次握手（本地单客户端，开销可忽略），
+服务端不再有"会话"可丢 ⇒ 上面两条路径同时消失。代价是服务端主动
+推送（``notifications/tools/list_changed``、SSE 续传）不可用，本项目
+不需要；需要时设 ``RECALL_MCP_STATELESS=0`` 回到状态化。
+"""
+
 LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s %(message)s"
 LOG_MAX_BYTES = 5 * 1024 * 1024
 LOG_BACKUP_COUNT = 3
+
+
+def _read_bool(name: str, *, default: bool) -> bool:
+    """读布尔型环境变量（未设置时用 ``default``）。
+
+    与 :meth:`Settings.from_env` 里 ``log_to_file`` 的写法保持同一套词法：
+    ``0`` / ``false`` / ``no`` / ``off``（忽略大小写与首尾空白）为假，
+    ``1`` / ``true`` / ``yes`` / ``on`` 为真，其余值按 ``default`` 处理。
+
+    Args:
+        name: 环境变量名，如 ``"HF_HUB_OFFLINE"``。
+        default: 变量未设置或值无法识别时的取值。
+
+    Returns:
+        解析后的布尔值。
+    """
+    raw = os.getenv(name, "").strip().lower()
+    if raw in {"0", "false", "no", "off"}:
+        return False
+    if raw in {"1", "true", "yes", "on"}:
+        return True
+    return default
 
 
 @dataclass(frozen=True, slots=True)
@@ -40,6 +93,11 @@ class Settings:
         registry_db: SQLite 文档注册表文件路径。
         log_dir: 结构化日志输出目录。
         hf_endpoint: HuggingFace 镜像端点（tech.md §12 国内下载镜像）。
+        hf_hub_offline: 是否强制 HuggingFace 库**只读本地缓存**
+            （``HF_HUB_OFFLINE=1``）；默认 ``True``，见
+            :data:`DEFAULT_HF_HUB_OFFLINE`。
+        mcp_stateless: MCP Streamable HTTP 是否走**无会话**模式；默认
+            ``True``，见 :data:`DEFAULT_MCP_STATELESS`。
         deepseek_api_key: DeepSeek API key（仅胖端点使用；绝不入日志/库/payload）。
         deepseek_base_url: DeepSeek OpenAI 兼容接口地址。
         deepseek_model: 生成用模型名。
@@ -56,6 +114,8 @@ class Settings:
     registry_db: Path
     log_dir: Path
     hf_endpoint: str
+    hf_hub_offline: bool
+    mcp_stateless: bool
     deepseek_api_key: str | None
     deepseek_base_url: str
     deepseek_model: str
@@ -68,9 +128,11 @@ class Settings:
     def from_env(cls, dotenv_path: Path | None = None) -> Settings:
         """从 ``.env`` 与环境变量构造配置（环境变量优先）。
 
-        ⚠️ 副作用（有意为之）：把 ``HF_ENDPOINT`` 写进 ``os.environ``——HF 镜像必须在
-        **任何模型加载之前**生效（tech.md §12），而这是全项目唯一的配置入口，
-        放在这里才能保证"先建配置、后加载模型"的顺序绕不过去。
+        ⚠️ 副作用（有意为之）：把 ``HF_ENDPOINT`` 与 ``HF_HUB_OFFLINE`` 写进
+        ``os.environ``——HF 镜像与离线开关必须在**任何模型加载之前**生效
+        （tech.md §12），而这是全项目唯一的配置入口，放在这里才能保证
+        "先建配置、后加载模型"的顺序绕不过去。两者都用 ``setdefault``：
+        **真实环境变量优先**，所以要下载模型时 ``HF_HUB_OFFLINE=0`` 依然管用。
 
         Args:
             dotenv_path: 显式指定的 ``.env`` 路径；默认读取项目根目录下的 ``.env``。
@@ -91,6 +153,8 @@ class Settings:
             registry_db=Path(db_raw) if db_raw else DATA_DIR / "registry.db",
             log_dir=Path(log_raw) if log_raw else DATA_DIR / "logs",
             hf_endpoint=os.getenv("HF_ENDPOINT", DEFAULT_HF_ENDPOINT).strip(),
+            hf_hub_offline=_read_bool("HF_HUB_OFFLINE", default=DEFAULT_HF_HUB_OFFLINE),
+            mcp_stateless=_read_bool("RECALL_MCP_STATELESS", default=DEFAULT_MCP_STATELESS),
             deepseek_api_key=os.getenv("DEEPSEEK_API_KEY") or None,
             deepseek_base_url=os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com").strip(),
             deepseek_model=os.getenv("DEEPSEEK_MODEL", "deepseek-chat").strip(),
@@ -101,6 +165,7 @@ class Settings:
         )
         if settings.hf_endpoint:
             os.environ.setdefault("HF_ENDPOINT", settings.hf_endpoint)
+        os.environ.setdefault("HF_HUB_OFFLINE", "1" if settings.hf_hub_offline else "0")
         return settings
 
 
