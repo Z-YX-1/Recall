@@ -169,10 +169,19 @@ POST /kb/search  { "query": "…", "top_k": 20, "max_tokens": 3000, "filter": {}
 POST /kb/answer  { "query": "…", "max_tokens": 3000 }
 → { "answer": "…[1]…", "citations": [1,2], "references": [...] }   // DeepSeek + JSON 模式
 POST /kb/ingest  { "mode": "update" | "rebuild", "collection": "…" }
+GET  /kb/stats                                                      // 2026-09-24 新增
+→ { "collection": "recall__bge-m3@v1__md", "collections": ["…"], "qdrant": true,
+    "collection_ready": true, "points_count": 972, "documents": 65, "failed_documents": 0,
+    "embedding_model": "bge-m3", "embedding_version": "v1",
+    "chunker": "md-heading-v1", "created_at": "2026-09-24" }
 
 // MCP（serverName = recall → 工具前缀 mcp__recall__*）
 tools: kb_search / kb_answer / kb_ingest / kb_stats
 ```
+
+> `GET /kb/stats` 与 MCP 工具 `kb_stats` **同源同形**（共用 `kb_stats_core()`），
+> 存在的理由是"不依赖 MCP 也能查状态"（脚本 / 运维）。新增于 2026-09-24，
+> 由项目工程师确认（见 §17 决策记录 14）。
 
 ```jsonc
 // $DSH_HOME/mcp-servers.json 注册
@@ -307,3 +316,10 @@ $env:HF_ENDPOINT = "https://hf-mirror.com"                    # 国内下载镜�
       预算截断 → 合并），变更仅在"喂给精排的字符串"这一实现细节，故 §4 仅补注输入约定。
     - **回退方式**：改 `build_rerank_document` 一处即可。
     - 记录位置：§4 输入约定、`eval/BASELINE.md` §1、roadmap R-19b 与 §七。
+14. **`GET /kb/stats` 加入 REST 契约**（项目工程师 2026-09-24 确认）。
+    - **背景**：项目工程师在真实使用中访问 `GET /kb/stats` 得到 404 —— 原先 `kb_stats`
+      只作为 MCP 工具存在。确认后新增该端点。
+    - **实现约束**：与 MCP 工具**共用 `kb_stats_core()`**，两条接入路径同源同形；
+      单测直接断言两者的 structuredContent **逐字段相等**，防止将来只改一边。
+    - **性质**：只读、无副作用；S2 起与其它端点一样走身份中间件（tech.md §7）。
+    - **不变量**：MCP 工具名、既有四个端点的路径与字段全部未变 ⇒ 属**新增**而非修改。

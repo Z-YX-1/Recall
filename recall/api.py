@@ -513,6 +513,45 @@ async def health() -> HealthResult:
     )
 
 
+async def kb_stats_core() -> StatsResult:
+    """采集知识库状态（**只读**，无副作用）。
+
+    REST ``GET /kb/stats`` 与 MCP 工具 ``kb_stats`` **共用这一份实现**，
+    避免同一份口径在两条接入路径上各自演化。
+
+    Returns:
+        目标 collection、现存 collection 列表、点数、文档数、失败文档数与建库参数。
+    """
+    service = await get_service()
+    reachable = await service.store.ping()
+    ready = reachable and await service.store.collection_exists(service.collection)
+    metadata = await service.store.collection_metadata(service.collection) if ready else {}
+    records = await service.registry.list_all()
+    return StatsResult(
+        collection=service.collection,
+        collections=await service.store.list_collections() if reachable else [],
+        qdrant=reachable,
+        collection_ready=ready,
+        points_count=(await service.store.count_points(service.collection) if ready else 0),
+        documents=len(records),
+        failed_documents=sum(1 for record in records if record.error),
+        embedding_model=str(metadata.get("embedding_model", "")),
+        embedding_version=str(metadata.get("embedding_version", "")),
+        chunker=str(metadata.get("chunker", "")),
+        created_at=str(metadata.get("created_at", "")),
+    )
+
+
+@app.get("/kb/stats")
+async def kb_stats_endpoint() -> StatsResult:
+    """知识库状态（只读）：collection / 点数 / 文档数 / 失败文档数 / 建库参数。
+
+    与 MCP 工具 ``kb_stats`` 同源同形（tech.md §8，2026-09-24 由项目工程师确认新增）；
+    不依赖 MCP 也能查状态，便于脚本与运维。
+    """
+    return await kb_stats_core()
+
+
 @app.post("/kb/search")
 async def kb_search_endpoint(payload: SearchRequest, request: Request) -> SearchResult:
     """检索个人知识库，返回带出处的证据片段（tech.md §8）。
@@ -583,24 +622,7 @@ async def kb_stats() -> StatsResult:
         目标 collection、点数、文档数、失败文档数与建库参数。
     """
     try:
-        service = await get_service()
-        reachable = await service.store.ping()
-        ready = reachable and await service.store.collection_exists(service.collection)
-        metadata = await service.store.collection_metadata(service.collection) if ready else {}
-        records = await service.registry.list_all()
-        return StatsResult(
-            collection=service.collection,
-            collections=await service.store.list_collections() if reachable else [],
-            qdrant=reachable,
-            collection_ready=ready,
-            points_count=(await service.store.count_points(service.collection) if ready else 0),
-            documents=len(records),
-            failed_documents=sum(1 for record in records if record.error),
-            embedding_model=str(metadata.get("embedding_model", "")),
-            embedding_version=str(metadata.get("embedding_version", "")),
-            chunker=str(metadata.get("chunker", "")),
-            created_at=str(metadata.get("created_at", "")),
-        )
+        return await kb_stats_core()
     except Exception as exc:  # noqa: BLE001 - MCP 工具不裸抛，异常转可读文本（§6.2）
         logger.exception("mcp.kb_stats_failed")
         raise ToolError(f"读取知识库状态失败：{type(exc).__name__}: {exc}") from exc

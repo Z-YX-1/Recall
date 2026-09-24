@@ -376,7 +376,7 @@ created: 2026-09-04
     根因：transformers 5.x 装载 tokenizer 时会去 Hub 拉 `chat_template.jinja` 清单，**权重已在本地缓存也照样走一次网络**；本机出网间歇不可达（§七 2026-09-23 R-32 环境记录），该请求挂在 TCP 连接上直到 httpx 超时 ⇒ 整个 `kb_search` 被拖死（实测 6 次调用 23:18:09→23:22:08 全部同一栈）。
     ✅ 处理：`recall/config.py` 新增 `DEFAULT_HF_HUB_OFFLINE = True`、`Settings.hf_hub_offline`（env `HF_HUB_OFFLINE`）与 `_read_bool()`（`0/false/no/off` 为假，与 `log_to_file` 同一套词法）；`Settings.from_env()` 用 `os.environ.setdefault("HF_HUB_OFFLINE", …)` 落盘 ⇒ **真实环境变量优先**，要下载新模型时 `HF_HUB_OFFLINE=0` 依然管用。`.env` 同步写入 `HF_HUB_OFFLINE=1` 与说明。
     ✅ 验证（2026-09-23）：`HF_HUB_OFFLINE=1` 下 `BGEM3FlagModel("BAAI/bge-m3", use_fp16=True)` **离线装载 8.0s、编码 2.0s**（dense 1024 维 / sparse 6 项），此前同一步骤 42s 超时；两个模型（bge-m3 / bge-reranker-v2-m3）快照完整落盘（R-05 已补全，故不会 `IncompleteSnapshotError`）；新增 `tests/test_config.py` 12 项覆盖默认值 / 逃生口 / 词法 / 落盘到 `os.environ`。
-    🧭 项目工程师指示：**待复核**（配置默认值调整，未改 tech.md 任何契约；如需"默认在线"改一个常量即可）
+    🧭 项目工程师指示：**已认可（2026-09-24）**——答复「认可」⇒ 默认离线定为最终默认值（配置默认值调整，未改 tech.md 任何契约；如需"默认在线"改一个常量 `DEFAULT_HF_HUB_OFFLINE` 或设 `HF_HUB_OFFLINE=0` 即可）
 - [x] **R-43b** 修 R-43 的**致命遗漏**：默认离线在服务路径下**根本不生效**（2026-09-24 现场复现）。
     ⚠️ 问题：R-43 只在"先设环境变量、后 import HF 栈"的顺序下有效。而 `recall.api` 的实际顺序相反——模块顶部 `from recall.embedder import …` 会连带导入 FlagEmbedding → transformers → huggingface_hub，**之后**才在模块级执行 `Settings.from_env()`。而 `huggingface_hub.constants.HF_HUB_OFFLINE` 是在 **import 时**从环境变量读出并固定的常量（源码 `_is_true(os.environ.get("HF_HUB_OFFLINE"))`）⇒ 晚设无效，模型装载照样回连 Hub。
     ✅ 实证：`import huggingface_hub.constants as C; from recall.config import Settings; Settings.from_env()` ⇒ 环境变量是 `'1'` 而 `C.HF_HUB_OFFLINE` 仍是 `False`；真实调用栈逐字复现 R-43 的那一条 `transformers/utils/hub.py::list_repo_templates → hf_api.list_repo_tree → httpx.ConnectTimeout`。
@@ -385,7 +385,7 @@ created: 2026-09-04
     ① **结构性**：`recall/__init__.py` 增加 `_bootstrap_environment()`——包一被导入就先 `Settings.from_env()`。"先建配置、后加载模型"从此由**导入顺序**保证，不靠调用方自觉；
     ② **兜底**：`recall/config.py` 新增 `_sync_hf_offline()`——若库已先于配置导入，直接把 `huggingface_hub.constants.HF_HUB_OFFLINE` 改成目标值并记一条 INFO。
     ✅ 验证：同一失败路径（`kb_answer` 三连问）现在**两个模型全部装载成功、零超时**（此前三问全部 ConnectTimeout 且 `cached models: []`）；"先 import HF 再配置"的顺序下 `C.HF_HUB_OFFLINE` 由 `False` 变 `True`。
-    🧭 项目工程师指示：**待复核**
+    🧭 项目工程师指示：**待复核**（项目工程师 2026-09-24 对"实现细节背书"整批答复「我再看看」，本行保持未结；R-43/R-44 的**默认值**已认可，但**修复实现本身**的背书未被覆盖）
 - [x] **R-44** MCP Streamable HTTP 默认改为**无会话（stateless）**：把"会话 id 存在服务端内存里"这个隐性依赖去掉，让客户端**不可能**再拿到过期的会话（tech.md §8 端点契约不变）。
     ⚠️ 现场报错（2026-09-24，R-43 修好之后项目工程师新开会话）：多次调用 MCP 工具全部失败——`Error: Streamable HTTP error: Error POSTing to endpoint: {"jsonrpc":"2.0","id":"server-error","error":{"code":-32600,"message":"Session not found"}}`（HTTP 404）。
     根因（三层，逐层取证）：
@@ -402,7 +402,18 @@ created: 2026-09-04
     | 日志形态 | 每请求一行 `Terminating session: None`，再无 `Session … idle timeout` |
     新增 `tests/test_mcp.py::test_stale_session_id_is_not_rejected`（把"过期 id 必须能用"钉成回归点）+ `tests/test_mcp.py::test_stateful_mode_still_rejects_unknown_session`（同一请求在状态化模式下仍是 404，钉死因果）+ `tests/test_config.py` 2 项。
     ⚠️ 测试隔离坑（本轮踩到，已修）：``StreamableHTTPSessionManager.run()`` **每个实例只能跑一次**（`mcp/server/streamable_http_manager.py:155`），新用例若复用模块级 `mcp_app` 的 lifespan，会在**全量跑**时与"挂载 + lifespan"用例冲突（单跑必过、全量必挂）。改为用例内自建 ``mcp.http_app(...)`` 实例。
-    🧭 项目工程师指示：**待复核**（默认值由"有会话"改为"无会话"；代价是失去服务端主动推送，本项目未使用；回退只需一个环境变量）
+    🧭 项目工程师指示：**已认可（2026-09-24）**——答复「认可」⇒ 无会话定为最终默认值（代价是失去服务端主动推送，本项目未使用；回退只需 `RECALL_MCP_STATELESS=0`）
+    📌 R-43b 的实现细节背书**不在**本次认可范围内（项目工程师答复「我再看看」）⇒ 保持待复核，另见 R-43c。
+- [x] **R-43c** 记录项目工程师对 R-43 / R-43b / R-44 默认值的认可（**决策登记，无代码改动**）。
+    ✅ **已认可（2026-09-24）**：项目工程师答复「**认可**」⇒ `HF_HUB_OFFLINE` **默认离线**（`DEFAULT_HF_HUB_OFFLINE = True`）与 MCP **默认无会话**（`DEFAULT_MCP_STATELESS = True`）**定为最终默认值**，两条回退开关（`HF_HUB_OFFLINE=0` / `RECALL_MCP_STATELESS=0`）保留为运维逃生口。R-43 行 / R-43b 行 / R-44 行的「待复核」随之关闭。
+    📌 仍未结：项目工程师对「R-14b / R-16b / R-21 / R-23b / R-23c / R-27c~R-27i / R-29b / R-32c / R-43b 实现细节背书」一项答复为「**我再看看**」⇒ 那批保持**待复核**，本步不代其结案。
+- [x] **R-45** `GET /kb/stats` 加入 REST 契约（**契约新增**，项目工程师 2026-09-24 答复「**加**」）。
+    ⚠️ 问题：项目工程师实测时 `GET /kb/stats` 返回 **404** —— 原先 `kb_stats` **只作为 MCP 工具**存在（tech.md §8 只列 `/health`、`/kb/search`、`/kb/answer`、`/kb/ingest` 四个 REST 端点），而人肉排查与 S2 网关都按 REST 路径访问。
+    影响范围：仅**新增**一个只读端点，四个既有端点路径与语义、MCP 工具名与参数**全部不变** ⇒ 对已接入的 DSH 会话与既有客户端零影响。
+    ✅ 处理：`recall/api.py` 抽出 `kb_stats_core()`，REST `GET /kb/stats`（`kb_stats_endpoint`）与 MCP 工具 `kb_stats` **共用同一份实现**，杜绝两条接入路径各自演化；`tech.md` §8 补该端点与响应体、§17 补**决策记录 14**。
+    ✅ 验证：`tests/test_search.py::test_rest_stats_endpoint_matches_the_mcp_tool` —— 断言 REST 返回 200、关键字段（collection/points/documents/failed_documents/参数）正确，并**断言 REST 响应体与 MCP 工具的 `structuredContent` 逐字段相等**（把"两份实现不许分叉"钉成回归点）。
+    ✅ 验证：`ruff check .` 全绿、`mypy recall` 全绿、全量 `pytest` 通过。
+    🧭 项目工程师指示：**已确认（2026-09-24）**。
 
 ---
 
@@ -417,9 +428,10 @@ created: 2026-09-04
 | 2026-09-22 | R-23 | 真实 vault 首轮摄取 268 篇里 203 篇是 `project/*/node_modules/**` 的第三方 CHANGELOG/LICENSE/README，严重稀释检索质量 | R-23c：`DEFAULT_SKIP_DIRS` 增加工程产物目录 + 开放 `--skip-dirs` 覆盖，重灌后 65 篇 / 972 点 | **待复核**（摄取范围细化，不改 Connector 协议） | ✅ 已解决 |
 | 2026-09-22 | R-21 | Qdrant `Condition` 联合类型含 `Any`，`Filter.model_validate` 对残缺条件照单全收（`{"must":[{"key":"doc_id"}]}` 能通过），坏 filter 会一路带到 Qdrant 变成 500 而不是干净的 400 | 在 `recall/auth.py` 内自建结构校验 `validate_client_filter` | **待复核**（API 错误规范内的实现细节） | ✅ 已解决 |
 | 2026-09-22 | R-28 | AI 执行者无法自行开启 DSH 会话：MCP 服务器只在会话启动时装载，本会话看不到 `mcp__recall__*`，R-28 的字面验收无法由 AI 独立完成 | R-28b：用真实 MCP 客户端完成除"会话装载"外的全部链路验证；并在新会话中由项目工程师确认 | **已确认（2026-09-24）**：项目工程师实测新会话与新工作区均可正常问答 | ✅ 已解决 |
-| 2026-09-23 | R-43 | 真实会话里 `mcp__recall__kb_search` **全量失败**（每次 ~42s 后 `fetch failed`），而 `kb_stats` 一直正常；`api.log` 栈指向 `transformers…list_repo_templates` → `hf_api.list_repo_tree` → `httpx.ConnectTimeout`（模型已缓存仍回连 HF Hub，本机出网间歇不可达） | R-43：`HF_HUB_OFFLINE` 升为配置项且**默认离线**（`.env` + `Settings.from_env()` 落盘 `os.environ`，`HF_HUB_OFFLINE=0` 可下载新模型）；新增 `tests/test_config.py` | **待复核**（配置默认值调整，不动契约） | ✅ 已解决 |
-| 2026-09-24 | R-44 | R-43 修好后项目工程师**新开会话**依旧全量失败：`Streamable HTTP error … {"code":-32600,"message":"Session not found"}`（HTTP 404）。服务端会话表在进程内存里（空闲 30 分钟回收 + 进程重启即失效），而 MCP 客户端收到 404 **不会重新 initialize**（SDK 只翻成 `Session terminated` 就 return；DSH mcp-client 只在 transport onclose 时重连）⇒ 客户端永远拿着死 id，且 MCP 连接跨对话复用，"新开会话"也无解 | R-44：MCP 默认改为**无会话**（`Settings.mcp_stateless` / `RECALL_MCP_STATELESS`，`http_app(stateless_http=True)`）；新增过期 id 回归测试 | **待复核**（默认模式调整，tech.md §8 端点契约不变；代价是失去服务端主动推送） | ✅ 已解决 |
-| 2026-09-24 | R-43 | **R-43 的修复实际未生效**：默认离线只在"先设环境变量、后 import HF 栈"的顺序下有效；`recall.api` 是反的（顶部先 import embedder → FlagEmbedding → transformers → huggingface_hub），而 `huggingface_hub.constants.HF_HUB_OFFLINE` 在 import 时冻结 ⇒ 晚设无效，模型装载照样回连 Hub。**这正是项目工程师新会话里 `kb_search` 仍全量失败的真正原因**（R-43 的验证被测试顺序骗过：单跑 `Embedder().encode()` 时 `from_env()` 恰好在前） | R-43b：① `recall/__init__.py` 增加 `_bootstrap_environment()`（包导入即建配置，顺序由导入保证）；② `recall/config.py` 增加 `_sync_hf_offline()`（库已先导入时直接改其常量）；新增 3 项回归测试 | **待复核**（实现层修复，不动契约） | ✅ 已解决 |
+| 2026-09-23 | R-43 | 真实会话里 `mcp__recall__kb_search` **全量失败**（每次 ~42s 后 `fetch failed`），而 `kb_stats` 一直正常；`api.log` 栈指向 `transformers…list_repo_templates` → `hf_api.list_repo_tree` → `httpx.ConnectTimeout`（模型已缓存仍回连 HF Hub，本机出网间歇不可达） | R-43：`HF_HUB_OFFLINE` 升为配置项且**默认离线**（`.env` + `Settings.from_env()` 落盘 `os.environ`，`HF_HUB_OFFLINE=0` 可下载新模型）；新增 `tests/test_config.py` | **已认可（2026-09-24）**：项目工程师答复「认可」⇒ 默认离线定为最终默认值（配置默认值调整，不动契约；`HF_HUB_OFFLINE=0` 可回退） | ✅ 已解决 |
+| 2026-09-24 | R-44 | R-43 修好后项目工程师**新开会话**依旧全量失败：`Streamable HTTP error … {"code":-32600,"message":"Session not found"}`（HTTP 404）。服务端会话表在进程内存里（空闲 30 分钟回收 + 进程重启即失效），而 MCP 客户端收到 404 **不会重新 initialize**（SDK 只翻成 `Session terminated` 就 return；DSH mcp-client 只在 transport onclose 时重连）⇒ 客户端永远拿着死 id，且 MCP 连接跨对话复用，"新开会话"也无解 | R-44：MCP 默认改为**无会话**（`Settings.mcp_stateless` / `RECALL_MCP_STATELESS`，`http_app(stateless_http=True)`）；新增过期 id 回归测试 | **已认可（2026-09-24）**：项目工程师答复「认可」⇒ 无会话定为最终默认值（tech.md §8 端点契约不变；代价是失去服务端主动推送，本项目未使用；`RECALL_MCP_STATELESS=0` 可回退） | ✅ 已解决 |
+| 2026-09-24 | R-43 | **R-43 的修复实际未生效**：默认离线只在"先设环境变量、后 import HF 栈"的顺序下有效；`recall.api` 是反的（顶部先 import embedder → FlagEmbedding → transformers → huggingface_hub），而 `huggingface_hub.constants.HF_HUB_OFFLINE` 在 import 时冻结 ⇒ 晚设无效，模型装载照样回连 Hub。**这正是项目工程师新会话里 `kb_search` 仍全量失败的真正原因**（R-43 的验证被测试顺序骗过：单跑 `Embedder().encode()` 时 `from_env()` 恰好在前） | R-43b：① `recall/__init__.py` 增加 `_bootstrap_environment()`（包导入即建配置，顺序由导入保证）；② `recall/config.py` 增加 `_sync_hf_offline()`（库已先导入时直接改其常量）；新增 3 项回归测试 | **待复核**（实现层修复，不动契约；项目工程师 2026-09-24 对该批实现细节答复「我再看看」，保持未结） | ✅ 已解决 |
+| 2026-09-24 | R-28 | 项目工程师实测 `GET /kb/stats` 返回 **404**：统计此前只有 MCP 工具、没有 REST 端点（tech.md §8 只列四个端点），人肉排查与 S2 网关按 REST 路径访问即落空 | R-45：抽出 `kb_stats_core()`，新增只读 `GET /kb/stats`（与 MCP 工具共用实现）；tech.md §8 补端点、§17 补决策记录 14；新增「REST 与 MCP 逐字段相等」回归测试 | **已确认（2026-09-24）**：项目工程师答复「加」 | ✅ 已解决 |
 
 ---
 
@@ -427,21 +439,22 @@ created: 2026-09-04
 
 - **当前阶段**：✅ **Phase 0~5 全部完成（首版交付验收达成）**；Phase 6（R-38~R-42）待项目工程师排期
 - **当前步骤**：**R-37 验收通过（2026-09-24）** —— 全部 R-01~R-37 已闭环（除 R-02/R-03 两条已由 R-02b/R-03b 绕行）
-- **已通过项**：R-01、R-02b、R-03b、R-04、R-05、R-06、R-07~R-17、R-18、R-19、R-19b、R-20~R-23c、R-24、R-25、R-26、R-27、R-27c~R-27i、R-28、R-28b、R-29、R-29b、R-30、R-31、R-32、R-32b、R-32c、R-33、R-34、R-35、R-36、R-37、R-43、R-43b、R-44
+- **已通过项**：R-01、R-02b、R-03b、R-04、R-05、R-06、R-07~R-17、R-18、R-19、R-19b、R-20~R-23c、R-24、R-25、R-26、R-27、R-27c~R-27i、R-28、R-28b、R-29、R-29b、R-30、R-31、R-32、R-32b、R-32c、R-33、R-34、R-35、R-36、R-37、R-43、R-43b、R-43c、R-44、R-45
 - **未通过项**：R-02（官方源网络超时，已走 R-02b）、R-03（Docker 未运行，已走 R-03b）
 - **待请示事项**（Phase 0~5 已验收，以下为**非阻塞**的后续选择）：
   - **需你拍板**：
-    1. **R-28 遗留**：`GET /kb/stats` 返回 404 是否符合你的预期；若要在 REST 也提供统计端点，属**契约新增**（tech.md §8 目前只列四个端点）；
-    2. **Phase 6 是否开工**（R-38 watchdog / R-39 Coze 公网 / R-40 权限 S2 / R-41 新 Connector / R-42 检索调优）；
-  - **需你复核默认值（改一个常量即可回退）**：
-    3. **R-43 / R-43b**：`HF_HUB_OFFLINE` 默认离线（`DEFAULT_HF_HUB_OFFLINE`）；
-    4. **R-44**：MCP 默认无会话（`RECALL_MCP_STATELESS=0` 可回退到状态化）；
+    1. **Phase 6 是否开工**（R-38 watchdog / R-39 Coze 公网 / R-40 权限 S2 / R-41 新 Connector / R-42 检索调优）；
   - **需你背书的实现细节（均未触及 tech.md 契约）**：
-    5. R-14b / R-16b / R-21 / R-23b / R-23c / R-27c~R-27i / R-29b / R-32c / R-43b 的「项目工程师指示」待复核；
-  - **已决**：~~R-19b 是否属契约变更~~ → **已确认（2026-09-23）**（已回写 tech.md §4 与 §17）；~~R-32d 检索阈值~~ → **已定案（2026-09-24）走回答模板路线**，胖端点侧候选转入 R-42。
-- **最近一次测试结果**（2026-09-24）：`pytest` **163 passed**；`ruff` 零告警；`mypy` strict 38 文件零错误；promptfoo 3 通过 / 1 失败 / **0 错误**；`kb_answer` 三连问零超时
+    2. R-14b / R-16b / R-21 / R-23b / R-23c / R-27c~R-27i / R-29b / R-32c / R-43b 的「项目工程师指示」待复核（项目工程师 2026-09-24 答复「**我再看看**」，保持未结）；
+  - **已决**：
+    - ~~R-28 遗留：`GET /kb/stats` 返回 404~~ → **已确认（2026-09-24）答复「加」** ⇒ 已落为 **R-45**（只读端点、与 MCP 工具共用 `kb_stats_core()`；tech.md §8 + §17 决策记录 14）；
+    - ~~R-43 / R-43b：`HF_HUB_OFFLINE` 默认离线~~ → **已认可（2026-09-24）** ⇒ 定为最终默认值，`HF_HUB_OFFLINE=0` 可回退；
+    - ~~R-44：MCP 默认无会话~~ → **已认可（2026-09-24）** ⇒ 定为最终默认值，`RECALL_MCP_STATELESS=0` 可回退；
+    - ~~R-19b 是否属契约变更~~ → **已确认（2026-09-23）**（已回写 tech.md §4 与 §17）；
+    - ~~R-32d 检索阈值~~ → **已定案（2026-09-24）走回答模板路线**，胖端点侧候选转入 R-42。
+- **最近一次测试结果**（2026-09-24）：`pytest` **164 passed**；`ruff` 零告警；`mypy` strict 38 文件零错误；promptfoo 3 通过 / 1 失败 / **0 错误**；`kb_answer` 三连问零超时
 - **验收实测**（2026-09-24，项目工程师执行）：摄取 65 篇 0 失败；`/health` ok（972 点 / 65 篇）；检索 **Recall@1=0.767 / @3=0.933 / @5=0.933 / @10=1.000 / MRR=0.860**（与基线逐位一致）；Ragas **引用一致性 1.000 / faithfulness 0.858 / answer_relevancy 0.758**；DSH 问答带 `[n]` 引用通过
-- **本文件版本**：v0.11.0（2026-09-24 **R-37 验收通过 ⇒ Phase 0~5 全部完成**；R-32d 定案走模板路线、R-43b 修复"默认离线在服务路径下失效"）
+- **本文件版本**：v0.12.0（2026-09-24 项目工程师决策落盘：**R-45 新增 `GET /kb/stats`**、**R-43c 认可两组默认值**；Phase 6 与实现细节背书仍待拍板）
 
 ---
 
@@ -533,3 +546,7 @@ created: 2026-09-04
 | 2026-09-24 | R-32d | **试改后回退（附证据）** | 给 `FIDELITY_RULES` 加"相邻主题必须点名"→ **过度拒答复发**：问"切分器粒度怎么选"（笔记明确写过、上一版能正确作答）被答成"笔记里没有相关内容" ⇒ 该条回退，`FIDELITY_RULES` 保持跑出 Ragas 基线的那一版（**基线数字仍有效**） | 结论：**"相关 vs 相邻"光靠提示词稳不住，需检索侧信号** ⇒ 登记为 R-42 首选候选 |
 | 2026-09-24 | R-37 | **验收通过** | 项目工程师亲自跑完四段：摄取（65 篇 0 失败）/ 检索服务（`/health` ok）/ 检索（证据包与引用对应）/ DSH 问答带 `[n]` 引用；评测出分 **Recall@1=0.767 @3=0.933 @5=0.933 @10=1.000 MRR=0.860**（与基线**逐位一致**）、**引用一致性 1.000 / faithfulness 0.858 / answer_relevancy 0.758** | **Phase 0~5 全部完成**；Ragas 复跑值高于基线，落在已说明的裁判方差区间内 |
 | 2026-09-24 | R-37 | 记录修订 | `eval/BASELINE.md` §5 改为**三列对照**（首轮基线 / R-37 复跑 / 三次实测区间），并明确"引用一致性是确定性的、可当硬门槛；Ragas 单次值不可当门槛" | 避免后人把裁判方差当回归 |
+| 2026-09-24 | R-45 | **契约新增（项目工程师确认）** | `GET /kb/stats` 加入 REST 契约：`recall/api.py` 抽出 `kb_stats_core()`，REST 端点与 MCP 工具**共用同一份实现**；`tech.md` §8 补端点与响应体、§17 补决策记录 14 | 起因：项目工程师实测 `GET /kb/stats` 得 404（原先只有 MCP 工具）。仅新增只读端点，四个既有端点路径与语义、MCP 工具名与参数**全不变** ⇒ 对既有客户端零影响 |
+| 2026-09-24 | R-45 | 测试补强 | 新增 `tests/test_search.py::test_rest_stats_endpoint_matches_the_mcp_tool`：断言 REST 200 + 关键字段正确，并**断言 REST 响应体与 MCP `structuredContent` 逐字段相等** | 把"两条接入路径不许分叉"钉成回归点 |
+| 2026-09-24 | R-43c | **决策登记（无代码改动）** | 项目工程师答复「认可」⇒ `HF_HUB_OFFLINE` **默认离线**（`DEFAULT_HF_HUB_OFFLINE=True`）与 MCP **默认无会话**（`DEFAULT_MCP_STATELESS=True`）**定为最终默认值**，回退开关保留；R-43 / R-43b / R-44 三行的「待复核」中，**默认值部分**随之关闭 | 📌 R-43b 的**实现细节背书**不在认可范围（项目工程师对整批实现细节答复「我再看看」）⇒ 该批保持待复核，本步不代其结案 |
+| 2026-09-24 | R-43c | 待请示收敛 | §四「待请示事项」由 5 项收敛为 2 项：① 已决 `GET /kb/stats`（→ R-45）；②③ 已认可两组默认值；**仍待拍板**只剩「Phase 6 是否开工」与「实现细节背书」 | 版本 v0.11.0 → **v0.12.0** |

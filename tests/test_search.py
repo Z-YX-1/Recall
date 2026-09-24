@@ -9,9 +9,10 @@ from collections.abc import Sequence
 
 import httpx
 import pytest
+from fastmcp import Client
 
 from ingest import run_ingest
-from recall.api import ApiError, Service, app, kb_answer_core, kb_search_core
+from recall.api import ApiError, Service, app, kb_answer_core, kb_search_core, mcp
 from recall.models import AnswerRequest, SearchRequest
 from recall.rerank import DEFAULT_TOP_N, Reranker, RerankHit
 from tests.helpers import IngestEnv, ingest_args, write_note
@@ -234,3 +235,34 @@ async def test_rest_endpoints_and_error_envelope(
         missing = await client.get("/no-such-route")
         assert missing.status_code == 404
         assert missing.json()["error"]["code"] == "http_error"
+
+
+async def test_rest_stats_endpoint_matches_the_mcp_tool(
+    ingest_env: IngestEnv, api_service: object
+) -> None:
+    """``GET /kb/stats``：REST 与 MCP 必须同源同形（tech.md §8，2026-09-24 新增）。
+
+    它存在的理由就是"不依赖 MCP 也能查状态"，所以两条路径**不能各写一份口径**——
+    这里直接断言两者逐字段相等，防止将来有人只改一边。
+    """
+    await _prepare_corpus(ingest_env)
+
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://recall.test") as client:
+        response = await client.get("/kb/stats")
+
+    assert response.status_code == 200
+    rest_payload = response.json()
+    assert rest_payload["collection"] == ingest_env.collection
+    assert rest_payload["qdrant"] is True
+    assert rest_payload["collection_ready"] is True
+    assert rest_payload["points_count"] > 0
+    assert rest_payload["documents"] == 2
+    assert rest_payload["failed_documents"] == 0
+    assert rest_payload["embedding_model"] == "bge-m3"
+    assert rest_payload["chunker"] == "md-heading-v1"
+
+    async with Client(mcp) as mcp_client:
+        mcp_result = await mcp_client.call_tool("kb_stats", {})
+
+    assert mcp_result.structured_content == rest_payload
