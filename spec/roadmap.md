@@ -413,6 +413,16 @@ created: 2026-09-04
     ✅ 处理：`recall/api.py` 抽出 `kb_stats_core()`，REST `GET /kb/stats`（`kb_stats_endpoint`）与 MCP 工具 `kb_stats` **共用同一份实现**，杜绝两条接入路径各自演化；`tech.md` §8 补该端点与响应体、§17 补**决策记录 14**。
     ✅ 验证：`tests/test_search.py::test_rest_stats_endpoint_matches_the_mcp_tool` —— 断言 REST 返回 200、关键字段（collection/points/documents/failed_documents/参数）正确，并**断言 REST 响应体与 MCP 工具的 `structuredContent` 逐字段相等**（把"两份实现不许分叉"钉成回归点）。
     ✅ 验证：`ruff check .` 全绿、`mypy recall` 全绿、全量 `pytest` 通过。
+    ✅ **验收方式**：`tools/verify_r45.ps1` —— 一条命令跑完 **7 步 15 项检查**，退出码 = 失败项数（0 即通过）：
+    ```powershell
+    powershell -NoProfile -File tools\verify_r45.ps1
+    ```
+    覆盖：服务可达 / 11 个契约字段齐全 / 与 `/health` 交叉一致（两份口径来自不同代码路径）/
+    只读性（连调 6 次 payload 逐位相同 + `registry.db` mtime 不变）/ `POST → 405` /
+    OpenAPI 已登记且既有四端点仍在 / REST 与 MCP 同源同形（内嵌跑 1 项 pytest）。
+    📌 本机实测：**15/15 全绿、退出码 0**；故意指向死端口时正确报错并以 **1** 退出。
+    ⚠️ 脚本文件必须保存为 **UTF-8 with BOM**：Windows PowerShell 5.1 在缺少 BOM 时按系统 ANSI
+    代码页读取 `.ps1`，中文提示会整片乱码（本机只有 5.1，无 pwsh）。
     🧭 项目工程师指示：**已确认（2026-09-24）**。
 
 ---
@@ -454,7 +464,7 @@ created: 2026-09-04
     - ~~R-32d 检索阈值~~ → **已定案（2026-09-24）走回答模板路线**，胖端点侧候选转入 R-42。
 - **最近一次测试结果**（2026-09-24）：`pytest` **164 passed**；`ruff` 零告警；`mypy` strict 38 文件零错误；promptfoo 3 通过 / 1 失败 / **0 错误**；`kb_answer` 三连问零超时
 - **验收实测**（2026-09-24，项目工程师执行）：摄取 65 篇 0 失败；`/health` ok（972 点 / 65 篇）；检索 **Recall@1=0.767 / @3=0.933 / @5=0.933 / @10=1.000 / MRR=0.860**（与基线逐位一致）；Ragas **引用一致性 1.000 / faithfulness 0.858 / answer_relevancy 0.758**；DSH 问答带 `[n]` 引用通过
-- **本文件版本**：v0.12.0（2026-09-24 项目工程师决策落盘：**R-45 新增 `GET /kb/stats`**、**R-43c 认可两组默认值**；Phase 6 与实现细节背书仍待拍板）
+- **本文件版本**：v0.12.1（2026-09-25 补 R-45 验收脚本 `tools/verify_r45.ps1`；2026-09-24 项目工程师决策落盘：**R-45 新增 `GET /kb/stats`**、**R-43c 认可两组默认值**；Phase 6 与实现细节背书仍待拍板）
 
 ---
 
@@ -550,3 +560,5 @@ created: 2026-09-04
 | 2026-09-24 | R-45 | 测试补强 | 新增 `tests/test_search.py::test_rest_stats_endpoint_matches_the_mcp_tool`：断言 REST 200 + 关键字段正确，并**断言 REST 响应体与 MCP `structuredContent` 逐字段相等** | 把"两条接入路径不许分叉"钉成回归点 |
 | 2026-09-24 | R-43c | **决策登记（无代码改动）** | 项目工程师答复「认可」⇒ `HF_HUB_OFFLINE` **默认离线**（`DEFAULT_HF_HUB_OFFLINE=True`）与 MCP **默认无会话**（`DEFAULT_MCP_STATELESS=True`）**定为最终默认值**，回退开关保留；R-43 / R-43b / R-44 三行的「待复核」中，**默认值部分**随之关闭 | 📌 R-43b 的**实现细节背书**不在认可范围（项目工程师对整批实现细节答复「我再看看」）⇒ 该批保持待复核，本步不代其结案 |
 | 2026-09-24 | R-43c | 待请示收敛 | §四「待请示事项」由 5 项收敛为 2 项：① 已决 `GET /kb/stats`（→ R-45）；②③ 已认可两组默认值；**仍待拍板**只剩「Phase 6 是否开工」与「实现细节背书」 | 版本 v0.11.0 → **v0.12.0** |
+| 2026-09-25 | R-45 | 验收工具 | 新增 `tools/verify_r45.ps1`：一条命令跑完 7 步 15 项检查（服务可达 / 字段齐全 / 与 `/health` 交叉一致 / 只读性 / `POST→405` / OpenAPI 登记 / REST 与 MCP 同源同形），退出码 = 失败项数 | 项目工程师要求"确切的验收流程"。脚本**只读**：不写任何文件、不改任何状态；本机实测 15/15 全绿、死端口路径以 1 退出 |
+| 2026-09-25 | R-45 | 工具编码约定 | `tools/verify_r45.ps1` 存为 **UTF-8 with BOM** | Windows PowerShell 5.1 无 BOM 时按 ANSI 读 `.ps1`，中文提示整片乱码；本机只有 5.1（无 pwsh）⇒ 此后新增 `.ps1` 一律带 BOM |
