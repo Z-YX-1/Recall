@@ -254,6 +254,9 @@ tools: kb_search / kb_answer / kb_ingest / kb_stats
 
 - **黄金集**：`eval/golden_set.jsonl` = `{question, expected_sources[]}`，每数据源 30~50 题，版本化
 - **检索评测**：`eval_retrieval.py --collection <名>` → Recall@K / MRR；新旧 collection A/B 并排对比
+- **分数分布测量**：`eval/measure_scores.py` → 逐题精排分数带 + 阈值扫描 + 截断代价模拟；
+  对照集 `eval/out_of_vault.jsonl`（`far` 远域 / `adjacent` **邻近**——LLM 相关但笔记没写，
+  是「硬答」问题的真身）。**先测量后改动**：结论见 `eval/BASELINE.md` §7
 - **RAG 质量**：Ragas（faithfulness / answer relevancy / context precision）
 - **prompt 回归**：promptfoo
 - 触发点：切分 / embedding / 检索参数 / 组装模板每次变更后重跑

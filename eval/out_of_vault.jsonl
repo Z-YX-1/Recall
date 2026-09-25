@@ -1,0 +1,21 @@
+{"question": "红烧肉怎么做才能肥而不腻？", "group": "far"}
+{"question": "多肉植物多久浇一次水比较合适？", "group": "far"}
+{"question": "五线谱上怎么判断一首曲子是什么调？", "group": "far"}
+{"question": "黑洞吸积盘为什么会辐射出 X 射线？", "group": "far"}
+{"question": "布洛芬和对乙酰氨基酚可以一起吃吗？", "group": "far"}
+{"question": "劳动合同到期公司不续签需要支付补偿吗？", "group": "far"}
+{"question": "汽车机油 5W-30 和 0W-20 有什么区别？", "group": "far"}
+{"question": "跑马拉松时应该怎么安排补给？", "group": "far"}
+{"question": "单反相机的光圈大小和景深是什么关系？", "group": "far"}
+{"question": "个人所得税的专项附加扣除怎么计算？", "group": "far"}
+{"question": "台风是怎么形成的？", "group": "far"}
+{"question": "咖啡豆的烘焙度对风味有什么影响？", "group": "far"}
+{"question": "围棋里的让子棋规则是什么？", "group": "far"}
+{"question": "滚筒洗衣机和波轮洗衣机哪个更省水？", "group": "far"}
+{"question": "怎么训练幼犬定点排便？", "group": "far"}
+{"question": "MoE 混合专家模型的负载均衡损失是怎么设计的？", "group": "adjacent"}
+{"question": "FlashAttention 的分块计算为什么能省显存？", "group": "adjacent"}
+{"question": "GPTQ 和 AWQ 这两种权重量化方法有什么区别？", "group": "adjacent"}
+{"question": "投机解码（speculative decoding）是怎么加速推理的？", "group": "adjacent"}
+{"question": "HyDE 假设文档嵌入在检索里是怎么用的？", "group": "adjacent"}
+{"question": "大模型的知识蒸馏一般怎么做？", "group": "adjacent"}
