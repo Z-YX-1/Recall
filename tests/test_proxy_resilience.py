@@ -155,6 +155,92 @@ async def test_kb_search_maps_a_502_gateway_to_semantic_503(
     assert "qdrant.exe" in excinfo.value.message  # 仍然告诉用户怎么修
 
 
+# ------------------------------------------------------- 防线 3：Qdrant 自身降级（500）
+
+
+class _DegradedQdrant:
+    """回 Qdrant "未从先前错误恢复" 的 500（模拟磁盘 IO 错误后的降级状态）。
+
+    现场报文（2026-09-25 实测）：
+    ``{"status":{"error":"Service internal error: Not recovered from previous error:
+    Service runtime error: IO Error: 拒绝访问。 (os error 5)"}}``
+    """
+
+    BODY = (
+        '{"status":{"error":"Service internal error: Not recovered from previous error: '
+        'Service runtime error: IO Error: 拒绝访问。 (os error 5)"},"time":0.012}'
+    ).encode()
+
+    def __init__(self, body: bytes) -> None:
+        self.body = body
+        self._server: HTTPServer | None = None
+        self._thread: threading.Thread | None = None
+
+    @property
+    def url(self) -> str:
+        """桩服务的根地址。"""
+        assert self._server is not None
+        host, port = self._server.server_address[0], int(self._server.server_address[1])
+        host_text = host.decode("utf-8") if isinstance(host, bytes) else str(host)
+        return f"http://{host_text}:{port}"
+
+    def __enter__(self) -> _DegradedQdrant:
+        body = self.body
+
+        class Handler(BaseHTTPRequestHandler):
+            def _respond(self) -> None:
+                self.send_response(500)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            do_GET = _respond
+            do_POST = _respond
+
+            def log_message(self, *args: Any) -> None:
+                """静音。"""
+
+        self._server = HTTPServer(("127.0.0.1", 0), Handler)
+        self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
+        self._thread.start()
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        if self._server is not None:
+            self._server.shutdown()
+            self._server.server_close()
+        if self._thread is not None:
+            self._thread.join(timeout=5)
+
+
+async def test_qdrant_degraded_500_is_reported_as_unavailable() -> None:
+    """Qdrant 处于"未恢复"降级态 ⇒ 也归入不可达（语义化 503 + 提示重启），而不是裸 500。"""
+    with _DegradedQdrant(_DegradedQdrant.BODY) as stub:
+        store = QdrantStore(stub.url, timeout=5)
+        try:
+            with pytest.raises(StoreUnavailableError):
+                await store.collection_exists("recall__whatever")
+        finally:
+            await store.close()
+
+
+async def test_other_500s_are_not_swallowed_as_unavailable() -> None:
+    """**别过度匹配**：普通 500（原因不是降级）仍按原样抛出，不伪装成"不可达"。"""
+    with _DegradedQdrant(b'{"status":{"error":"something else went wrong"}}') as stub:
+        store = QdrantStore(stub.url, timeout=5)
+        try:
+            with pytest.raises(Exception) as excinfo:
+                await store.collection_exists("recall__whatever")
+        finally:
+            await store.close()
+
+    assert not isinstance(excinfo.value, StoreUnavailableError), (
+        "只有『未从先前错误恢复』才算降级；其它 500 应保持原样，"
+        "否则会把真故障误报成『Qdrant 没启动』"
+    )
+
+
 @pytest.fixture(autouse=True)
 def _no_proxy_for_gateway(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     """确保桩服务本身不会被系统代理截走（与生产侧 `NO_PROXY` 修复同一件事）。"""

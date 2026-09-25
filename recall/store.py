@@ -148,6 +148,19 @@ qdrant-client 于是抛 ``UnexpectedResponse`` 而不是连接错误 —— 只�
 """
 
 
+_DEGRADED_MARKER = b"not recovered from previous error"
+"""Qdrant "未从先前错误恢复"的降级标志（出现在 500 响应体里）。
+
+现场（2026-09-25 实测）：Qdrant 在 storage 目录撞到 Windows 访问被拒
+（``IO Error: 拒绝访问。 (os error 5)``）后进入该状态，**对后续请求一律返回 500**，
+直到它自行恢复。表现为测试套件"失败用例每次不同、单跑必过"——
+Qdrant 一旦进这个状态，那一小段时间内的用例全挂。
+
+把它归入"不可达"有两个好处：① 取到 :class:`StoreUnavailableError` 后仍会重试（重试常能
+等到 Qdrant 恢复）；② 重试耗尽时给出**语义化 503**并提示重启，而不是一个无从下手的 500。
+"""
+
+
 def _is_connectivity_error(exc: BaseException) -> bool:
     """异常链里是否含"连不上 / 超时"。
 
@@ -163,16 +176,24 @@ def _is_connectivity_error(exc: BaseException) -> bool:
 
 
 def _is_unavailable_response(exc: BaseException) -> bool:
-    """异常链里是否含"网关/服务不可用"类响应（502 / 503 / 504）。
+    """异常链里是否含"网关/服务不可用"类响应。
+
+    两类都算：
+
+    - **502 / 503 / 504**：代理或反向代理给出的"上游不可用"（roadmap R-46）；
+    - **500 + "Not recovered from previous error"**：Qdrant 自身处于降级状态
+      （如磁盘 IO 错误后），见 :data:`_DEGRADED_MARKER`。
 
     与 :func:`_is_connectivity_error` 同样沿异常链下找：qdrant-client 可能把它再包一层。
     """
     current: BaseException | None = exc
     while current is not None:
-        if isinstance(current, UnexpectedResponse) and current.status_code in (
-            _UNAVAILABLE_STATUS_CODES
-        ):
-            return True
+        if isinstance(current, UnexpectedResponse):
+            if current.status_code in _UNAVAILABLE_STATUS_CODES:
+                return True
+            content = current.content or b""
+            if current.status_code == 500 and _DEGRADED_MARKER in content.lower():
+                return True
         current = current.__cause__ or current.__context__
     return False
 

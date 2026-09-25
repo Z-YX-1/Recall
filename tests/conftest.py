@@ -10,7 +10,7 @@
 
 from __future__ import annotations
 
-import contextlib
+import logging
 import os
 import socket
 import uuid
@@ -139,8 +139,17 @@ async def ingest_env(
             vault=vault, collection=unique_collection, registry_db=registry_db, store=client
         )
     finally:
-        with contextlib.suppress(Exception):  # 清理失败不应掩盖用例结论
+        try:
             await client.client.delete_collection(unique_collection)
+        except Exception as exc:  # noqa: BLE001 - 清理失败不该掩盖用例结论，但**必须可见**
+            # ⚠️ 这里曾经是静默 suppress。后果在 2026-09-25 暴露：Qdrant 撞到磁盘 IO 错误时
+            # 删除会失败并被无声吞掉，于是 storage 里堆了 9 个残留 collection 目录（~6.5GB），
+            # 反过来加剧磁盘压力。测试清理失败**必须看得见**。
+            logging.getLogger(__name__).warning(
+                "conftest.collection_cleanup_failed 未能删除测试 collection %s：%s",
+                unique_collection,
+                exc,
+            )
         await client.close()
 
 

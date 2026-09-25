@@ -152,7 +152,6 @@ JSON 模式与状态码都不变。
 | :--- | :--- |
 | **门槛**（本实现） | **零**：Recall@1/3/5/10 = 76.67 / 93.33 / 93.33 / 100.00，与基线**逐位一致**；笔记内题被误拦 0/30 |
 | ~~按分数逐条裁剪~~ | **破硬底线**：t=0.20 → Recall@10 96.67%；t=0.58 → 90.00%（黄金集有题目期望来源排第 7 名） |
-
 **连带行为**：`/kb/answer` 拿到空证据时直接答"笔记里没有检索到与该问题相关的内容…"
 且**不调 LLM**（`recall/api.py::kb_answer_core` 早已有此路径）⇒ 笔记外问题不消耗额度。
 
@@ -390,6 +389,45 @@ httpx 默认 `trust_env=True` 会读到它，**连本机服务也会发给代理
 
 审计行同时记 `peer`，因此"这个 `client` 是不是转发头来的"永远可追溯。
 ⚠️ `RECALL_TRUSTED_PROXIES` 表达的是**链路可信**，不是业务信任；显式置空即"谁都不信"。
+
+### 12.3 Qdrant 的间歇性 IO 失败与存储泄漏（2026-09-25 深入定位，**未解决**）
+
+**症状**：全量 `pytest` **每次跑都有 3~4 个用例失败**，且**失败用例每次不同、单跑必过**。
+
+**原始报文**（抓到多次，签名完全一致）：
+
+```
+Unexpected Response: 500 (Internal Server Error)
+{"status":{"error":"Service internal error: Not recovered from previous error:
+ Service runtime error: IO Error: 拒绝访问。 (os error 5)"}}
+```
+
+**失败点**：集中在**给新建 collection 建 payload 索引**时（实测 `index:groups`、`index:updated_at_ts`）。
+
+**已排除**（逐项实测）：
+
+| 候选 | 证据 | 结论 |
+|---|---|---|
+| 磁盘满 | 清理后 D 盘余 12.6~14GB | ❌ 排除 |
+| 杀毒软件锁文件 | `DisableRealtimeMonitoring = True`（Defender 实时防护**已关**） | ❌ 排除 |
+| 文件系统语义 | D: 为 **NTFS**（非 exFAT/网络盘） | ❌ 排除 |
+| Qdrant 进程状态 | **重启 Qdrant 后仍复现** | ❌ 排除 |
+| 本项目代码改动 | 该现象**早于**本轮所有改动（round 9 首次出现，当时改动只在 `tools/` 与文档） | ❌ 排除 |
+
+**目前最可疑**：本机 Qdrant 是 **v1.19.0（commit `74f3e85b…`）** —— 比已知稳定线更新，
+疑似该构建在 Windows 上建索引/删目录时的缺陷。
+
+**伴生的存储泄漏（已解决）**：测试夹具每用例建一个一次性 collection，**API 删除成功但磁盘目录
+不删** ⇒ **每跑一次全量泄漏约 1.4GB**（实测一次 run 让 D 盘 14.09 → 12.66GB）。
+处理：清理失败改为记 WARNING（不再静默）+ 新增 `tools/clean_qdrant_orphans.py`。
+
+⚠️ **关于清理工具安全性的一处更正**：该工具靠"目录不在 Qdrant 的 collection 列表里"判定孤儿，
+但实测发现 **Qdrant 处于降级态时它的列表本身不可靠**（重启后多出两个之前未列出的测试 collection）。
+真正保证安全的是**只删 `recall-test-*` 前缀**（生产集合命名契约是
+`recall__<模型>@<版本>__<切分器>`，不可能撞上）；"API 不认"只是辅助判据，**不能单独作为依据**。
+
+**处置建议**：① 换用 Qdrant 的稳定版本（当前版本疑为预发布构建）；② Qdrant 降级时**重启**它；
+③ 定期跑 `python tools\clean_qdrant_orphans.py` 查看泄漏；④ 保持 D 盘余量充裕。
 
 ## 13. 落地路线与验收
 
