@@ -429,6 +429,9 @@ created: 2026-09-04
     而本项目全链路 UTF-8 ⇒ 脚本内 `sys.stdout.reconfigure(encoding="utf-8")` 统一，
     否则会出现"控制台正常、重定向乱码"。
     🧭 项目工程师指示：**已确认（2026-09-24）**。
+    ✅ **验收通过（2026-09-25，项目工程师执行）**：`python tools\verify_r45.py` ⇒
+    **15 项检查全绿**，退出码 0（项目工程师回报：「验收结论：通过（15 项检查全绿）」）。
+    📌 R-45 闭环。**下一步待项目工程师排期**：Phase 6（R-38~R-42）。
 
 ---
 
@@ -469,7 +472,7 @@ created: 2026-09-04
     - ~~R-32d 检索阈值~~ → **已定案（2026-09-24）走回答模板路线**，胖端点侧候选转入 R-42。
 - **最近一次测试结果**（2026-09-24）：`pytest` **164 passed**；`ruff` 零告警；`mypy` strict 38 文件零错误；promptfoo 3 通过 / 1 失败 / **0 错误**；`kb_answer` 三连问零超时
 - **验收实测**（2026-09-24，项目工程师执行）：摄取 65 篇 0 失败；`/health` ok（972 点 / 65 篇）；检索 **Recall@1=0.767 / @3=0.933 / @5=0.933 / @10=1.000 / MRR=0.860**（与基线逐位一致）；Ragas **引用一致性 1.000 / faithfulness 0.858 / answer_relevancy 0.758**；DSH 问答带 `[n]` 引用通过
-- **本文件版本**：v0.12.2（2026-09-25 R-45 验收脚本改用 Python `tools/verify_r45.py`，规避本机 ExecutionPolicy=Restricted；2026-09-24 项目工程师决策落盘：**R-45 新增 `GET /kb/stats`**、**R-43c 认可两组默认值**；Phase 6 与实现细节背书仍待拍板）
+- **本文件版本**：v0.12.3（2026-09-25 **R-45 验收通过 ⇒ 首个后续迭代闭环**；R-45 验收脚本改用 Python 规避本机 ExecutionPolicy=Restricted；2026-09-24 项目工程师决策：R-45 新增 `GET /kb/stats`、R-43c 认可两组默认值。**当前待拍板：Phase 6 排期 + 实现细节背书**）
 
 ---
 
@@ -566,4 +569,6 @@ created: 2026-09-04
 | 2026-09-24 | R-43c | **决策登记（无代码改动）** | 项目工程师答复「认可」⇒ `HF_HUB_OFFLINE` **默认离线**（`DEFAULT_HF_HUB_OFFLINE=True`）与 MCP **默认无会话**（`DEFAULT_MCP_STATELESS=True`）**定为最终默认值**，回退开关保留；R-43 / R-43b / R-44 三行的「待复核」中，**默认值部分**随之关闭 | 📌 R-43b 的**实现细节背书**不在认可范围（项目工程师对整批实现细节答复「我再看看」）⇒ 该批保持待复核，本步不代其结案 |
 | 2026-09-24 | R-43c | 待请示收敛 | §四「待请示事项」由 5 项收敛为 2 项：① 已决 `GET /kb/stats`（→ R-45）；②③ 已认可两组默认值；**仍待拍板**只剩「Phase 6 是否开工」与「实现细节背书」 | 版本 v0.11.0 → **v0.12.0** |
 | 2026-09-25 | R-45 | 验收工具 | 新增 `tools/verify_r45.py`：一条命令跑完 7 步 15 项检查（服务可达 / 字段齐全 / 与 `/health` 交叉一致 / 只读性 / `POST→405` / OpenAPI 登记 / REST 与 MCP 同源同形），退出码 = 失败项数 | 项目工程师要求"确切的验收流程"。脚本**只读**：不写任何文件、不改任何状态；本机实测 15/15 全绿、死端口路径以 1 退出 |
-| 2026-09-25 | R-45 | **实现语言更换（现场受阻）** | 验收脚本由 **PowerShell 改为 Python**，`tools/verify_r45.ps1` 删除、`tools/verify_r45.py` 新建（只保留一份实现，避免两套口径分叉） | 现场受阻：本机 `ExecutionPolicy` 六作用域皆 `Undefined` ⇒ 生效 **Restricted**，`.ps1` 运行报 `UnauthorizedAccess`，cmd 与 PowerShell 均无法直接运行（需 `-ExecutionPolicy Bypass`）。Python 无此限制。连带踩到"管道 stdout 用 cp936 ⇒ 重定向乱码"，脚本内 `sys.stdout.reconfigure(encoding="utf-8")` 统一为 UTF-8 |
+| 2026-09-25 | R-45 | **实现语言更换（现场受阻）** | 验收脚本由 **PowerShell 改为 Python**：`tools/verify_r45.ps1` 删除、`tools/verify_r45.py` 新建（只保留一份实现，避免两套口径分叉） | 现场受阻：本机 `ExecutionPolicy` 六作用域皆 `Undefined` ⇒ 生效 **Restricted**，`.ps1` 运行报 `UnauthorizedAccess`，cmd 与 PowerShell 均无法直接运行（需 `-ExecutionPolicy Bypass`）。Python 无此限制 |
+| 2026-09-25 | R-45 | 验收脚本编码修复 | `tools/verify_r45.py` 增加 `sys.stdout.reconfigure(encoding="utf-8", errors="replace")` | 换 Python 实现后暴露：Windows 下 Python 对管道/重定向的 stdout 用本地代码页（cp936），本项目全链路 UTF-8 ⇒ 不统一会"控制台正常、重定向乱码" |
+| 2026-09-25 | R-45 | **验收通过** | 项目工程师执行 `python tools\verify_r45.py` ⇒ **15/15 全绿**、退出码 0。覆盖：服务可达 / 11 个契约字段齐全 / 与 `/health` 交叉一致 / 只读性（payload 稳定 + `registry.db` mtime 不变）/ `POST→405` / OpenAPI 登记且既有四端点仍在 / REST 与 MCP 同源同形 | **R-45 闭环**。至此 Phase 0~5 与 R-43c、R-45 全部完成；下一步 Phase 6（R-38~R-42）待项目工程师排期 |
