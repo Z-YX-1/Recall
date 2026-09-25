@@ -29,6 +29,9 @@ os.environ.setdefault("RECALL_LOG_TO_FILE", "0")
 # 开发者 `.env` 里的 `RECALL_API_KEYS` 就不会生效 ⇒ 用例结果不受个人配置影响。
 # 需要鉴权的用例用 `monkeypatch.setenv` 自行打开（见 tests/test_auth.py 的 secured 夹具）。
 os.environ["RECALL_API_KEYS"] = ""
+# MCP 工具白名单同样默认关闭（roadmap R-39 前置件）：与 key 表同理，用例结果
+# 不应受开发者 `.env` 影响。需要它的用例自行 monkeypatch 打开。
+os.environ["RECALL_MCP_TOOL_POLICY"] = ""
 # 测试**不得**继承本机 HTTP 代理（2026-09-25 实测踩到）。
 # Windows 的系统代理设置（本机是 karingService，监听 127.0.0.1:3067）会被
 # httpx 的 `trust_env=True` 读到，于是"连不上某个端口"变成代理返回的 **HTTP 502**；

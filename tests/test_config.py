@@ -296,3 +296,47 @@ def test_ingest_rate_limit_rejects_invalid_values(raw: str) -> None:
             Settings.from_env()
     finally:
         monkeypatch.undo()
+
+
+# --------------------------------------------------------- MCP 工具白名单（R-39 前置件）
+
+
+def test_mcp_tool_policy_defaults_to_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    """默认空 = 不启用（所有身份都能用全部工具），默认值必须"什么都不改变"。"""
+    monkeypatch.delenv("RECALL_MCP_TOOL_POLICY", raising=False)
+
+    assert Settings.from_env().mcp_tool_policy == {}
+
+
+def test_mcp_tool_policy_is_parsed_for_multiple_users(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``用户:工具1|工具2``，逗号分隔多条 —— 公网身份与本机身份可以各拿各的工具。"""
+    monkeypatch.setenv(
+        "RECALL_MCP_TOOL_POLICY", " coze:kb_search|kb_answer , me:kb_stats "
+    )
+
+    rules = Settings.from_env().mcp_tool_policy
+
+    assert rules == {
+        "coze": frozenset({"kb_search", "kb_answer"}),
+        "me": frozenset({"kb_stats"}),
+    }
+
+
+@pytest.mark.parametrize("raw", ["no-colon", ":kb_search", "coze:", "coze:||"])
+def test_mcp_tool_policy_rejects_malformed_entries(raw: str) -> None:
+    """格式错误启动即抛 —— 白名单写错却静默不生效，会让人以为"已经挡住了"。"""
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setenv("RECALL_MCP_TOOL_POLICY", raw)
+    try:
+        with pytest.raises(ValueError, match="RECALL_MCP_TOOL_POLICY"):
+            Settings.from_env()
+    finally:
+        monkeypatch.undo()
+
+
+def test_mcp_tool_policy_rejects_duplicate_users(monkeypatch: pytest.MonkeyPatch) -> None:
+    """同一用户写两遍 ⇒ 报错（否则后者覆盖前者，与人的直觉不符）。"""
+    monkeypatch.setenv("RECALL_MCP_TOOL_POLICY", "coze:kb_search,coze:kb_stats")
+
+    with pytest.raises(ValueError, match="重复用户"):
+        Settings.from_env()

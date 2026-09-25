@@ -239,6 +239,53 @@ def _ensure_localhost_bypasses_proxy() -> None:
     os.environ["no_proxy"] = value  # 大小写两版都设：不同库读的键名不一致
 
 
+DEFAULT_MCP_TOOL_POLICY = ""
+"""MCP 工具白名单（``RECALL_MCP_TOOL_POLICY``），格式 ``用户:工具1|工具2``，逗号分隔多条。
+
+**空 = 不启用**（所有身份都能用全部工具）——默认必须是"什么都不改变"。
+
+为什么需要它（roadmap R-39）：扣子官方 MCP 文档指出，MCP 的工具名/说明/参数会**占用
+Agent 上下文**并增加 Token 与积分消耗；而本项目对外暴露的 ``kb_ingest`` 是**写端点**。
+更关键的是本机只有一份模型（≈4.5GB 显存），"另起一个公网实例 + server-wide 白名单"
+会双份占显存（R-23b 那类崩溃的土壤）⇒ 让"本机拿全套、公网只拿读工具"同时成立，
+只能**按身份**区分。示例：``RECALL_MCP_TOOL_POLICY="coze:kb_search|kb_answer"``。
+
+语义：**未列出的用户不受限**（拿全部工具）——漏配用户只会"多给"，不会把人锁死。
+"""
+
+
+def _read_tool_policy(name: str, default: str) -> dict[str, frozenset[str]]:
+    """解析 MCP 工具白名单 ``用户:工具1|工具2``（逗号分隔多条）。
+
+    Args:
+        name: 环境变量名。
+        default: 未设置时的取值。
+
+    Returns:
+        ``{user: frozenset(tool)}``；空配置返回空字典（= 不启用）。
+
+    Raises:
+        ValueError: 条目缺冒号、用户或工具为空，或同一用户重复出现。
+    """
+    raw = (os.getenv(name) or default).strip()
+    rules: dict[str, frozenset[str]] = {}
+    if not raw:
+        return rules
+    for item in raw.split(","):
+        entry = item.strip()
+        if not entry:
+            continue
+        user, separator, tools_raw = entry.partition(":")
+        user = user.strip()
+        tools = frozenset(tool.strip() for tool in tools_raw.split("|") if tool.strip())
+        if not separator or not user or not tools:
+            raise ValueError(f"{name} 条目格式应为 user:tool1|tool2，实得 {entry!r}")
+        if user in rules:
+            raise ValueError(f"{name} 出现重复用户 {user!r}")
+        rules[user] = tools
+    return rules
+
+
 def _sync_hf_offline(offline: bool) -> None:
     """把离线开关同步给**已导入**的 ``huggingface_hub``（兜底，见模块 docstring）。
 
@@ -295,6 +342,9 @@ class Settings:
         ingest_rate_limit: 写端点限流次数（``RECALL_INGEST_RATE_LIMIT``，格式 ``N/W``）；
             **0 = 关闭**。默认见 :data:`DEFAULT_INGEST_RATE_LIMIT`。
         ingest_rate_window_s: 写端点限流窗口秒数（与 ``ingest_rate_limit`` 同源）。
+        mcp_tool_policy: MCP 工具白名单 ``{user: {tool}}``（``RECALL_MCP_TOOL_POLICY``）；
+            **空表示不启用**（所有身份都能用全部工具），见 :data:`DEFAULT_MCP_TOOL_POLICY`。
+            未列出的用户不受限。
         deepseek_api_key: DeepSeek API key（仅胖端点使用；绝不入日志/库/payload）。
         deepseek_base_url: DeepSeek OpenAI 兼容接口地址。
         deepseek_model: 生成用模型名。
@@ -318,6 +368,7 @@ class Settings:
     evidence_min_score: float
     ingest_rate_limit: int
     ingest_rate_window_s: float
+    mcp_tool_policy: dict[str, frozenset[str]]
     deepseek_api_key: str | None
     deepseek_base_url: str
     deepseek_model: str
@@ -370,6 +421,9 @@ class Settings:
             ),
             ingest_rate_limit=rate_limit,
             ingest_rate_window_s=rate_window,
+            mcp_tool_policy=_read_tool_policy(
+                "RECALL_MCP_TOOL_POLICY", DEFAULT_MCP_TOOL_POLICY
+            ),
             deepseek_api_key=os.getenv("DEEPSEEK_API_KEY") or None,
             deepseek_base_url=os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com").strip(),
             deepseek_model=os.getenv("DEEPSEEK_MODEL", "deepseek-chat").strip(),

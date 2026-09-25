@@ -218,6 +218,7 @@ JSON 模式与状态码都不变。
 | 比较方式 | `hmac.compare_digest` **逐条常量时间**比较，不用 `dict.get`（避免时间旁路） |
 | 审计 | `data/logs/audit.jsonl`（JSON lines）：`ts/user/groups/method/path/status/duration_ms/outcome/trace_id/client`；**绝不写密钥**；受 `RECALL_LOG_TO_FILE` 控制 |
 | **限流** | `RECALL_INGEST_RATE_LIMIT`（默认 `10/60` = 10 次 / 60 秒，`0` 关闭）：**只针对写端点** `POST /kb/ingest`（code_standards §6.1 要求"鉴权 + 限流"）。实现见 `recall/ratelimit.py`（滑动窗口），判定放在 **`kb_ingest_core`** 而不是中间件——`/mcp` 的 `kb_ingest` 工具走同一个 core，放中间件只挡得住 REST 那条路。超限返回 **429 `rate_limited`**（统一错误信封）。⚠️ 状态在**进程内**，多进程各算一份；公网暴露时应在网关层再加一道（R-39） |
+| **MCP 工具可见性** | `RECALL_MCP_TOOL_POLICY="用户:工具1\|工具2"`（逗号分隔多条；**空 = 不启用**，未列出的用户不受限）：`recall/mcp_policy.py` 用 FastMCP 中间件在 `tools/list` **按身份过滤**、在 `tools/call` **拒绝越权**（**可见性 ≠ 权限**，两道闸都要）。动机：扣子官方文档指出 MCP 工具名/说明/参数占 Agent 上下文；而本机只有一份模型（≈4.5GB 显存）⇒ 无法用"另起实例 + 服务级白名单"给公网与本机分权，只能按身份 |
 | 启动保护 | 监听非回环地址且未配 key 表 ⇒ WARNING `api.exposed_without_auth` |
 
 ## 8. API 契约
@@ -303,6 +304,7 @@ project/Recall/
 │  └─ api.py                   # FastAPI：REST + FastMCP 挂载 + 身份中间件（同端口 8000）
 ├─ eval/                       # golden_set.jsonl + eval_retrieval.py + eval_ragas.py + measure_scores.py + promptfoo/
 ├─ tools/                      # verify_r45.py（R-45 验收）、verify_phase6.py（Phase 6 验收）等
+├─ docs/                       # R-39-public-access.md（公网接入手册：路线/前置/Coze 侧/验收/回滚）
 ├─ skill/recall-assembly.md    # → 复制到 ~/.dsh/skills/
 ├─ data/                       # qdrant 存储、registry.db、日志（gitignore）
 └─ README.md

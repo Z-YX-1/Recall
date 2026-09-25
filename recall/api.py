@@ -51,6 +51,7 @@ from recall.chunker import CHUNKER_NAME
 from recall.config import Settings, configure_logging
 from recall.embedder import DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_VERSION, Embedder
 from recall.llm import DeepSeekClient, LlmNotConfiguredError
+from recall.mcp_policy import ToolPolicy, ToolPolicyMiddleware
 from recall.models import (
     AnswerRequest,
     AnswerResult,
@@ -935,6 +936,43 @@ async def kb_ingest(mode: str = "update", collection: str | None = None) -> Inge
     except Exception as exc:  # noqa: BLE001 - MCP 工具不裸抛，异常转可读文本（§6.2）
         logger.exception("mcp.kb_ingest_failed")
         raise ToolError(f"摄取失败：{type(exc).__name__}: {exc}") from exc
+
+
+MCP_TOOL_NAMES: tuple[str, ...] = ("kb_search", "kb_answer", "kb_ingest", "kb_stats")
+"""已注册的 MCP 工具名。
+
+``RECALL_MCP_TOOL_POLICY`` 里写了不存在的工具名时，启动会告警——这里作为"已知集合"。
+⚠️ 它必须与实际注册的集合保持一致：`tests/test_mcp.py` 有一条断言钉住这一点，
+防止后人加了工具却忘了更新（那时白名单会静默失效）。
+"""
+
+
+def _current_tool_policy() -> ToolPolicy:
+    """取当前的 MCP 工具策略（从服务单例的配置快照，每次请求现读）。
+
+    服务尚未装配时返回"不启用"，避免中间件在早期请求上炸掉。
+    """
+    service = _service
+    if service is None:
+        return ToolPolicy({})
+    return ToolPolicy(service.settings.mcp_tool_policy)
+
+
+mcp.add_middleware(ToolPolicyMiddleware(_current_tool_policy))
+
+_policy_at_boot = ToolPolicy(Settings.from_env().mcp_tool_policy)
+if _policy_at_boot.enabled:
+    unknown = _policy_at_boot.unknown_tools(MCP_TOOL_NAMES)
+    if unknown:
+        logger.warning(
+            "mcp.tool_policy_unknown_tools 白名单里写了不存在的工具名：%s（可用：%s）",
+            "、".join(unknown),
+            "、".join(MCP_TOOL_NAMES),
+        )
+    logger.info(
+        "mcp.tool_policy_enabled %s",
+        {user: sorted(tools) for user, tools in _policy_at_boot.rules.items()},
+    )
 
 
 mcp_app = mcp.http_app(path="/", stateless_http=Settings.from_env().mcp_stateless)

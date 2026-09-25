@@ -19,7 +19,7 @@ from fastmcp import Client
 from fastmcp.client.transports import StreamableHttpTransport
 
 from ingest import run_ingest
-from recall.api import app, close_service, mcp
+from recall.api import MCP_TOOL_NAMES, app, close_service, mcp
 from tests.helpers import IngestEnv, ingest_args, write_note
 
 EXPECTED_TOOLS = {"kb_search", "kb_answer", "kb_ingest", "kb_stats"}
@@ -55,6 +55,9 @@ async def test_tools_are_registered_with_summoning_docstrings() -> None:
         tools = {tool.name: tool for tool in await client.list_tools()}
 
     assert set(tools) == EXPECTED_TOOLS
+    # 工具名常量必须与实际注册集一致：RECALL_MCP_TOOL_POLICY 的白名单校验靠它，
+    # 漂移会让白名单静默失效（后人加了工具却忘了更新常量）。
+    assert set(MCP_TOOL_NAMES) == EXPECTED_TOOLS
     description = tools["kb_search"].description or ""
     assert "何时调用" in description  # 「召唤词」：写清何时调用
     assert "[n]" in description  # 引用规则
