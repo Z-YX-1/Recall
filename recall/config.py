@@ -130,6 +130,46 @@ def parse_api_keys(raw: str) -> dict[str, str]:
     return keys
 
 
+DEFAULT_EVIDENCE_MIN_SCORE = 0.0
+"""证据门槛默认值：**0.0 = 不启用**（roadmap R-42）。
+
+含义：精排后**最高分**低于该阈值 ⇒ 判定"笔记里没有相关内容"，返回**空证据包**。
+⚠️ 它是**门槛**而不是**裁剪**：命中时证据带**原样保留**，只决定"答不答"。
+（两者的代价天差地别——按分数逐条删证据会在 t=0.20 就把 Recall@10 打到 96.67%，
+因为黄金集里有题目的期望来源排在第 7 名。见 `eval/BASELINE.md` §7。）
+
+为什么默认关闭：它会改变**可观察行为**（笔记外问题从"回一堆低相关片段"变成"明确说没有"），
+属契约级变更，须项目工程师拍板后由运维显式打开。
+
+实测建议值：**0.58**（笔记内 top1 最低 0.799、笔记外最高 0.354，空档中点；2026-09-25 测量）。
+"""
+
+
+def _read_min_score(name: str, default: float) -> float:
+    """读 0~1 之间的浮点配置（未设置时用 ``default``）。
+
+    Args:
+        name: 环境变量名，如 ``"RECALL_EVIDENCE_MIN_SCORE"``。
+        default: 变量未设置或为空白时的取值。
+
+    Returns:
+        解析后的阈值。
+
+    Raises:
+        ValueError: 不是数字，或不在 ``[0, 1]`` 内。
+    """
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return default
+    try:
+        value = float(raw)
+    except ValueError as exc:
+        raise ValueError(f"{name} 必须是 0~1 之间的数字，实得 {raw!r}") from exc
+    if not 0.0 <= value <= 1.0:
+        raise ValueError(f"{name} 必须落在 0~1，实得 {value}")
+    return value
+
+
 def _sync_hf_offline(offline: bool) -> None:
     """把离线开关同步给**已导入**的 ``huggingface_hub``（兜底，见模块 docstring）。
 
@@ -180,6 +220,9 @@ class Settings:
         watchdog_api_key: vault 监听进程（roadmap R-38）调 ``POST /kb/ingest`` 时
             使用的 token（``RECALL_WATCHDOG_API_KEY``）。取 :attr:`api_keys` 里
             任意一把即可；**未启用鉴权时留空**。
+        evidence_min_score: 证据门槛（``RECALL_EVIDENCE_MIN_SCORE``）：精排最高分低于它
+            即判"笔记里没有"，返回空证据包；**0.0 = 不启用**（默认），见
+            :data:`DEFAULT_EVIDENCE_MIN_SCORE`。
         deepseek_api_key: DeepSeek API key（仅胖端点使用；绝不入日志/库/payload）。
         deepseek_base_url: DeepSeek OpenAI 兼容接口地址。
         deepseek_model: 生成用模型名。
@@ -200,6 +243,7 @@ class Settings:
     mcp_stateless: bool
     api_keys: dict[str, str]
     watchdog_api_key: str | None
+    evidence_min_score: float
     deepseek_api_key: str | None
     deepseek_base_url: str
     deepseek_model: str
@@ -241,6 +285,9 @@ class Settings:
             mcp_stateless=_read_bool("RECALL_MCP_STATELESS", default=DEFAULT_MCP_STATELESS),
             api_keys=parse_api_keys(os.getenv("RECALL_API_KEYS", DEFAULT_API_KEYS)),
             watchdog_api_key=os.getenv("RECALL_WATCHDOG_API_KEY") or None,
+            evidence_min_score=_read_min_score(
+                "RECALL_EVIDENCE_MIN_SCORE", DEFAULT_EVIDENCE_MIN_SCORE
+            ),
             deepseek_api_key=os.getenv("DEEPSEEK_API_KEY") or None,
             deepseek_base_url=os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com").strip(),
             deepseek_model=os.getenv("DEEPSEEK_MODEL", "deepseek-chat").strip(),

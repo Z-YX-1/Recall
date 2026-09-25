@@ -227,6 +227,7 @@ def test_from_settings_reads_deepseek_config() -> None:
         mcp_stateless=True,
         api_keys={},
         watchdog_api_key=None,
+        evidence_min_score=0.0,
         deepseek_api_key="secret",
         deepseek_base_url="https://api.deepseek.com",
         deepseek_model="deepseek-chat",

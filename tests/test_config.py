@@ -226,3 +226,32 @@ def test_watchdog_api_key_is_read_from_env(monkeypatch: pytest.MonkeyPatch) -> N
     monkeypatch.setenv("RECALL_WATCHDOG_API_KEY", "tok-watchdog")
 
     assert Settings.from_env().watchdog_api_key == "tok-watchdog"
+
+
+# ----------------------------------------------------------------- 证据门槛（R-42 阶段 1）
+
+
+def test_evidence_threshold_defaults_to_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    """默认 ``0.0`` = **不启用**：门槛会改变可观察行为，默认必须"什么都不改变"。"""
+    monkeypatch.delenv("RECALL_EVIDENCE_MIN_SCORE", raising=False)
+
+    assert Settings.from_env().evidence_min_score == 0.0
+
+
+def test_evidence_threshold_is_read_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """测量给出的建议值是 0.58（空档中点），必须能被配置进去。"""
+    monkeypatch.setenv("RECALL_EVIDENCE_MIN_SCORE", "0.58")
+
+    assert Settings.from_env().evidence_min_score == pytest.approx(0.58)
+
+
+@pytest.mark.parametrize("raw", ["abc", "-0.1", "1.5", "2"])
+def test_evidence_threshold_rejects_invalid_values(raw: str) -> None:
+    """非法值**启动即失败**，不静默退化成"没有门槛"（那会让人以为门槛开着）。"""
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setenv("RECALL_EVIDENCE_MIN_SCORE", raw)
+    try:
+        with pytest.raises(ValueError, match="RECALL_EVIDENCE_MIN_SCORE"):
+            Settings.from_env()
+    finally:
+        monkeypatch.undo()

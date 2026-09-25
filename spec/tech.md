@@ -109,10 +109,30 @@ Qdrant payload index **现在就建**：`doc_id`(keyword)、`owner`(keyword)、`
 query → bge-m3 同模型编码(dense+sparse)
       → Qdrant: dense 检索 top_k=50 + sparse 检索 top_k=50 → RRF 融合
       → 权限过滤（服务端强制，S1 为空）→ bge-reranker-v2-m3 精排 Top-20
-      → 预算截断：按分数贪心取块，累计 token_count ≤ max_tokens（默认 3000）
+      → 证据门槛（**可选，默认关闭**，见 §4.1）→ 预算截断：按分数贪心取块，累计 token_count ≤ max_tokens（默认 3000）
       → 同文档相邻块按 chunk_index 排序合并
       → 返回证据包 { evidence[], references[] }
 ```
+
+### 4.1 证据门槛 `RECALL_EVIDENCE_MIN_SCORE`（roadmap R-42，2026-09-25）
+
+**默认 `0.0` = 不启用**（不改变任何既有行为）。设为 `0 < t ≤ 1` 后：精排**最高分** `< t`
+⇒ 判定"笔记里没有相关内容"，返回**空证据包**（`{evidence: [], references: []}`），
+JSON 模式与状态码都不变。
+
+⚠️ 它是**门槛**而非**裁剪**：命中时证据带**原样保留**，只决定"答不答"。
+
+| 机制 | 代价（实测） |
+| :--- | :--- |
+| **门槛**（本实现） | **零**：Recall@1/3/5/10 = 76.67 / 93.33 / 93.33 / 100.00，与基线**逐位一致**；笔记内题被误拦 0/30 |
+| ~~按分数逐条裁剪~~ | **破硬底线**：t=0.20 → Recall@10 96.67%；t=0.58 → 90.00%（黄金集有题目期望来源排第 7 名） |
+
+**连带行为**：`/kb/answer` 拿到空证据时直接答"笔记里没有检索到与该问题相关的内容…"
+且**不调 LLM**（`recall/api.py::kb_answer_core` 早已有此路径）⇒ 笔记外问题不消耗额度。
+
+**实测判据**（`eval/BASELINE.md` §7）：笔记外题 top1 ∈ [0.002, 0.354]、笔记内 top1 ∈
+[0.799, 0.999] ⇒ 空档 `[0.354, 0.799]`，**建议 `t = 0.58`**（空档中点）：
+笔记外 **21/21 全拒**、笔记内 **0/30 误拦**。
 
 **精排的输入 = `heading_path` + 块正文**（`recall/rerank.py::build_rerank_document`）。
 

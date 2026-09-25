@@ -281,6 +281,27 @@ async def kb_search_core(request: SearchRequest, identity: Identity | None = Non
     )
     rescored = [replace(candidates[hit.index], score=hit.score) for hit in reranked]
 
+    # 证据门槛（roadmap R-42，默认关闭）：精排最高分不足 ⇒ 判"笔记里没有相关内容"。
+    # ⚠️ 是**门槛**不是**裁剪**：命中时证据带原样保留，只决定"答不答"。
+    # 按分数逐条删证据会误伤召回（黄金集里有题目期望来源排第 7 名），见 BASELINE §7。
+    threshold = service.settings.evidence_min_score
+    top_score = max((item.score for item in rescored), default=0.0)
+    if threshold > 0.0 and top_score < threshold:
+        logger.info(
+            "kb_search.below_evidence_threshold",
+            extra={
+                "trace_id": trace_id,
+                "stage": "gated",
+                "collection": service.collection,
+                "query": request.query,
+                "top_score": round(top_score, 4),
+                "threshold": threshold,
+                "reranked_count": len(rescored),
+                "latency_ms": round((time.perf_counter() - started) * 1000, 1),
+            },
+        )
+        return SearchResult(evidence=[], references=[])
+
     source_uris = await _resolve_source_uris(service.registry, [item.doc_id for item in rescored])
     rescored = [replace(item, source_uri=source_uris.get(item.doc_id, "")) for item in rescored]
 
