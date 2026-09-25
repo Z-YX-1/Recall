@@ -401,6 +401,183 @@ def _wait_for_documents(
 
 
 # --------------------------------------------------------------------------------------
+# R-39：工具白名单 / 文档权限 / 网关与审计来源（全部非侵入）
+# --------------------------------------------------------------------------------------
+
+
+def _sse_json(text: str) -> Any:
+    """从 Streamable HTTP 的 SSE 响应里取出第一个 JSON 对象。
+
+    MCP 端点默认回 ``text/event-stream``：正文形如 ``event: message\\ndata: {...}``。
+    若不是 SSE（例如已是纯 JSON）则直接解析。
+    """
+    stripped = text.strip()
+    if stripped.startswith("{"):
+        return _maybe_json(stripped)
+    for line in stripped.splitlines():
+        if line.startswith("data:"):
+            return _maybe_json(line[len("data:") :].strip())
+    return None
+
+
+def mcp_tools(base: str, headers: dict[str, str]) -> tuple[int, list[str]]:
+    """调 MCP 的 ``tools/list``，返回 ``(status, 工具名列表)``。
+
+    无会话模式下每个请求自带一次握手，因此可以直接发 ``tools/list``。
+    """
+    payload = {"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}}
+    accept = {"Accept": "application/json, text/event-stream", **headers}
+    status, body = request("POST", f"{base}/mcp/", headers=accept, payload=payload)
+    if status != 200:
+        return status, []
+    parsed = _sse_json(body) if isinstance(body, str) else body
+    if not isinstance(parsed, dict):
+        return status, []
+    tools = parsed.get("result", {}).get("tools", [])
+    return status, [str(item.get("name", "")) for item in tools if isinstance(item, dict)]
+
+
+def check_tool_policy(report: Report, base: str, settings: Any, api_key: str) -> None:
+    """按身份验证 MCP 工具可见性（roadmap R-39 前置件）。"""
+    step("R-39 一、MCP 工具可见性（RECALL_MCP_TOOL_POLICY）")
+    # 延迟导入：`recall.api` 会连带拉起 FastEmbedding 等重依赖，只在真正需要时付这个代价。
+    from recall.api import MCP_TOOL_NAMES
+
+    if not settings.mcp_tool_policy:
+        report.info("未配置工具白名单 ⇒ 所有身份都能看到全部工具（默认行为，未收窄）")
+    else:
+        for user, allowed in sorted(settings.mcp_tool_policy.items()):
+            report.info(f"策略：{user} ⇒ {sorted(allowed)}")
+
+    keys = list(settings.api_keys.items())
+    # 没配 key 表（S1）时也要验一次：用匿名身份 —— 此时默认身份是 me，未列白名单 ⇒ 应看到全部工具。
+    candidates: list[tuple[str, str]] = keys or [(api_key, "(匿名)")]
+    if not keys and not api_key:
+        report.info("未配置 RECALL_API_KEYS ⇒ 以匿名身份检查（默认身份 me）")
+
+    for token, user in candidates:
+        headers = {"X-API-Key": token} if token else {}
+        status, tools = mcp_tools(base, headers)
+        if status != 200:
+            report.check(
+                f"身份 {user}：tools/list 可调用",
+                False,
+                f"HTTP {status}（若服务是新配的鉴权，注意重启；见上面的运行态一致性检查）",
+            )
+            continue
+        expected = settings.mcp_tool_policy.get(user)
+        if expected is None:
+            report.check(
+                f"身份 {user}：未列白名单 ⇒ 应看到全部工具（{len(tools)} 个）",
+                set(tools) == set(MCP_TOOL_NAMES),
+                f"实得 {sorted(tools)}",
+            )
+        else:
+            report.check(
+                f"身份 {user}：只应看到白名单工具 {sorted(expected)}",
+                set(tools) == set(expected),
+                f"实得 {sorted(tools)}",
+            )
+
+
+def check_document_permissions(report: Report, settings: Any) -> None:
+    """看真实语料的权限分布（只读注册表，不碰 vault）。"""
+    step("R-39 二、文档权限分布（frontmatter → owner/visibility）")
+    import sqlite3
+
+    db = Path(settings.registry_db)
+    if not db.exists():
+        report.check("注册表可读", False, f"未找到 {db}")
+        return
+    try:
+        with sqlite3.connect(f"file:{db}?mode=ro", uri=True) as connection:
+            rows = connection.execute(
+                "SELECT owner, visibility, COUNT(*) FROM documents GROUP BY owner, visibility"
+            ).fetchall()
+    except sqlite3.Error as exc:
+        report.check("注册表可读", False, f"{type(exc).__name__}: {exc}")
+        return
+
+    total = sum(int(row[2]) for row in rows)
+    report.check(f"注册表可读（{total} 篇）", True)
+    for owner, visibility, count in rows:
+        report.info(f"{owner} / {visibility}：{count} 篇")
+    public = sum(int(row[2]) for row in rows if str(row[1]) == "public")
+    if public == 0:
+        report.info(
+            "没有任何 public 文档 ⇒ 外部身份（映射成非 me 的 token）会**检索不到任何东西**。"
+            "若要给外部接入看内容，在笔记 frontmatter 写 visibility: public（见 tech.md §3.4）"
+        )
+    else:
+        report.info(f"有 {public} 篇 public 文档 ⇒ 非 me 身份可见这些")
+
+
+def check_gateway_and_audit_source(report: Report, base: str, settings: Any, api_key: str) -> None:
+    """检查网关鉴权模式与审计来源可追溯（roadmap R-39 待办 B/C）。"""
+    step("R-39 三、网关鉴权模式与审计来源")
+    report.info(f"mcp_auth_mode = {settings.mcp_auth_mode}（app = 本进程校验 key）")
+    report.info(f"trusted_proxies = {list(settings.trusted_proxies)}")
+    if settings.mcp_auth_mode == "gateway":
+        report.info(f"网关身份 = {settings.mcp_gateway_user}")
+        if not settings.mcp_tool_policy.get(settings.mcp_gateway_user):
+            report.check(
+                "网关身份必须配工具白名单（否则拥有全部工具，含写端点）",
+                False,
+                f"RECALL_MCP_TOOL_POLICY 里没有 {settings.mcp_gateway_user} 的规则",
+            )
+        else:
+            report.check("网关身份已配工具白名单", True)
+
+        # 网关模式下 /mcp 不该被本进程要求 key
+        status, body = request(
+            "POST",
+            f"{base}/mcp/",
+            headers={"Accept": "application/json, text/event-stream"},
+            payload={"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}},
+        )
+        report.check(
+            "网关模式下 /mcp 不要求 key（不该是 401）",
+            status != 401,
+            f"HTTP {status}",
+        )
+        del body
+
+    path: Path = settings.audit_log_path
+    if not path.exists():
+        report.skip("审计来源分布", "审计文件还不存在（重启后再看）")
+        return
+    records: list[dict[str, Any]] = []
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines()[-200:]:
+        try:
+            records.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    sources: dict[str, int] = {}
+    for record in records:
+        key = str(record.get("client_source", "(旧记录无此字段)"))
+        sources[key] = sources.get(key, 0) + 1
+    report.info(f"最近 {len(records)} 条审计的 client_source 分布：{sources or '（无记录）'}")
+    direct = {"peer", "(旧记录无此字段)"}
+    forwarded = sum(count for key, count in sources.items() if key not in direct)
+    if forwarded:
+        report.check("审计记录了转发来源（隧道/反代可达时有效）", True)
+        sample = next(
+            (item for item in reversed(records) if item.get("client_source") not in (None, "peer")),
+            None,
+        )
+        if sample:
+            report.info(
+                f"示例：client={sample.get('client')} source={sample.get('client_source')} "
+                f"peer={sample.get('peer')}"
+            )
+    else:
+        report.info(
+            "全部为 peer ⇒ 目前都是直连；走隧道/反代后这里应出现 "
+            "cf-connecting-ip 或 x-forwarded-for"
+        )
+
+
+# --------------------------------------------------------------------------------------
 
 
 def main() -> int:
@@ -421,7 +598,7 @@ def main() -> int:
 
     print()
     print("=" * 60)
-    print(" Phase 6 验收入口（R-40 权限 / R-42 门槛 / R-38 watchdog）")
+    print(" Phase 6 验收入口（R-40 权限 / R-42 门槛 / R-38 watchdog / R-39 接入前置）")
     print(f" 目标服务：{base}")
     print("=" * 60)
 
@@ -437,6 +614,9 @@ def main() -> int:
     headers = check_auth(report, base, args.api_key, settings)
     check_audit(report, settings, args.api_key)
     check_gate(report, base, headers, settings)
+    check_tool_policy(report, base, settings, args.api_key)
+    check_document_permissions(report, settings)
+    check_gateway_and_audit_source(report, base, settings, args.api_key)
     check_watchdog_state(report, settings)
     if args.probe_vault:
         probe_vault(report, base, headers, settings)
