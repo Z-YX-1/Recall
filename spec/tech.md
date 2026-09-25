@@ -103,6 +103,32 @@ created: 2026-09-04
 
 Qdrant payload index **现在就建**：`doc_id`(keyword)、`owner`(keyword)、`visibility`(keyword)、`groups`(keyword)、`updated_at_ts`(**integer**，存 Unix 秒——keyword 索引不支持 range，ISO 字符串不能建 range 索引)。
 
+### 3.4 文档权限来自 frontmatter（roadmap R-39 待办 A，2026-09-25）
+
+§3.3 那三个权限字段**不再是硬编码**，而是从笔记 frontmatter 读（键名与 payload 字段同名）：
+
+```yaml
+---
+owner: me              # 缺省 me
+visibility: public     # 只认 public 为公开；缺省 private
+groups: [team-a]       # 数组或逗号分隔字符串；缺省 []
+---
+```
+
+三条硬约束：
+
+1. **fail-closed**：字段缺失、类型不对、或 `visibility` 是未知值（含拼写错误如 `publci`）
+   一律按**最私有**处理**并记 WARNING** —— 权限写错只会更私有，**绝不意外公开**；
+2. **改权限会触发重索引**：⚠️ `content_hash` 只对**正文**取哈希（`RawDoc.text` **不含**
+   frontmatter），所以"只改 `visibility`、正文一字不动"时**哈希完全不变**。为此在哈希之外
+   **额外比对权限三元组**（用注册表里存的原始 frontmatter 走同一个解析器做对称比较，
+   无需加数据库列）——否则权限改动会被账本快路径吞掉、**永远不生效**；
+3. **归属**：解析结果同时写入 Qdrant payload（供 `build_scope_filter` 过滤）与注册表账本（供对账）。
+
+> 动机：R-40 的权限过滤按这几个字段判定可见范围，而此前 ingest 把它们写死成
+> `me`/`private`/`[]` ⇒ 任何"给外部接入（如 Coze）单独发一把 token"的做法都会
+> **检索不到任何东西**，权限模型停在"全有或全无"。详见 `docs/R-39-public-access.md` §0。
+
 ## 4. 检索链路（kb_search 内部）
 
 ```
@@ -148,7 +174,7 @@ JSON 模式与状态码都不变。
 
 | 机制 | 作用 | 触发 |
 |---|---|---|
-| 文档级 hash 跳过 | 未改文档整篇跳过 | 重跑时 `content_hash` 未变 |
+| 文档级 hash 跳过 | 未改文档整篇跳过 | 重跑时 `content_hash` 未变 **且权限三元组未变**（`content_hash` 只覆盖正文，权限改动靠额外比对才不会被跳过，见 §3.4） |
 | chunk id 内容寻址 | 已改文档重灌时未变块 id 不变 → upsert 原地覆盖 | 块文本未变（标题切分让编辑局部化） |
 | 孤儿清理 | 删除 doc 名下不在新 id 集合的旧块 | 重灌完成后按 doc_id 扫 |
 

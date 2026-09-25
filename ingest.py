@@ -30,10 +30,13 @@ import asyncio
 import logging
 import sys
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
+from recall.auth import PUBLIC_VISIBILITY
 from recall.chunker import CHUNKER_NAME, MAX_CHUNK_TOKENS, chunk_markdown
 from recall.config import Settings
 from recall.config import configure_logging as configure_recall_logging
@@ -58,6 +61,100 @@ from recall.registry import Registry
 from recall.store import ChunkPoint, QdrantStore, collection_name
 
 logger = logging.getLogger("recall.ingest")
+
+DEFAULT_OWNER = "me"
+"""文档所有者默认值（frontmatter 未写 ``owner`` 时）。"""
+
+DEFAULT_VISIBILITY = "private"
+"""可见性默认值（frontmatter 未写 ``visibility`` 时）。"""
+
+
+def _frontmatter_str(frontmatter: Mapping[str, Any], key: str, *, doc_id: str, default: str) -> str:
+    """从 frontmatter 取一个非空字符串字段，缺失或类型不对时回落到 ``default``。
+
+    ⚠️ **fail-closed**：权限字段写错只会"更私有"，绝不会意外公开；同时告警以便抓拼写错误。
+    """
+    raw = frontmatter.get(key)
+    if isinstance(raw, str) and raw.strip():
+        return raw.strip()
+    if raw is not None:  # 有值但不可用（数字/空串/None 之外的类型）
+        logger.warning(
+            "ingest.bad_permission_field 权限字段应为非空字符串，已按默认值处理",
+            extra={"doc_id": doc_id, "field": key, "value": repr(raw)[:80], "default": default},
+        )
+    return default
+
+
+def _frontmatter_groups(frontmatter: Mapping[str, Any], *, doc_id: str) -> list[str]:
+    """从 frontmatter 取 ``groups``：接受数组或逗号分隔字符串。"""
+    raw = frontmatter.get("groups")
+    if raw is None:
+        return []
+    if isinstance(raw, str):
+        return [part.strip() for part in raw.split(",") if part.strip()]
+    if isinstance(raw, (list, tuple)):
+        return [str(item).strip() for item in raw if str(item).strip()]
+    logger.warning(
+        "ingest.bad_permission_field 权限字段 groups 应为数组或逗号分隔字符串，已忽略",
+        extra={"doc_id": doc_id, "field": "groups", "value": repr(raw)[:80]},
+    )
+    return []
+
+
+def _permissions_from(
+    frontmatter: Mapping[str, Any], *, doc_id: str
+) -> tuple[str, str, list[str]]:
+    """解析文档的权限三元组 ``(owner, visibility, groups)``。
+
+    键名与 Qdrant payload 字段同名（``owner`` / ``visibility`` / ``groups``，tech.md §3.3），
+    因此**同一份 frontmatter 说法**既决定 payload、也决定注册表账本。
+
+    ``visibility`` 只认 :data:`~recall.auth.PUBLIC_VISIBILITY`（``public``）为公开，
+    **其余任何值（含拼写错误）一律按私有处理并告警** —— 权限必须 fail-closed：
+    写错了只会更私有，不会意外公开。
+
+    Args:
+        frontmatter: 文档 frontmatter（Connector 从笔记解析）。
+        doc_id: 文档 id（仅用于日志）。
+
+    Returns:
+        ``(owner, visibility, groups)``。
+    """
+    owner = _frontmatter_str(frontmatter, "owner", doc_id=doc_id, default=DEFAULT_OWNER)
+    visibility = _frontmatter_str(
+        frontmatter, "visibility", doc_id=doc_id, default=DEFAULT_VISIBILITY
+    )
+    if visibility not in {DEFAULT_VISIBILITY, PUBLIC_VISIBILITY}:
+        logger.warning(
+            "ingest.unknown_visibility 未知的 visibility 值，已按 private 处理（fail-closed）",
+            extra={
+                "doc_id": doc_id,
+                "visibility": visibility,
+                "known": [DEFAULT_VISIBILITY, PUBLIC_VISIBILITY],
+            },
+        )
+        visibility = DEFAULT_VISIBILITY
+    return owner, visibility, _frontmatter_groups(frontmatter, doc_id=doc_id)
+
+
+def _permissions_match(existing: DocRecord | None, incoming: tuple[str, str, list[str]]) -> bool:
+    """注册表账本里的权限是否与本次读到的**完全一致**。
+
+    为什么要单独比：``content_hash`` 只对**正文**取哈希（``RawDoc.text`` 不含 frontmatter），
+    所以"只改 ``visibility`` 不改正文"时哈希不变 —— 少了这一步，**权限改动永远不会生效**。
+    账本里存着原始 frontmatter，用它走同一个解析器做对称比较即可（无需加数据库列）。
+
+    Args:
+        existing: 注册表里已有的记录；``None`` 表示账本里没有该文档。
+        incoming: 本次解析出的权限三元组。
+
+    Returns:
+        完全一致为 ``True``；``existing`` 为 ``None`` 时为 ``False``。
+    """
+    if existing is None:
+        return False
+    stored = _permissions_from(existing.frontmatter, doc_id=existing.doc_id)
+    return stored == incoming
 
 
 @dataclass(frozen=True, slots=True)
@@ -274,14 +371,17 @@ async def _ingest_one(
     - ``--force``：无条件重灌（重新嵌入 + 原地覆盖）。
     """
     try:
+        owner, visibility, groups = _permissions_from(doc.frontmatter, doc_id=doc.doc_id)
         content_hash = connector.hash_of(doc)
         existing = await registry.get(doc.doc_id)
+        permissions_unchanged = _permissions_match(existing, (owner, visibility, groups))
         if (
             not rebuild
             and not force
             and existing is not None
             and existing.error is None
             and existing.content_hash == content_hash
+            and permissions_unchanged
         ):
             report.skipped += 1
             return
@@ -290,6 +390,7 @@ async def _ingest_one(
         if (
             rebuild
             and not force
+            and permissions_unchanged
             and await _target_already_matches(store, collection, doc.doc_id, chunks)
         ):
             report.skipped += 1
@@ -299,12 +400,12 @@ async def _ingest_one(
                 doc=doc,
                 content_hash=content_hash,
                 chunk_count=len(chunks),
+                permissions=(owner, visibility, groups),
             )
             return
 
         embeddings = await embedder.encode([chunk.text for chunk in chunks])
         updated_at_ts = _to_unix_seconds(doc.updated_at)
-        groups: list[str] = []
 
         points: list[ChunkPoint] = []
         for index, (chunk, embedding) in enumerate(zip(chunks, embeddings, strict=True)):
@@ -317,8 +418,8 @@ async def _ingest_one(
                 token_count=chunk.token_count,
                 embedding_model=embedder.embedding_model,
                 embedding_version=embedder.embedding_version,
-                owner="me",
-                visibility="private",
+                owner=owner,
+                visibility=visibility,
                 groups=groups,
                 updated_at_ts=updated_at_ts,
             )
@@ -340,6 +441,7 @@ async def _ingest_one(
             doc=doc,
             content_hash=content_hash,
             chunk_count=len(points),
+            permissions=(owner, visibility, groups),
         )
         report.indexed_docs += 1
         report.indexed_chunks += len(points)
@@ -383,8 +485,10 @@ async def _record_doc(
     doc: RawDoc,
     content_hash: str,
     chunk_count: int,
+    permissions: tuple[str, str, list[str]],
 ) -> None:
     """写 registry 账本（摄取成功的统一落账点）。"""
+    owner, visibility, _groups = permissions
     await registry.upsert(
         DocRecord(
             doc_id=doc.doc_id,
@@ -395,8 +499,8 @@ async def _record_doc(
             content_hash=content_hash,
             updated_at=doc.updated_at,
             indexed_at=_now_iso(),
-            owner="me",
-            visibility="private",
+            owner=owner,
+            visibility=visibility,
             chunk_count=chunk_count,
             error=None,
         )

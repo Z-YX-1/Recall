@@ -425,6 +425,21 @@ created: 2026-09-04
     ② **所有文档都是 `owner=me, visibility=private`**（`ingest.py:320-321` 硬编码、不读 frontmatter）
     ⇒ 给 Coze 的 token **必须映射到 `me`**，否则权限过滤会把结果全挡掉（实测 `evidence: []`）。
     🧭 项目工程师指示：**待你定路线**（A. Cloudflare Tunnel（推荐）/ B1. 云服务器反代 / B2. 整体上 GPU 云）。
+    ✅ **待办 A 已实现（2026-09-25）：ingest 支持从 frontmatter 读 `owner` / `visibility` / `groups`**
+    —— 这是"让 Coze 只看到公开笔记"的前提（没有它权限就是全有或全无）：
+    - `ingest.py` 新增 `_permissions_from()`（键名与 payload 字段同名；**fail-closed**：缺失/类型错/
+      未知 `visibility`（含拼写错误）一律按最私有处理并记 WARNING）；解析结果同时写入
+      **Qdrant payload**（供权限过滤）与**注册表账本**；
+    - ⚠️ **顺带堵掉一个会让该功能完全失效的陷阱**：`content_hash` 只对**正文**取哈希
+      （`RawDoc.text` 不含 frontmatter）⇒ "只改 `visibility` 不改正文"时哈希不变，
+      若跳过判定只看哈希，**权限改动永远不生效**。现改为在哈希之外**额外比对权限三元组**
+      （用注册表存的原始 frontmatter 走同一解析器做对称比较，**无需加数据库列**）；
+      该比对同时用于 `--update` 与 `--rebuild` 两条跳过路径；
+    - 测试 `tests/test_permissions.py` **12 项**：解析与 fail-closed 边界 / payload 与账本落盘 /
+      **只改权限必须重索引（`indexed_docs == 1`）** / 权限未变仍然跳过（幂等不被破坏）/
+      **公开笔记对另一个身份可见、私有笔记不可见**（R-39 要的效果，两侧都断言）；
+    - gates：`ruff` 全绿、`mypy` strict **51 文件**零错误、`pytest` **268 passed**。
+    📌 待办 B（审计网关头）与待办 C（`/mcp` 网关鉴权）仍未做，等你决定是否立项。
     📌 手册另列出**三项未实现的待办**（供立项）：A. ingest 支持从 frontmatter 读 owner/visibility
     （否则权限停在"全有或全无"）；B. 审计记录网关头（如 `CF-Connecting-IP`，否则公网审计分不清来源）；
     C. `/mcp` 鉴权可交给网关（若 Coze 侧只能填"凭证"而放不下自定义 header）。
@@ -691,10 +706,10 @@ created: 2026-09-04
     - ~~R-44：MCP 默认无会话~~ → **已认可（2026-09-24）** ⇒ 定为最终默认值，`RECALL_MCP_STATELESS=0` 可回退；
     - ~~R-19b 是否属契约变更~~ → **已确认（2026-09-23）**（已回写 tech.md §4 与 §17）；
     - ~~R-32d 检索阈值~~ → **已定案（2026-09-24）走回答模板路线**，胖端点侧候选转入 R-42。
-- **最近一次测试结果**（2026-09-25）：`pytest` **256 passed**；`ruff` 零告警；`mypy` strict **50 文件**零错误；R-45 验收脚本 **15/15 全绿**（鉴权关闭态）
+- **最近一次测试结果**（2026-09-25）：`pytest` **268 passed**；`ruff` 零告警；`mypy` strict **51 文件**零错误；R-45 验收脚本 **15/15 全绿**（鉴权关闭态）
 - **验收实测**（2026-09-24，项目工程师执行）：摄取 65 篇 0 失败；`/health` ok（972 点 / 65 篇）；检索 **Recall@1=0.767 / @3=0.933 / @5=0.933 / @10=1.000 / MRR=0.860**（与基线逐位一致）；Ragas **引用一致性 1.000 / faithfulness 0.858 / answer_relevancy 0.758**；DSH 问答带 `[n]` 引用通过
 - **验收实测**（2026-09-25，项目工程师执行）：**R-45 15/15 全绿**（`python tools\verify_r45.py`）
-- **本文件版本**：v0.20.0（2026-09-25 **R-39 接入手册 + 按身份的 MCP 工具白名单**（前置件）+ 验收自动化。**当前待项目工程师：跑验收脚本 + R-42 是否开启门槛 + R-39 路线 + R-41 平台 + 实现细节背书**）
+- **本文件版本**：v0.21.0（2026-09-25 **R-39 待办 A：文档权限来自 frontmatter**（+ 堵掉"改权限不生效"的哈希陷阱）。**当前待项目工程师：跑验收脚本 + R-42 是否开启门槛 + R-39 路线/待办 BC + R-41 平台 + 实现细节背书**）
 
 ---
 
@@ -815,4 +830,5 @@ created: 2026-09-04
 | 2026-09-25 | **R-46** | **缺陷修复：系统代理致 500 而非 503** | ① `config.py` 新增 `_ensure_localhost_bypasses_proxy()`，`Settings.from_env()` 把回环并入 `NO_PROXY`（保留既有条目、幂等、`*` 绝不出现）；② `store.py` 新增 `_is_unavailable_response()`，502/503/504 归入"Qdrant 不可达" ⇒ 仍给语义化 503；③ 新增 `tests/test_proxy_resilience.py` 5 项；④ `tech.md` 新增 **§12.1** | 选"NO_PROXY 合并"而不是"给 QdrantStore 传 `trust_env=False`"：**一处生效、覆盖所有本机 HTTP 客户端**，且不依赖 qdrant-client 的透传参数。**真实环境实测**：修复后死端口 → `ConnectError`（修复前 502），真实 Qdrant 可达。未改任何契约 |
 | 2026-09-25 | R-40,R-38,R-42 | **验收自动化** | 新增 `tools/verify_phase6.py`：一个入口跑完三个待验收项的机械部分 —— 服务可达 / `/health` 免鉴权 / `/kb/stats` 无 key 401 与有 key 200 / **配置与运行态一致性检查**（防"改了配置没重启"的假绿：配置说鉴权开着而服务放行、或审计文件不存在，都会直指陈旧进程）/ 审计留痕且**不含密钥** / 证据门槛当前取值与实际行为 / watcher 日志新鲜度 / `--probe-vault` 做 R-38 端到端（写探针 → 等触发 → 幂等 → 删探针 → 复原，`finally` 保证清理）。默认**不碰 vault**，写文件要显式开关 | 本机实测：非侵入模式正确报出 2 个**真实环境事实**（服务进程是 R-40 之前启动的 ⇒ 无审计文件；watcher 未运行）；`--probe-vault` 模式在真 watcher 下全绿（65 → 66 → 幂等 → 65，无残留）。把三项的闭环成本从"手动改配置 + 重开 DSH"降为"跑一条命令 + 问一句话" |
 | 2026-09-25 | R-39 | **前置件：按身份的 MCP 工具白名单** | 新增 `recall/mcp_policy.py`（`ToolPolicy` + `ToolPolicyMiddleware`）：`RECALL_MCP_TOOL_POLICY="用户:工具1\|工具2"`，**空 = 不启用**（未列出的用户不受限）；`tools/list` 按身份**过滤可见性**、`tools/call` **拒绝越权**（**可见性 ≠ 权限**，两道闸都要）。测试 `tests/test_mcp_policy.py` 8 项 + `test_config.py` 5 项，并在 `test_mcp.py` 加"工具名常量与实际注册集一致"的同步断言 | 动机（写 R-39 手册时查实）：扣子官方文档指出 MCP 工具名/说明/参数**占 Agent 上下文**；而**本机只有一份模型（≈4.5GB 显存）**⇒ 不能用"另起实例 + 服务级白名单"给公网与本机分权，**只能按身份**。另：本项目对外暴露含**写端点** `kb_ingest`，不该摆在公网来访者眼前 |
-| 2026-09-25 | R-39 | **接入手册 + 两条硬约束** | 新增 `docs/R-39-public-access.md`（路线对比 / 安全前置清单 / Coze 侧两条接法 / 验收判据 / 回滚 / 已知限制 / 三项未实现待办）。写手册时查出两条此前未识别的约束：① 单份模型 ⇒ 不可多实例分权；② **所有文档都是 `owner=me, visibility=private`**（`ingest.py:320-321` 硬编码、不读 frontmatter）⇒ 给 Coze 的 token **必须映射到 `me`**，否则检索恒为空（实测 `evidence: []`，写测试时踩到） | ②是**跨特性的隐藏耦合**（R-40 的权限过滤 × R-39 的多身份接入），不写下来必然在部署时才炸。`tech.md` §11 目录结构补 `docs/`，§7.1 补工具可见性行；v0.19.0 → **v0.20.0** |
+| 2026-09-25 | R-39 | **接入手册 + 两条硬约束** | 新增 `docs/R-39-public-access.md`（路线对比 / 安全前置清单 / Coze 侧两条接法 / 验收判据 / 回滚 / 已知限制 / 三项未实现待办）。写手册时查出两条此前未识别的约束：① 单份模型 ⇒ 不可多实例分权；② **所有文档都是 `owner=me, visibility=private`**（`ingest.py` 硬编码、不读 frontmatter）⇒ 给 Coze 的 token **必须映射到 `me`**，否则检索恒为空（实测 `evidence: []`，写测试时踩到） | ②是**跨特性的隐藏耦合**（R-40 的权限过滤 × R-39 的多身份接入），不写下来必然在部署时才炸。`tech.md` §11 目录结构补 `docs/`，§7.1 补工具可见性行 |
+| 2026-09-25 | R-39 | **待办 A：文档权限来自 frontmatter** | `ingest.py` 新增 `_permissions_from()`：从 frontmatter 读 `owner`/`visibility`/`groups`（键名与 payload 字段同名），**fail-closed**（缺失/类型错/未知 visibility 一律按最私有处理并告警）；结果同时写入 Qdrant payload 与注册表账本。⚠️ 同时堵掉一个致命陷阱：`content_hash` 只覆盖**正文**（`RawDoc.text` 不含 frontmatter）⇒ 只改 `visibility` 时哈希不变、权限改动会被账本快路径吞掉 ⇒ 现额外**比对权限三元组**（用账本存的原始 frontmatter 走同一解析器，无需加数据库列），`--update` 与 `--rebuild` 两条跳过路径都覆盖 | 这是"让 Coze 只看公开笔记"的前提。测试 `tests/test_permissions.py` **12 项**，含**只改权限必须重索引**（`indexed_docs == 1`）与**公开/私有对他人可见性两侧断言**。`tech.md` 新增 **§3.4**、§5 幂等表补权限触发条件；v0.20.0 → **v0.21.0** |
