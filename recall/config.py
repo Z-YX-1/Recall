@@ -286,6 +286,69 @@ def _read_tool_policy(name: str, default: str) -> dict[str, frozenset[str]]:
     return rules
 
 
+DEFAULT_TRUSTED_PROXIES = "127.0.0.1,::1"
+"""可信代理地址（``RECALL_TRUSTED_PROXIES``，逗号分隔 IP 或网段）。
+
+只有**直连对端**落在这个范围内时，才采信 ``CF-Connecting-IP`` / ``X-Forwarded-For``
+来判定"有效客户端"。默认包含回环 —— 推荐的公网架构（Cloudflare Tunnel / 本机反代）
+里，代理就在本机，直连对端正是 ``127.0.0.1``。
+
+⚠️ 这些转发头是**请求方可以随便写**的普通头：无条件采信等于让任何人**伪造成任意 IP**
+写进审计（比不记还糟）。所以"可信"必须显式声明，且**只管通信链路**、不代表业务信任。
+"""
+
+DEFAULT_MCP_AUTH_MODE = "app"
+"""``/mcp`` 的鉴权位置（``RECALL_MCP_AUTH_MODE``）：``app``（默认）或 ``gateway``。
+
+- ``app``：由本进程的 ASGI 中间件校验 ``X-API-Key``（默认，最稳）；
+- ``gateway``：``/mcp`` **不要求** key，改由上游网关（如 Cloudflare Access）鉴权 ——
+  用于"Coze 侧只能填『凭证』、放不下自定义 header"的情形（见 docs/R-39-public-access.md §4.1b）。
+
+⚠️ 选 ``gateway`` 有两个**必须同时满足**的前提，否则就是把 MCP 工具（含写端点）
+直接敞开：① 公网入口只有网关能到达；② 网关侧确实配了鉴权。
+且此时身份由 :data:`DEFAULT_MCP_GATEWAY_USER` 静态指定，**必须**配合
+``RECALL_MCP_TOOL_POLICY`` 限制可用工具。
+"""
+
+DEFAULT_MCP_GATEWAY_USER = "me"
+"""网关鉴权模式下，``/mcp`` 请求被赋予的身份（``RECALL_MCP_GATEWAY_USER``）。
+
+我们自己没法从网关的凭证反推用户，所以必须**显式声明**它代表谁。
+默认 ``me``（= 全量可见）只适合"网关后就是你本人"的场景；
+**对外接入务必改成专用身份并配工具白名单**（否则等于把整个知识库交出去）。
+"""
+
+
+def _read_list(name: str, default: str) -> tuple[str, ...]:
+    """读逗号分隔列表配置。
+
+    ⚠️ **区分"未设置"与"显式置空"**：未设置 ⇒ 用 ``default``；显式设成空串 ⇒ **空列表**。
+    对 ``RECALL_TRUSTED_PROXIES`` 这一点是安全相关的 —— 若用 ``os.getenv(name) or default``，
+    用户写 ``RECALL_TRUSTED_PROXIES=``（意图"谁都不信"）反而会**回落成信任回环**，
+    与意图正好相反。
+
+    Args:
+        name: 环境变量名。
+        default: 变量**未设置**时的取值。
+
+    Returns:
+        去空白后的条目元组。
+    """
+    raw = os.getenv(name)
+    text = (default if raw is None else raw).strip()
+    if not text:
+        return ()
+    return tuple(part.strip() for part in text.split(",") if part.strip())
+
+
+def _read_choice(name: str, default: str, allowed: set[str]) -> str:
+    """读枚举配置（值不在允许集合内则启动即抛）。"""
+    raw = (os.getenv(name) or default).strip().lower()
+    if raw not in allowed:
+        raise ValueError(f"{name} 只能是 {'/'.join(sorted(allowed))} 之一，实得 {raw!r}")
+    return raw
+
+
 def _sync_hf_offline(offline: bool) -> None:
     """把离线开关同步给**已导入**的 ``huggingface_hub``（兜底，见模块 docstring）。
 
@@ -345,6 +408,13 @@ class Settings:
         mcp_tool_policy: MCP 工具白名单 ``{user: {tool}}``（``RECALL_MCP_TOOL_POLICY``）；
             **空表示不启用**（所有身份都能用全部工具），见 :data:`DEFAULT_MCP_TOOL_POLICY`。
             未列出的用户不受限。
+        trusted_proxies: 可信代理地址/网段（``RECALL_TRUSTED_PROXIES``）——
+            只有直连对端在其中时才采信转发头判定有效客户端，
+            见 :data:`DEFAULT_TRUSTED_PROXIES` 与 :func:`~recall.audit.resolve_client`。
+        mcp_auth_mode: ``/mcp`` 的鉴权位置（``RECALL_MCP_AUTH_MODE``）：
+            ``app``（默认）或 ``gateway``，见 :data:`DEFAULT_MCP_AUTH_MODE`。
+        mcp_gateway_user: 网关鉴权模式下 ``/mcp`` 请求的身份
+            （``RECALL_MCP_GATEWAY_USER``），见 :data:`DEFAULT_MCP_GATEWAY_USER`。
         deepseek_api_key: DeepSeek API key（仅胖端点使用；绝不入日志/库/payload）。
         deepseek_base_url: DeepSeek OpenAI 兼容接口地址。
         deepseek_model: 生成用模型名。
@@ -369,6 +439,9 @@ class Settings:
     ingest_rate_limit: int
     ingest_rate_window_s: float
     mcp_tool_policy: dict[str, frozenset[str]]
+    trusted_proxies: tuple[str, ...]
+    mcp_auth_mode: str
+    mcp_gateway_user: str
     deepseek_api_key: str | None
     deepseek_base_url: str
     deepseek_model: str
@@ -424,6 +497,13 @@ class Settings:
             mcp_tool_policy=_read_tool_policy(
                 "RECALL_MCP_TOOL_POLICY", DEFAULT_MCP_TOOL_POLICY
             ),
+            trusted_proxies=_read_list("RECALL_TRUSTED_PROXIES", DEFAULT_TRUSTED_PROXIES),
+            mcp_auth_mode=_read_choice(
+                "RECALL_MCP_AUTH_MODE", DEFAULT_MCP_AUTH_MODE, {"app", "gateway"}
+            ),
+            mcp_gateway_user=(
+                os.getenv("RECALL_MCP_GATEWAY_USER") or DEFAULT_MCP_GATEWAY_USER
+            ).strip(),
             deepseek_api_key=os.getenv("DEEPSEEK_API_KEY") or None,
             deepseek_base_url=os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com").strip(),
             deepseek_model=os.getenv("DEEPSEEK_MODEL", "deepseek-chat").strip(),

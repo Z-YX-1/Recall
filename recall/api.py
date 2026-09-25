@@ -37,6 +37,8 @@ from recall.audit import (
     OUTCOME_UNAUTHORIZED,
     AuditLog,
     AuditRecord,
+    TrustedProxies,
+    resolve_client,
     utc_now_iso,
 )
 from recall.auth import (
@@ -93,6 +95,15 @@ PUBLIC_PATHS = frozenset({"/health"})
 LOCAL_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
 """回环监听地址；不在其中即视为"对外暴露"。"""
 
+MCP_MOUNT_PATH = "/mcp"
+"""MCP 挂载点前缀（tech.md §8）。"""
+
+GATEWAY_AUTH_MODE = "gateway"
+"""``RECALL_MCP_AUTH_MODE=gateway``：``/mcp`` 的鉴权交给上游网关。
+
+效果见 :class:`IdentityMiddleware` 与 `docs/R-39-public-access.md` §4.1b。
+"""
+
 
 def _warn_if_exposed_without_keys(settings: Settings) -> None:
     """监听非回环地址却**没有** key 表时大声告警。
@@ -111,6 +122,15 @@ def _warn_if_exposed_without_keys(settings: Settings) -> None:
             "所有端点（含写端点 /kb/ingest）当前无需凭据即可访问。",
             settings.host,
             extra={"host": settings.host},
+        )
+    if settings.mcp_auth_mode == GATEWAY_AUTH_MODE:
+        logger.warning(
+            "api.mcp_auth_delegated_to_gateway `/mcp` 不要求 API key（鉴权交给上游网关）。"
+            "请确认：① 公网入口只有网关能到达；② 网关侧确实配了鉴权；"
+            "③ 已用 RECALL_MCP_TOOL_POLICY 限制该身份可用工具。"
+            "当前网关身份 = %s（未配工具白名单时它拥有全部工具，含写端点）。",
+            settings.mcp_gateway_user,
+            extra={"gateway_user": settings.mcp_gateway_user},
         )
 
 
@@ -144,6 +164,8 @@ class Service:
     collection: str
     audit: AuditLog
     """审计写入器（roadmap R-40）；随服务单例重建，测试可拿到干净状态。"""
+    trusted_proxies: TrustedProxies
+    """可信代理集合（roadmap R-39 待办 B）：决定是否采信转发头判定有效客户端。"""
     limiter: SlidingWindowLimiter
     """写端点限流器（code_standards §6.1；roadmap R-40）；同样随服务单例重建。"""
 
@@ -172,6 +194,7 @@ class Service:
             llm=DeepSeekClient.from_settings(settings),
             collection=collection or settings.collection or DEFAULT_COLLECTION,
             audit=AuditLog(settings.audit_log_path if settings.log_to_file else None),
+            trusted_proxies=TrustedProxies.parse(settings.trusted_proxies),
             limiter=SlidingWindowLimiter(
                 settings.ingest_rate_limit, settings.ingest_rate_window_s
             ),
@@ -654,6 +677,12 @@ def _record_audit(
     outcome: str,
 ) -> None:
     """写一行审计（内容与失败处理见 :mod:`recall.audit`）。"""
+    peer = request.client.host if request.client is not None else "-"
+    client, source = resolve_client(
+        {name.lower(): value for name, value in request.headers.items()},
+        peer=peer,
+        trusted=service.trusted_proxies,
+    )
     service.audit.record(
         AuditRecord(
             ts=utc_now_iso(),
@@ -665,7 +694,9 @@ def _record_audit(
             duration_ms=round((time.perf_counter() - started) * 1000, 1),
             outcome=outcome,
             trace_id=uuid.uuid4().hex[:12],
-            client=request.client.host if request.client is not None else "-",
+            client=client,
+            peer=peer,
+            client_source=source,
         )
     )
 
@@ -706,8 +737,15 @@ class IdentityMiddleware:
         service = await get_service()
 
         identity: Identity | None = None
-        if service.settings.auth_enabled and request.url.path not in PUBLIC_PATHS:
-            identity = _resolve_identity(request, service.settings.api_keys)
+        path = request.url.path
+        settings = service.settings
+        # 待办 C：`/mcp` 的鉴权可以交给上游网关（用于 Coze 侧放不下自定义 header 的情形）。
+        # ⚠️ 此时身份必须**静态指定**（`RECALL_MCP_GATEWAY_USER`）—— 我们无法从网关凭证反推用户；
+        # 对外接入务必配 `RECALL_MCP_TOOL_POLICY` 限制工具，否则等于把整个知识库交出去。
+        if settings.mcp_auth_mode == GATEWAY_AUTH_MODE and path.startswith(MCP_MOUNT_PATH):
+            identity = Identity(user=settings.mcp_gateway_user, groups=[])
+        elif settings.auth_enabled and path not in PUBLIC_PATHS:
+            identity = _resolve_identity(request, settings.api_keys)
             if identity is None:
                 _record_audit(service, request, 401, started, None, OUTCOME_UNAUTHORIZED)
                 await _error_response(

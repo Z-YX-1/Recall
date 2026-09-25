@@ -242,7 +242,9 @@ JSON 模式与状态码都不变。
 | 失败响应 | `401` + 统一错误信封 `{"error":{"code":"unauthorized",...}}` |
 | 身份传递 | 校验通过 ⇒ `set_current_identity()` 写入 **contextvar**；REST 经 `get_identity(request)` 读、MCP 工具经 `current_identity()` 读（工具函数拿不到 `Request`） |
 | 比较方式 | `hmac.compare_digest` **逐条常量时间**比较，不用 `dict.get`（避免时间旁路） |
-| 审计 | `data/logs/audit.jsonl`（JSON lines）：`ts/user/groups/method/path/status/duration_ms/outcome/trace_id/client`；**绝不写密钥**；受 `RECALL_LOG_TO_FILE` 控制 |
+| 审计 | `data/logs/audit.jsonl`（JSON lines）：`ts/user/groups/method/path/status/duration_ms/outcome/trace_id/**client**/peer/client_source`；**绝不写密钥**；受 `RECALL_LOG_TO_FILE` 控制 |
+| **审计来源可追溯（R-39 待办 B）** | `client` = **有效客户端**（公网接入时审计里唯一能区分远程调用者的字段）；`peer` = TCP 直连对端；`client_source` = 可信出处（`peer` / `cf-connecting-ip` / `x-forwarded-for`）。⚠️ 转发头是**请求方可随意写**的普通头 ⇒ 只有直连对端落在 `RECALL_TRUSTED_PROXIES`（默认 `127.0.0.1,::1`）内才采信，否则一律用对端地址 —— 否则审计可被**伪造成任意 IP**，比不记还糟 |
+| **`/mcp` 鉴权可交给网关（R-39 待办 C）** | `RECALL_MCP_AUTH_MODE=app`（默认，本进程校验 key）/ `gateway`（`/mcp` 不要求 key，由上游网关鉴权，用于 Coze 侧放不下自定义 header 的情形）。网关模式下身份由 `RECALL_MCP_GATEWAY_USER`（默认 `me`）**静态指定** —— 我们无法从网关凭证反推用户，因此**必须**配合 `RECALL_MCP_TOOL_POLICY` 收窄工具，否则等于把整个知识库交出去（启动时有 WARNING） |
 | **限流** | `RECALL_INGEST_RATE_LIMIT`（默认 `10/60` = 10 次 / 60 秒，`0` 关闭）：**只针对写端点** `POST /kb/ingest`（code_standards §6.1 要求"鉴权 + 限流"）。实现见 `recall/ratelimit.py`（滑动窗口），判定放在 **`kb_ingest_core`** 而不是中间件——`/mcp` 的 `kb_ingest` 工具走同一个 core，放中间件只挡得住 REST 那条路。超限返回 **429 `rate_limited`**（统一错误信封）。⚠️ 状态在**进程内**，多进程各算一份；公网暴露时应在网关层再加一道（R-39） |
 | **MCP 工具可见性** | `RECALL_MCP_TOOL_POLICY="用户:工具1\|工具2"`（逗号分隔多条；**空 = 不启用**，未列出的用户不受限）：`recall/mcp_policy.py` 用 FastMCP 中间件在 `tools/list` **按身份过滤**、在 `tools/call` **拒绝越权**（**可见性 ≠ 权限**，两道闸都要）。动机：扣子官方文档指出 MCP 工具名/说明/参数占 Agent 上下文；而本机只有一份模型（≈4.5GB 显存）⇒ 无法用"另起实例 + 服务级白名单"给公网与本机分权，只能按身份 |
 | 启动保护 | 监听非回环地址且未配 key 表 ⇒ WARNING `api.exposed_without_auth` |
@@ -372,6 +374,22 @@ httpx 默认 `trust_env=True` 会读到它，**连本机服务也会发给代理
 
 实测（修复后、代理开着）：死端口 → `ConnectError`；真实 Qdrant 与其 collection 均可达。
 回归测试见 `tests/test_proxy_resilience.py`。
+
+### 12.2 隧道 / 反代下的客户端来源（roadmap R-39 待办 B）
+
+隧道或反向代理会让 `request.client` 变成**代理的地址**（本机隧道即 `127.0.0.1`），
+于是审计里看不出是谁在调。`CF-Connecting-IP` / `X-Forwarded-For` 能给出真实客户端，
+但它们是**请求方可以随便写**的普通头 —— 无条件采信等于让任何人**伪造成任意 IP** 写进审计。
+
+规则（`recall/audit.py::resolve_client`）：
+
+| 条件 | `client` | `client_source` |
+| :--- | :--- | :--- |
+| 直连对端在 `RECALL_TRUSTED_PROXIES` 内（默认回环） | `CF-Connecting-IP` → 否则 `X-Forwarded-For` 最左项 → 否则对端 | `cf-connecting-ip` / `x-forwarded-for` / `peer` |
+| 直连对端**不在**可信范围 | 一律为**对端地址**（转发头当没看见） | `peer` |
+
+审计行同时记 `peer`，因此"这个 `client` 是不是转发头来的"永远可追溯。
+⚠️ `RECALL_TRUSTED_PROXIES` 表达的是**链路可信**，不是业务信任；显式置空即"谁都不信"。
 
 ## 13. 落地路线与验收
 

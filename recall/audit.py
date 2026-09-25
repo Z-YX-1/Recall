@@ -13,9 +13,11 @@
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import logging
 import threading
+from collections.abc import Iterable, Mapping
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -49,7 +51,12 @@ class AuditRecord:
         duration_ms: 处理耗时（毫秒，保留 1 位小数）。
         outcome: :data:`OUTCOME_OK` / :data:`OUTCOME_UNAUTHORIZED` / :data:`OUTCOME_ERROR`。
         trace_id: 请求级追踪 id（与 core 层写入 ``api.log`` 的 trace_id 相互独立）。
-        client: 客户端主机（回环为 ``127.0.0.1``；用于区分本机与远程调用）。
+        client: **有效**客户端主机 —— 公网接入时是本文件里唯一能区分远程调用者的字段
+            （见 :func:`resolve_client`：只有请求确实来自可信代理才会采信转发头）。
+        peer: TCP 直连对端。隧道/反代场景下它是代理的地址（通常是 ``127.0.0.1``），
+            保留它是为了**可追溯**：能看出 ``client`` 到底是不是转发头来的。
+        client_source: ``client`` 的来源 —— ``"peer"`` / ``"cf-connecting-ip"`` /
+            ``"x-forwarded-for"``。审计要自证出处，不能只给一个光秃秃的 IP。
     """
 
     ts: str
@@ -62,6 +69,101 @@ class AuditRecord:
     outcome: str
     trace_id: str
     client: str
+    peer: str = ""
+    client_source: str = "peer"
+
+
+CLIENT_SOURCE_PEER = "peer"
+"""``client`` 直接取自 TCP 对端（没有可信的转发头）。"""
+
+SOURCE_CF_CONNECTING_IP = "cf-connecting-ip"
+"""Cloudflare 注入的真实客户端 IP 头。"""
+
+SOURCE_X_FORWARDED_FOR = "x-forwarded-for"
+"""通用反代头；取**最左**一项（最初的客户端）。"""
+
+_FORWARDED_HEADERS: tuple[tuple[str, str], ...] = (
+    ("cf-connecting-ip", SOURCE_CF_CONNECTING_IP),
+    ("x-forwarded-for", SOURCE_X_FORWARDED_FOR),
+)
+
+
+@dataclass(frozen=True, slots=True)
+class TrustedProxies:
+    """可信代理地址集合（只有来自这些地址的请求才允许用转发头声明客户端）。
+
+    **为什么必须这样**：``X-Forwarded-For`` / ``CF-Connecting-IP`` 都是**请求方可以随便写**的
+    普通头。若无条件采信，任何人都能在审计里**伪造成任意 IP** —— 那比不记还糟：
+    它会让审计看起来"有来源"，实际是攻击者自己填的。所以只在**直连对端本身可信**时采信。
+    """
+
+    networks: tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...] = ()
+
+    @classmethod
+    def parse(cls, raw: Iterable[str]) -> TrustedProxies:
+        """解析地址/网段列表。
+
+        Args:
+            raw: 形如 ``["127.0.0.1", "10.0.0.0/8"]`` 的条目。
+
+        Returns:
+            解析后的实例。
+
+        Raises:
+            ValueError: 条目不是合法的 IP 或网段。
+        """
+        networks: list[ipaddress.IPv4Network | ipaddress.IPv6Network] = []
+        for entry in raw:
+            text = entry.strip()
+            if not text:
+                continue
+            try:
+                networks.append(ipaddress.ip_network(text, strict=False))
+            except ValueError as exc:
+                raise ValueError(f"可信代理条目不是合法 IP/网段：{text!r}") from exc
+        return cls(tuple(networks))
+
+    @property
+    def enabled(self) -> bool:
+        """是否配置了可信代理。"""
+        return bool(self.networks)
+
+    def contains(self, host: str) -> bool:
+        """``host`` 是否落在可信范围内（无法解析的地址一律视为不可信）。"""
+        if not self.networks or not host:
+            return False
+        try:
+            address = ipaddress.ip_address(host)
+        except ValueError:  # 主机名等：不认，宁可不采信转发头
+            return False
+        return any(address in network for network in self.networks)
+
+
+def resolve_client(
+    headers: Mapping[str, str],
+    *,
+    peer: str,
+    trusted: TrustedProxies,
+) -> tuple[str, str]:
+    """解析"有效客户端"及其来源。
+
+    Args:
+        headers: 请求头（大小写不敏感的小写键）。
+        peer: TCP 直连对端地址。
+        trusted: 可信代理集合。
+
+    Returns:
+        ``(client, source)``。直连对端不可信时**一律返回对端地址**并标明来源为 ``peer``。
+    """
+    if trusted.contains(peer):
+        for header, source in _FORWARDED_HEADERS:
+            raw = headers.get(header, "").strip()
+            if not raw:
+                continue
+            candidate = raw.split(",")[0].strip() if source == SOURCE_X_FORWARDED_FOR else raw
+            if candidate:
+                return candidate, source
+    return peer or "-", CLIENT_SOURCE_PEER
 
 
 def utc_now_iso() -> str:

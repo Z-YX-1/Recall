@@ -340,3 +340,46 @@ def test_mcp_tool_policy_rejects_duplicate_users(monkeypatch: pytest.MonkeyPatch
 
     with pytest.raises(ValueError, match="重复用户"):
         Settings.from_env()
+
+
+# --------------------------------------------------- 可信代理 / 网关鉴权（R-39 待办 B/C）
+
+
+def test_trusted_proxies_default_to_loopback(monkeypatch: pytest.MonkeyPatch) -> None:
+    """默认只信回环 —— 推荐的公网架构里代理就在本机（Tunnel / 本机反代）。"""
+    monkeypatch.delenv("RECALL_TRUSTED_PROXIES", raising=False)
+
+    assert Settings.from_env().trusted_proxies == ("127.0.0.1", "::1")
+
+
+def test_trusted_proxies_are_parsed_and_can_be_empty(monkeypatch: pytest.MonkeyPatch) -> None:
+    """支持多条目；显式置空 ⇒ 谁都不信（只记 TCP 对端）。"""
+    monkeypatch.setenv("RECALL_TRUSTED_PROXIES", "10.0.0.0/8, 192.168.1.5")
+    assert Settings.from_env().trusted_proxies == ("10.0.0.0/8", "192.168.1.5")
+
+    monkeypatch.setenv("RECALL_TRUSTED_PROXIES", "")
+    assert Settings.from_env().trusted_proxies == ()
+
+
+def test_mcp_auth_defaults_to_the_app(monkeypatch: pytest.MonkeyPatch) -> None:
+    """默认由本进程鉴权（最稳）；网关模式必须显式打开。"""
+    monkeypatch.delenv("RECALL_MCP_AUTH_MODE", raising=False)
+    monkeypatch.delenv("RECALL_MCP_GATEWAY_USER", raising=False)
+
+    settings = Settings.from_env()
+
+    assert settings.mcp_auth_mode == "app"
+    assert settings.mcp_gateway_user == "me"
+
+
+def test_mcp_auth_mode_accepts_gateway_and_case_insensitively(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """允许的大小写差异要认；网关身份可自定义（对外接入务必改成专用身份）。"""
+    monkeypatch.setenv("RECALL_MCP_AUTH_MODE", "Gateway")
+    monkeypatch.setenv("RECALL_MCP_GATEWAY_USER", "coze")
+
+    settings = Settings.from_env()
+
+    assert settings.mcp_auth_mode == "gateway"
+    assert settings.mcp_gateway_user == "coze"
