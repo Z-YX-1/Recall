@@ -321,6 +321,26 @@ $env:HF_ENDPOINT = "https://hf-mirror.com"                    # 国内下载镜�
 进程4: python -m recall.watchdog（常驻增量同步，R-38；它只 POST /kb/ingest 给进程2）
 ```
 
+### 12.1 系统代理必须绕过回环（roadmap R-46，2026-09-25）
+
+本机装了代理工具（`karingService`，写进 **Windows 系统代理** @127.0.0.1:3067）。
+httpx 默认 `trust_env=True` 会读到它，**连本机服务也会发给代理**；而代理对不可达端口
+返回 **HTTP 502 空体**（实测连保留地址 `192.0.2.1` 也一样），把"连接被拒"变成"网关错误"。
+
+后果：qdrant-client 抛 `UnexpectedResponse` 而非连接错误 ⇒ 只认 httpx 连接异常的
+`with_retry` 认不出"Qdrant 没起来" ⇒ `/kb/search` 退化成 **500**，而不是
+503「请启动 qdrant.exe」（R-27i 的设计被绕过）。
+
+**两条防线**：
+
+1. `Settings.from_env()` 把 `127.0.0.1` / `localhost` / `::1` 并入 `NO_PROXY`
+   （保留用户已有条目、幂等）。⚠️ **只加回环，绝不设 `*`** —— 出网请求（DeepSeek）
+   可能正需要这个代理，全局禁用会把它一起打断。
+2. `recall/store.py` 把 **502 / 503 / 504** 也归入"Qdrant 不可达" ⇒ 仍然给出语义化 503。
+
+实测（修复后、代理开着）：死端口 → `ConnectError`；真实 Qdrant 与其 collection 均可达。
+回归测试见 `tests/test_proxy_resilience.py`。
+
 ## 13. 落地路线与验收
 
 | 阶段 | 内容 | 验收标准 |

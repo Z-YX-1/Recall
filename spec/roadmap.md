@@ -518,6 +518,21 @@ created: 2026-09-04
     （Qdrant 是本机服务，本就不该走代理，治本）；③ 仅在文档记一条运维提醒（把 127.0.0.1 加入代理绕过列表）。
     倾向 **①+②**：②治本、①兜底（其他不可达形态也能语义化）。
     🧭 项目工程师指示：**待请示**（属新发现的问题，未纳入 R-40 范围）。
+    ✅ **已实施（2026-09-25）** —— 采用**更稳的等价方案**（不碰 qdrant-client 的 httpx 构造参数）：
+    - **根因侧**：`recall/config.py` 新增 `_ensure_localhost_bypasses_proxy()`，`Settings.from_env()`
+      把 `127.0.0.1` / `localhost` / `::1` **并入** `NO_PROXY`（保留用户已有条目、幂等、大小写两版都设）。
+      选它而不是给 `QdrantStore` 传 `trust_env=False` 的理由：**一处生效、覆盖所有本机 HTTP 客户端**，
+      且不依赖 qdrant-client 的透传参数（版本变动风险更小）。
+      ⚠️ **只加回环，绝不设 `*`**：出网（DeepSeek）可能正需要这个代理 —— 实测加回环后
+      localhost 恢复"连接被拒"、而 `https://api.deepseek.com` 仍可达（401 = 通）。
+    - **兜底侧**：`recall/store.py` 新增 `_is_unavailable_response()`，把 **502 / 503 / 504**
+      也归入"Qdrant 不可达" ⇒ 无论 502 来自代理、反代还是别处，都给出语义化 **503**。
+    - 验证：新增 `tests/test_proxy_resilience.py` **5 项**（NO_PROXY 合并 / 保留用户条目 /
+      **绝不出现 `*`** / 幂等 / 502 网关 ⇒ store 抛 `StoreUnavailableError` /
+      **`/kb/search` 映射为 503 `qdrant_unavailable`**）；**真实环境实测**：修复后死端口 →
+      `ConnectError`（修复前是 502）、真实 Qdrant 与目标 collection 均可达。
+    - gates：`ruff` 全绿、`mypy` strict **47 文件**零错误、`pytest` **241 passed**。
+    🧭 项目工程师指示：**已实施**（缺陷修复，未改任何契约；如需回退只需删掉 `_ensure_localhost_bypasses_proxy` 的调用）。
 - [x] **R-43** `HF_HUB_OFFLINE` 升为配置项（**默认离线**）：把"模型加载前不回连 HF Hub"从"评测时的临时建议"变成服务进程的默认行为（tech.md §12 的"先建配置、后加载模型"顺序不变）。
     ⚠️ 现场证据（2026-09-23 真实 DSH 会话）：`kb_search` **每一次**都在 ~42s 后失败——`mcp__recall__kb_stats` 却全程正常（Qdrant 活着），说明故障不在检索库。`data/logs/api.log` 的异常链给出确切位置：`api.kb_search_core` → `embedder._encode_sync` → `model_cache.load_once` → `BGEM3FlagModel.__init__` → `transformers…tokenization_auto.from_pretrained` → **`transformers/utils/hub.py::list_repo_templates`** → `huggingface_hub.hf_api.list_repo_tree` → `httpx.ConnectTimeout`。
     根因：transformers 5.x 装载 tokenizer 时会去 Hub 拉 `chat_template.jinja` 清单，**权重已在本地缓存也照样走一次网络**；本机出网间歇不可达（§七 2026-09-23 R-32 环境记录），该请求挂在 TCP 连接上直到 httpx 超时 ⇒ 整个 `kb_search` 被拖死（实测 6 次调用 23:18:09→23:22:08 全部同一栈）。
@@ -600,7 +615,7 @@ created: 2026-09-04
 | 2026-09-24 | R-44 | R-43 修好后项目工程师**新开会话**依旧全量失败：`Streamable HTTP error … {"code":-32600,"message":"Session not found"}`（HTTP 404）。服务端会话表在进程内存里（空闲 30 分钟回收 + 进程重启即失效），而 MCP 客户端收到 404 **不会重新 initialize**（SDK 只翻成 `Session terminated` 就 return；DSH mcp-client 只在 transport onclose 时重连）⇒ 客户端永远拿着死 id，且 MCP 连接跨对话复用，"新开会话"也无解 | R-44：MCP 默认改为**无会话**（`Settings.mcp_stateless` / `RECALL_MCP_STATELESS`，`http_app(stateless_http=True)`）；新增过期 id 回归测试 | **已认可（2026-09-24）**：项目工程师答复「认可」⇒ 无会话定为最终默认值（tech.md §8 端点契约不变；代价是失去服务端主动推送，本项目未使用；`RECALL_MCP_STATELESS=0` 可回退） | ✅ 已解决 |
 | 2026-09-24 | R-43 | **R-43 的修复实际未生效**：默认离线只在"先设环境变量、后 import HF 栈"的顺序下有效；`recall.api` 是反的（顶部先 import embedder → FlagEmbedding → transformers → huggingface_hub），而 `huggingface_hub.constants.HF_HUB_OFFLINE` 在 import 时冻结 ⇒ 晚设无效，模型装载照样回连 Hub。**这正是项目工程师新会话里 `kb_search` 仍全量失败的真正原因**（R-43 的验证被测试顺序骗过：单跑 `Embedder().encode()` 时 `from_env()` 恰好在前） | R-43b：① `recall/__init__.py` 增加 `_bootstrap_environment()`（包导入即建配置，顺序由导入保证）；② `recall/config.py` 增加 `_sync_hf_offline()`（库已先导入时直接改其常量）；新增 3 项回归测试 | **待复核**（实现层修复，不动契约；项目工程师 2026-09-24 对该批实现细节答复「我再看看」，保持未结） | ✅ 已解决 |
 | 2026-09-24 | R-28 | 项目工程师实测 `GET /kb/stats` 返回 **404**：统计此前只有 MCP 工具、没有 REST 端点（tech.md §8 只列四个端点），人肉排查与 S2 网关按 REST 路径访问即落空 | R-45：抽出 `kb_stats_core()`，新增只读 `GET /kb/stats`（与 MCP 工具共用实现）；tech.md §8 补端点、§17 补决策记录 14；新增「REST 与 MCP 逐字段相等」回归测试 | **已确认（2026-09-24）**：项目工程师答复「加」 | ✅ 已解决 |
-| 2026-09-25 | R-40 | 做 R-40 期间发现：本机系统代理（`karingService` @127.0.0.1:3067）使 httpx 的 `trust_env` 走到代理，**任何不可达目标都返回代理的 HTTP 502**；qdrant-client 因此抛 `UnexpectedResponse` 而非连接错误，**不被 `with_retry` 折算成 `StoreUnavailableError`** ⇒ Qdrant 挂掉时 `/kb/search` 退化成 500，R-27i 的语义化 503 被绕过 | **R-46**（新登记）：建议 ① 502/503/504 折算为 `StoreUnavailableError`；② `QdrantStore` 用 `trust_env=False` 建客户端 | **待请示**（新发现问题，未纳入 R-40 范围） | ⏳ 待处理 |
+| 2026-09-25 | R-40 | 做 R-40 期间发现：本机系统代理（`karingService` @127.0.0.1:3067）使 httpx 的 `trust_env` 走到代理，**任何不可达目标都返回代理的 HTTP 502**；qdrant-client 因此抛 `UnexpectedResponse` 而非连接错误，**不被 `with_retry` 折算成 `StoreUnavailableError`** ⇒ Qdrant 挂掉时 `/kb/search` 退化成 500，R-27i 的语义化 503 被绕过 | **R-46**（新登记）：建议 ① 502/503/504 折算为 `StoreUnavailableError`；② `QdrantStore` 用 `trust_env=False` 建客户端 | **已实施（2026-09-25）**：① 根因侧 `Settings.from_env()` 把回环并入 `NO_PROXY`（**只加回环、不设 `*`**，保住出网代理）；② 兜底侧 502/503/504 归入"不可达"⇒ 503。真实环境实测通过 | ✅ 已解决 |
 
 ---
 
@@ -620,13 +635,17 @@ created: 2026-09-04
     2. **R-38 验收**（实现完成 + 已做真实端到端验证）：起 watcher 后改一篇笔记 ⇒
        `GET /kb/stats` 数字变化 ⇒ **立刻用 DSH 问新内容能命中**；另附 6 项边界判据（见 R-38 条目）。
        常驻方式建议**先手动跑稳再上计划任务**。
-    3. **R-46 处置**（2026-09-25 新发现）：本机系统代理把"Qdrant 不可达"变成 HTTP 502，
-       绕过 R-27i 的语义化 503 ⇒ 建议 ① 502/503/504 折算为 `StoreUnavailableError` +
-       ② `QdrantStore` 用 `trust_env=False`。是否先做掉再继续 **R-42**？
-    4. **Phase 6 后续顺序**：R-40、R-38 已完成 ⇒ 按建议下一步是 **R-42（先做"测量 rerank 分数分布"）**
-       → R-39 → R-41。
-       ⚠️ **硬约束不变**：**R-39 必须晚于 R-40**（现已满足）+ **R-39 前置必须配置 key 表**
-       （`RECALL_API_KEYS` 为空时鉴权整体不启用，公网暴露即等于无鉴权）。
+    3. **R-46 已处置（2026-09-25）**：系统代理致 500 而非 503 —— 已按建议修复
+       （根因侧 `NO_PROXY` 合并 + 兜底侧 502/503/504 归入"不可达"），真实环境实测通过。
+       **无需你决定**；若你的代理配置有特殊要求（例如必须让某些本机域名也走代理），
+       告诉我就行（改 `LOCAL_HOSTS_NO_PROXY` 一处）。
+    4. **Phase 6 后续顺序**：R-40、R-38、R-42 已落地 ⇒ 剩下 **R-39（Coze 公网）** 与
+       **R-41（新 Connector）**，二者都需要你先定方向：
+       - **R-39**：走哪条路（Cloudflare Tunnel / 云服务器）？域名与运营主体谁出？
+         另外**必须配置 `RECALL_API_KEYS`**（鉴权为空 ⇒ 公网即裸奔），限流已在应用层就位；
+       - **R-41**：做哪个平台（飞书 / 语雀 / 网页）？roadmap §二 规定"新增 Connector 平台"
+         属**任务范围变更**，须你批准后才能开工。
+       ⚠️ 硬约束不变：**R-39 必须晚于 R-40**（已满足）。
     5. **R-42 收尾（只剩一个动作）**：证据门槛已实现、已 A/B 验证，**默认关闭**。
        请定：**是否把 `RECALL_EVIDENCE_MIN_SCORE=0.58` 写进 `.env`**（或更保守的 0.45~0.50）。
        效果：笔记外问题从"回一堆低相关片段"变成**空证据**（`kb_search` 空包、
@@ -641,10 +660,10 @@ created: 2026-09-04
     - ~~R-44：MCP 默认无会话~~ → **已认可（2026-09-24）** ⇒ 定为最终默认值，`RECALL_MCP_STATELESS=0` 可回退；
     - ~~R-19b 是否属契约变更~~ → **已确认（2026-09-23）**（已回写 tech.md §4 与 §17）；
     - ~~R-32d 检索阈值~~ → **已定案（2026-09-24）走回答模板路线**，胖端点侧候选转入 R-42。
-- **最近一次测试结果**（2026-09-25）：`pytest` **236 passed**；`ruff` 零告警；`mypy` strict **46 文件**零错误；R-45 验收脚本 **15/15 全绿**（鉴权关闭态）
+- **最近一次测试结果**（2026-09-25）：`pytest` **241 passed**；`ruff` 零告警；`mypy` strict **47 文件**零错误；R-45 验收脚本 **15/15 全绿**（鉴权关闭态）
 - **验收实测**（2026-09-24，项目工程师执行）：摄取 65 篇 0 失败；`/health` ok（972 点 / 65 篇）；检索 **Recall@1=0.767 / @3=0.933 / @5=0.933 / @10=1.000 / MRR=0.860**（与基线逐位一致）；Ragas **引用一致性 1.000 / faithfulness 0.858 / answer_relevancy 0.758**；DSH 问答带 `[n]` 引用通过
 - **验收实测**（2026-09-25，项目工程师执行）：**R-45 15/15 全绿**（`python tools\verify_r45.py`）
-- **本文件版本**：v0.17.0（2026-09-25 **R-40 补齐规范要求的限流**（code_standards §6.1）+ R-42 阶段 1 完成。**当前待项目工程师：R-40/R-38 验收 + R-42 是否开启门槛 + R-46 处置 + 实现细节背书**）
+- **本文件版本**：v0.18.0（2026-09-25 **R-46 缺陷修复**（系统代理致 500 而非 503）+ R-40 限流补齐。**当前待项目工程师：R-40/R-38 验收 + R-42 是否开启门槛 + R-39/R-41 方向 + 实现细节背书**）
 
 ---
 
@@ -762,3 +781,4 @@ created: 2026-09-04
 | 2026-09-25 | R-42 | **阶段 1：门槛实施 + A/B（默认关闭）** | `config.py` 新增 `evidence_min_score`（env `RECALL_EVIDENCE_MIN_SCORE`，**默认 0.0 = 不启用**，非法值启动即抛）；`api.py::kb_search_core` 精排后加门槛判定（`top1 < t` ⇒ 空证据包 + 结构化日志），**证据带不动**；`tests/test_evidence_gate.py` 4 项 + `test_config.py` 6 项 | ✅ **A/B 单变量结果**：门槛 0.58 前后 Recall@1/3/5/10 **逐位一致**（76.67/93.33/93.33/100.00）；笔记内误拦 **0/30**、邻近 **6/6 全拒**、远域 **15/15 全拒** ⇒ **零召回代价换 100% 笔记外拒绝率**。默认关闭 ⇒ **不改变任何现有行为**，无需回滚 |
 | 2026-09-25 | R-42 | 契约补记（可选开关） | `tech.md` §4 链路图补"证据门槛（可选，默认关闭）"、新增 **§4.1** 说明该配置项：语义、机制对比（门槛 vs 裁剪的实测代价）、连带行为（胖端点不调 LLM ⇒ 省额度）、实测判据与建议值 | 属**新增可选能力**（默认不生效），既有端点字段与状态码**未变** |
 | 2026-09-25 | R-40 | **规范缺口补齐：写端点限流** | 核对 `code_standards.md:165` 发现 R-40 只做了鉴权、**漏了限流**。已补：新增 `recall/ratelimit.py`（滑动窗口 + 可注入时钟）；`RECALL_INGEST_RATE_LIMIT`（默认 `10/60`，`0` 关闭，非法值启动即抛）；判定放在 `kb_ingest_core`（覆盖 REST **与** MCP 两条路，放中间件只挡得住 REST）；超限 429 `rate_limited` | 属**按规范补齐**（code_standards 是硬要求，非新功能）。测试 +20 项；`tech.md` §7.1 补限流行。⚠️ 局限已写明：进程内状态，多进程各算一份 ⇒ 公网暴露时须在网关再加一道 |
+| 2026-09-25 | **R-46** | **缺陷修复：系统代理致 500 而非 503** | ① `config.py` 新增 `_ensure_localhost_bypasses_proxy()`，`Settings.from_env()` 把回环并入 `NO_PROXY`（保留既有条目、幂等、`*` 绝不出现）；② `store.py` 新增 `_is_unavailable_response()`，502/503/504 归入"Qdrant 不可达" ⇒ 仍给语义化 503；③ 新增 `tests/test_proxy_resilience.py` 5 项；④ `tech.md` 新增 **§12.1** | 选"NO_PROXY 合并"而不是"给 QdrantStore 传 `trust_env=False`"：**一处生效、覆盖所有本机 HTTP 客户端**，且不依赖 qdrant-client 的透传参数。**真实环境实测**：修复后死端口 → `ConnectError`（修复前 502），真实 Qdrant 可达。未改任何契约 |

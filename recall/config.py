@@ -211,6 +211,34 @@ def _read_rate_limit(name: str, default: str) -> tuple[int, float]:
     return limit, window
 
 
+LOCAL_HOSTS_NO_PROXY: tuple[str, ...] = ("127.0.0.1", "localhost", "::1")
+"""必须**绕过 HTTP 代理**的回环地址（roadmap R-46）。"""
+
+
+def _ensure_localhost_bypasses_proxy() -> None:
+    """把回环地址并入 ``NO_PROXY``（幂等，保留用户已有条目）。
+
+    为什么必须做：Windows 的**系统代理**会被 httpx 的 ``trust_env=True`` 读到，
+    于是连**本机**服务（Qdrant @127.0.0.1:6333）的请求也被发给代理；代理对不可达端口
+    返回 **HTTP 502 空体**，把"连接被拒"变成"网关错误"，qdrant-client 抛
+    ``UnexpectedResponse`` —— `with_retry` 认不出这是"Qdrant 没起来"，
+    用户看到 500 而不是 503「请启动 qdrant.exe」（2026-09-25 实测，
+    本机 karingService @127.0.0.1:3067）。
+
+    ⚠️ **只加回环，绝不设 ``*``**：出网请求（DeepSeek）可能正需要这个代理，
+    全局禁用会连它一起打断。实测：加回环后 localhost 恢复"连接被拒"，
+    而 ``https://api.deepseek.com`` 仍可达。
+    """
+    existing = [part.strip() for part in os.environ.get("NO_PROXY", "").split(",") if part.strip()]
+    merged = list(existing)
+    for host in LOCAL_HOSTS_NO_PROXY:
+        if host not in merged:
+            merged.append(host)
+    value = ",".join(merged)
+    os.environ["NO_PROXY"] = value
+    os.environ["no_proxy"] = value  # 大小写两版都设：不同库读的键名不一致
+
+
 def _sync_hf_offline(offline: bool) -> None:
     """把离线开关同步给**已导入**的 ``huggingface_hub``（兜底，见模块 docstring）。
 
@@ -308,6 +336,9 @@ class Settings:
         "先建配置、后加载模型"的顺序绕不过去。两者都用 ``setdefault``：
         **真实环境变量优先**，所以要下载模型时 ``HF_HUB_OFFLINE=0`` 依然管用。
 
+        同理会把回环地址并入 ``NO_PROXY``（见 :func:`_ensure_localhost_bypasses_proxy`）：
+        本机服务不该走系统代理。
+
         Args:
             dotenv_path: 显式指定的 ``.env`` 路径；默认读取项目根目录下的 ``.env``。
 
@@ -351,6 +382,7 @@ class Settings:
             os.environ.setdefault("HF_ENDPOINT", settings.hf_endpoint)
         os.environ.setdefault("HF_HUB_OFFLINE", "1" if settings.hf_hub_offline else "0")
         _sync_hf_offline(settings.hf_hub_offline)
+        _ensure_localhost_bypasses_proxy()
         return settings
 
     @property

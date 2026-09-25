@@ -23,6 +23,7 @@ from uuid import UUID
 
 import httpx
 from qdrant_client import AsyncQdrantClient, models
+from qdrant_client.http.exceptions import UnexpectedResponse
 
 from recall.embedder import DENSE_DIM, Embedding
 from recall.models import ChunkPayload
@@ -117,7 +118,7 @@ async def with_retry(
             )
             await asyncio.sleep(delay)
     assert last_error is not None
-    if _is_connectivity_error(last_error):
+    if _is_connectivity_error(last_error) or _is_unavailable_response(last_error):
         raise StoreUnavailableError(
             f"{operation} 失败：Qdrant 不可达或超时（已重试 {attempts} 次）"
         ) from last_error
@@ -133,6 +134,19 @@ _CONNECTIVITY_ERRORS = (
     httpx.RemoteProtocolError,
 )
 
+_UNAVAILABLE_STATUS_CODES = frozenset({502, 503, 504})
+"""把"网关/服务不可用"也当成 Qdrant 不可达（roadmap R-46）。
+
+**为什么需要**：本机若开着系统代理，httpx 的 ``trust_env`` 会把连 Qdrant 的请求也发给
+代理，而代理对不可达端口返回的是 **HTTP 502 空体**（不是"连接被拒"）。
+qdrant-client 于是抛 ``UnexpectedResponse`` 而不是连接错误 —— 只认 httpx 连接异常的
+:func:`_is_connectivity_error` 认不出它，`/kb/search` 就退化成**带堆栈的 500**，
+而用户本该看到 503 "请启动 qdrant.exe"（R-27i 的设计被绕过）。
+
+根因侧已在 :func:`~recall.config.Settings.from_env` 里把回环地址并入 ``NO_PROXY``；
+这里是**兜底**：无论 502 从代理、反代还是别处来，都归到语义化 503。
+"""
+
 
 def _is_connectivity_error(exc: BaseException) -> bool:
     """异常链里是否含"连不上 / 超时"。
@@ -143,6 +157,21 @@ def _is_connectivity_error(exc: BaseException) -> bool:
     current: BaseException | None = exc
     while current is not None:
         if isinstance(current, _CONNECTIVITY_ERRORS):
+            return True
+        current = current.__cause__ or current.__context__
+    return False
+
+
+def _is_unavailable_response(exc: BaseException) -> bool:
+    """异常链里是否含"网关/服务不可用"类响应（502 / 503 / 504）。
+
+    与 :func:`_is_connectivity_error` 同样沿异常链下找：qdrant-client 可能把它再包一层。
+    """
+    current: BaseException | None = exc
+    while current is not None:
+        if isinstance(current, UnexpectedResponse) and current.status_code in (
+            _UNAVAILABLE_STATUS_CODES
+        ):
             return True
         current = current.__cause__ or current.__context__
     return False
