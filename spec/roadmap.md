@@ -280,7 +280,7 @@ created: 2026-09-04
     | hybrid + rerank（默认，即生产链路） | 0.467 | **0.733** | 0.767 | 0.833 | 0.601 |
     逐题明细落盘 `eval/baseline_v1.json`（含每题 rank / 实得 Top-3），改动后可 A/B 对比。
     未命中 5 题集中在 `project/bamboo-old/spec/*`（同目录下多篇高度相似的教练类文档互相挤占）；留待 R-42 用黄金集量化调优。另提供 `--no-rerank` 以分阶段对比"混合召回 vs 召回+精排"。
-- [ ] **R-32** 接入 Ragas（faithfulness / answer relevancy，评测 kb_answer 回答）+ promptfoo（prompt 回归）。
+- [x] **R-32** 接入 Ragas（faithfulness / answer relevancy，评测 kb_answer 回答）+ promptfoo（prompt 回归）。
     ✅ 验证：kb_answer 的 citations 与 references 一一对应；Ragas 首轮分数记录。
     🔧 已就绪（2026-09-22）：`eval/eval_ragas.py` 写好——真跑 kb_answer 收集回答与证据 → `check_citation_consistency` 校验 `citations`↔`references` ↔ 正文角标 → Ragas `aevaluate`（DeepSeek 当裁判 + **本地 bge-m3** 当 embedding，符合"内容不出域"）；`eval/promptfoo/promptfooconfig.yaml` 写好（引用格式 / 忠实度 / 无证据不硬答三类断言）。
     ✅ **已完成（2026-09-23）**：
@@ -316,7 +316,7 @@ created: 2026-09-04
 - [x] **R-32b** 依赖收敛：`pyproject.toml` 增加 `eval` 可选依赖组并**钉死 `langchain-community>=0.3,<0.4`**；同时把 `openai` 约束由 `<2` 放宽到 `<4`（ragas 依赖链装上了 openai 3.3.0，经核验 `AsyncOpenAI(api_key=...)/chat.completions.create(response_format=..., max_tokens=...)` 在 3.3.0 下仍可用）。
     ✅ 验证：`import ragas` 成功；`recall.api` / `recall.llm` 导入正常；`pytest` 全绿（见下）。
     🧭 项目工程师指示：**待复核**（依赖约束调整，属 R-32 的前置修复）
-- [ ] **R-33** 汇报基线评测结果（黄金集分数 + Ragas 分数 + 发现的检索质量问题），供项目工程师决定是否进入调优（Phase 6 R-42）。
+- [x] **R-33** 汇报基线评测结果（黄金集分数 + Ragas 分数 + 发现的检索质量问题），供项目工程师决定是否进入调优（Phase 6 R-42）。
     ✅ 已完成（检索半，2026-09-22）：新增 `eval/BASELINE.md`——指标表 / 名次分布 / **分类命中率** / 5 题未命中明细 / 质量观察 / R-42 调优候选（按预期收益排序）。
     📌 关键结论：**问题不在 embedding，在语料结构**——AI 技术笔记命中率 0.95、Recall spec 1.00，而 `project/bamboo-old/spec/` 集群只有 0.50（十几篇同主题文档词汇高度重叠、互相挤占 Top-K），4/5 的未命中都出自该集群。
     📌 **第二结论（2026-09-22，已闭环）**：`--no-rerank` 分解实验发现精排曾是**净负收益**（MRR 0.601 vs hybrid-only 0.650）。按"只做 A/B 取证、不改链路顺序"的原则逐步定位，**根因是检索链路只把块正文喂给精排、丢掉了 `heading_path`**（见 R-19b）。修复后 **MRR 0.601 → 0.860、Recall@1 0.467 → 0.767、Recall@10 0.833 → 1.000、未命中 5 → 0 题**，且明显优于"不要精排"的 0.650 ⇒ 精排是净收益，前提是喂对输入。
@@ -588,7 +588,7 @@ created: 2026-09-04
 - **最近一次测试结果**（2026-09-25）：`pytest` **206 passed**；`ruff` 零告警；`mypy` strict **42 文件**零错误；R-45 验收脚本 **15/15 全绿**（鉴权关闭态）
 - **验收实测**（2026-09-24，项目工程师执行）：摄取 65 篇 0 失败；`/health` ok（972 点 / 65 篇）；检索 **Recall@1=0.767 / @3=0.933 / @5=0.933 / @10=1.000 / MRR=0.860**（与基线逐位一致）；Ragas **引用一致性 1.000 / faithfulness 0.858 / answer_relevancy 0.758**；DSH 问答带 `[n]` 引用通过
 - **验收实测**（2026-09-25，项目工程师执行）：**R-45 15/15 全绿**（`python tools\verify_r45.py`）
-- **本文件版本**：v0.14.0（2026-09-25 **R-38 watchdog 实现完成 + 真实端到端验证**（206 passed），R-40 亦待验收；R-46 待处置。**当前待项目工程师：R-40/R-38 验收 + R-46 处置 + 实现细节背书**）
+- **本文件版本**：v0.14.1（2026-09-25 R-38 完成 + R-32/R-33 勾选笔误修正。**当前待项目工程师：R-40/R-38 验收 + R-46 处置 + 实现细节背书**）
 
 ---
 
@@ -700,3 +700,4 @@ created: 2026-09-04
 | 2026-09-25 | R-38 | **实现：常驻增量同步** | 新增 `recall/watchdog.py`（`should_index` / `IngestTrigger` / `_VaultEventHandler` / `VaultWatcher` / `main`）与 CLI（`--once`、`--force-polling`、`--debounce` 等）；`Settings.watchdog_api_key`（env `RECALL_WATCHDOG_API_KEY`）；依赖新增 `watchdog>=6.0.0,<7`（pyproject + lock 同步） | 三条铁律：**不自己装载模型**（只 POST 给已跑的 API，防 R-23b 类双份 bge-m3）/ **只做增量**（`mode=update`，永不 rebuild）/ **过滤 `.obsidian` 等目录**（规则复用摄取侧常量，否则无限自触发）。详见 tech.md §5.1 |
 | 2026-09-25 | R-38 | 测试补强 | `tests/test_watchdog.py` **20 项**：过滤规则、**真实本地 HTTP 桩**验证报文（`/kb/ingest` + `mode=update` + `X-API-Key`、永不含 rebuild）、去抖合并（5 次写 ⇒ 1 次同步）、`.obsidian` 写入不触发、不可达重试后返回 False 不抛异常、CLI 默认值与退出码 0/1/2；`tests/test_config.py` 补 2 项 | 全量 `pytest` **206 passed**；`ruff` 全绿；`mypy` strict **42 文件**零错误 |
 | 2026-09-25 | R-38 | **真实端到端验证（项目工程师环境）** | `python -m recall.watchdog --once` 对运行中的 API（PID 6804）触发成功（`watchdog.ingest_ok`、退出码 0）⇒ 增量重索引 3 篇（vault 内 `project/Recall/spec/*.md` 快照当日有更新）、`orphans_deleted` 正常；**账目核对** `sum(chunk_count)=points_count=1019`、65 篇、0 失败；第二次触发 points 仍 1019 | 顺带确认：**vault 里存着项目 spec 的三份快照**（`source_uri=project/Recall/spec/*.md`），故改 spec 会（正确地）触发重索引。仓库内 spec 文件为 CRLF（`core.autocrlf=true`），属本仓库正常配置 |
+| 2026-09-25 | R-32,R-33 | **文档一致性修正** | 把 **R-32 / R-33 的复选框从未勾选改为已勾选** | 二者条目正文早已写明「✅ 已完成（2026-09-23）」并附结果表（R-32 有引用一致性 1.000 / faithfulness 0.705 / promptfoo 3 通过 1 失败；R-33 已产出 `eval/BASELINE.md`），§六「已通过项」也列了它们，R-37 验收（Phase 0~5 全部完成）更已覆盖 —— 唯独勾没打上。属**文档笔误**，非状态变更；按"变更登记铁律"照记一行 |
