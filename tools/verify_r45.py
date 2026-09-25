@@ -82,15 +82,16 @@ def step(title: str) -> None:
     print(title)
 
 
-def fetch_json(url: str) -> Any:
+def fetch_json(url: str, headers: dict[str, str]) -> Any:
     """GET 一个 JSON 端点。"""
-    with urllib.request.urlopen(url, timeout=TIMEOUT_S) as response:
+    request = urllib.request.Request(url, headers=headers)
+    with urllib.request.urlopen(request, timeout=TIMEOUT_S) as response:
         return json.loads(response.read().decode("utf-8"))
 
 
-def post_status(url: str) -> int:
+def post_status(url: str, headers: dict[str, str]) -> int:
     """对端点发一个空 POST，返回 HTTP 状态码（不抛异常）。"""
-    request = urllib.request.Request(url, method="POST", data=b"")
+    request = urllib.request.Request(url, method="POST", data=b"", headers=headers)
     try:
         with urllib.request.urlopen(request, timeout=TIMEOUT_S) as response:
             return int(response.status)
@@ -128,10 +129,17 @@ def main() -> int:
         help="SQLite 注册表路径（只读性取证用）",
     )
     parser.add_argument("--skip-pytest", action="store_true", help="跳过第 7 步")
+    parser.add_argument(
+        "--api-key",
+        default="",
+        help="服务启用了鉴权（RECALL_API_KEYS 非空）时必填，等价于 X-API-Key 请求头",
+    )
     args = parser.parse_args()
 
     base: str = args.base.rstrip("/")
     registry_db: str = args.registry_db
+    api_key: str = args.api_key
+    headers: dict[str, str] = {"X-API-Key": api_key} if api_key else {}
     report = Report()
 
     print()
@@ -143,7 +151,7 @@ def main() -> int:
     # -- 步骤 1 --------------------------------------------------------------
     step("步骤 1/7  服务可达性（/health）")
     try:
-        health = fetch_json(f"{base}/health")
+        health = fetch_json(f"{base}/health", headers)
         print(f"         /health -> {canonical(health)}")
     except Exception as exc:  # noqa: BLE001 - 验收脚本要把任何失败转成可读提示
         report.check("服务可达", False, str(exc))
@@ -156,7 +164,7 @@ def main() -> int:
 
     # -- 步骤 2 --------------------------------------------------------------
     step("步骤 2/7  GET /kb/stats 字段完整性")
-    stats = fetch_json(f"{base}/kb/stats")
+    stats = fetch_json(f"{base}/kb/stats", headers)
     print("         响应体：")
     for line in json.dumps(stats, indent=4, ensure_ascii=False).splitlines():
         print(f"           {line}")
@@ -212,8 +220,8 @@ def main() -> int:
     before_ns = db_path.stat().st_mtime_ns if db_path.exists() else None
     reference = canonical(stats)
     for _ in range(5):
-        fetch_json(f"{base}/kb/stats")
-    repeat = canonical(fetch_json(f"{base}/kb/stats"))
+        fetch_json(f"{base}/kb/stats", headers)
+    repeat = canonical(fetch_json(f"{base}/kb/stats", headers))
     report.check("连调 6 次 payload 逐位相同", reference == repeat)
     if before_ns is None:
         print(f"         （未找到 {registry_db}，跳过 mtime 取证）")
@@ -224,13 +232,13 @@ def main() -> int:
 
     # -- 步骤 5 --------------------------------------------------------------
     step("步骤 5/7  方法约束：只接受 GET")
-    status = post_status(f"{base}/kb/stats")
+    status = post_status(f"{base}/kb/stats", headers)
     print(f"         POST /kb/stats -> HTTP {status}")
     report.check("POST 被拒（期望 405）", status == 405, f"实得 {status}")
 
     # -- 步骤 6 --------------------------------------------------------------
     step("步骤 6/7  OpenAPI 已登记该路由")
-    openapi = fetch_json(f"{base}/openapi.json")
+    openapi = fetch_json(f"{base}/openapi.json", headers)
     paths: dict[str, Any] = openapi.get("paths", {})
     for name in paths:
         print(f"           {name}")

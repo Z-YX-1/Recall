@@ -13,7 +13,12 @@ import os
 
 import pytest
 
-from recall.config import DEFAULT_HF_HUB_OFFLINE, DEFAULT_MCP_STATELESS, Settings
+from recall.config import (
+    DEFAULT_HF_HUB_OFFLINE,
+    DEFAULT_MCP_STATELESS,
+    Settings,
+    parse_api_keys,
+)
 
 
 def _env(name: str) -> str | None:
@@ -147,3 +152,63 @@ def test_importing_recall_bootstraps_environment(monkeypatch: pytest.MonkeyPatch
 
     assert _env("HF_HUB_OFFLINE") == "1"
     assert _env("HF_ENDPOINT")
+
+
+# --------------------------------------------------------------------------- API key 表（R-40）
+
+
+def test_api_keys_default_to_empty_meaning_no_auth(monkeypatch: pytest.MonkeyPatch) -> None:
+    """默认空 key 表 = 不鉴权（S1 语义）；``auth_enabled`` 是中间件的开关。"""
+    monkeypatch.setenv("RECALL_API_KEYS", "")
+
+    settings = Settings.from_env()
+
+    assert settings.api_keys == {}
+    assert settings.auth_enabled is False
+
+
+def test_api_keys_are_parsed_from_token_user_pairs(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``token:user`` 逗号分隔；允许条目间有空白（从 .env 抄过来常带空格）。"""
+    monkeypatch.setenv("RECALL_API_KEYS", " tok-a:me , tok-b:alice ")
+
+    settings = Settings.from_env()
+
+    assert settings.api_keys == {"tok-a": "me", "tok-b": "alice"}
+    assert settings.auth_enabled is True
+
+
+def test_api_keys_skip_empty_entries(monkeypatch: pytest.MonkeyPatch) -> None:
+    """多余逗号（``a:b,,c:d``）不应让整个配置失败。"""
+    monkeypatch.setenv("RECALL_API_KEYS", "tok-a:me,,tok-b:alice,")
+
+    assert Settings.from_env().api_keys == {"tok-a": "me", "tok-b": "alice"}
+
+
+@pytest.mark.parametrize("raw", ["no-colon", ":me", "tok:", "", "  "])
+def test_api_keys_reject_malformed_entries(raw: str) -> None:
+    """格式错误**立即抛错**——配置问题必须在启动时大声失败。
+
+    注意 ``""`` / 纯空白会被 ``from_env`` 之外的空串语义跳过，这里直接测解析函数，
+    因此只有真正不合法的写法才抛。
+    """
+    if not raw.strip():
+        assert parse_api_keys(raw) == {}
+        return
+    with pytest.raises(ValueError, match="token:user"):
+        parse_api_keys(raw)
+
+
+def test_api_keys_reject_duplicates_without_echoing_the_token() -> None:
+    """重复 token 要报错，但错误信息**只回显前 4 位**（错误会进日志）。"""
+    with pytest.raises(ValueError) as excinfo:
+        parse_api_keys("secret-token-1:me,secret-token-1:alice")
+
+    assert "secr" in str(excinfo.value)
+    assert "secret-token-1" not in str(excinfo.value)
+
+
+def test_audit_log_path_sits_next_to_the_structured_logs(monkeypatch: pytest.MonkeyPatch) -> None:
+    """审计文件与结构化日志同目录、独立文件名（便于单独轮转）。"""
+    monkeypatch.setenv("RECALL_LOG_DIR", "D:/tmp/recall-logs")
+
+    assert Settings.from_env().audit_log_path.name == "audit.jsonl"

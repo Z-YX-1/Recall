@@ -149,7 +149,7 @@ query → bge-m3 同模型编码(dense+sparse)
 | 阶段 | 身份模型 | 实现 |
 |---|---|---|
 | **S1 现在** | 无身份 | payload 默认 `owner:"me", visibility:"private"`；API `filter` 参数存在但默认空 |
-| **S2 少量用户** | user_id | API key → 身份中间件 → 服务端**强制注入** filter（owner 是我 或 public）；审计日志 |
+| **S2 少量用户（已实现，2026-09-25）** | user_id | API key → 身份中间件 → 服务端**强制注入** filter（owner 是我 或 public）；审计日志 |
 | **S3 部门 RBAC** | user + group | payload 加 `groups:[]`；SQLite 加 user/group 表；过滤 = owner 或 组相交 或 public |
 | **S4 企业级** | OIDC/LDAP | 统一认证；ACL 从源平台权限继承同步（大概率不走） |
 
@@ -158,11 +158,34 @@ query → bge-m3 同模型编码(dense+sparse)
 2. `filter` 语义 = **只能收窄不能放宽**（客户端 filter 与身份可见范围取交集，服务端绝不信客户端参数）
 3. Qdrant payload index 现在建（见 §3.3）
 
+### 7.1 S2 落地形态（roadmap R-40，2026-09-25）
+
+**一个中间件，两条路径**：`recall/api.py::IdentityMiddleware`（**纯 ASGI**，不用
+`@app.middleware("http")`——后者会把下游放进子任务并对响应体加包装，而 `/mcp` 走
+`text/event-stream` 长连接）。它是全项目**唯一**的鉴权点：REST 与 `/mcp` 共用一份 key 表、
+一段解析、同一个 401 信封（避免两条鉴权路径分叉，同 R-45 的「同源同形」教训）。
+
+| 项 | 契约 |
+|---|---|
+| 配置 | `RECALL_API_KEYS="token1:me,token2:alice"`（`token:user` 逗号分隔） |
+| **空表语义** | **不启用鉴权**（S1 语义，fail-open）——S1 的防线本就是"只绑 127.0.0.1"。⚠️ 故 **R-39 公网接入的前置条件之一是必须配置 key 表** |
+| 携带方式 | `X-API-Key: <token>` 或 `Authorization: Bearer <token>` |
+| 免鉴权路径 | 仅 `/health`（探活，且不返回笔记内容） |
+| **回环** | **不豁免**（含 127.0.0.1）——避免"本机免检"这条隐性规则在容器/代理/隧道下静默失效 |
+| 失败响应 | `401` + 统一错误信封 `{"error":{"code":"unauthorized",...}}` |
+| 身份传递 | 校验通过 ⇒ `set_current_identity()` 写入 **contextvar**；REST 经 `get_identity(request)` 读、MCP 工具经 `current_identity()` 读（工具函数拿不到 `Request`） |
+| 比较方式 | `hmac.compare_digest` **逐条常量时间**比较，不用 `dict.get`（避免时间旁路） |
+| 审计 | `data/logs/audit.jsonl`（JSON lines）：`ts/user/groups/method/path/status/duration_ms/outcome/trace_id/client`；**绝不写密钥**；受 `RECALL_LOG_TO_FILE` 控制 |
+| 启动保护 | 监听非回环地址且未配 key 表 ⇒ WARNING `api.exposed_without_auth` |
+
 ## 8. API 契约
 
 ```jsonc
-// REST（全部 127.0.0.1 本地；公网暴露时才上 API key/限流/审计——S2 触发点）
-GET  /health
+// REST（默认 127.0.0.1；单用户本地使用）
+// 鉴权（S2 起，roadmap R-40）：配置了 RECALL_API_KEYS 后，除 /health 外**所有**端点
+// 都必须带 `X-API-Key: <token>` 或 `Authorization: Bearer <token>`，否则 401
+// {"error":{"code":"unauthorized",…}}。**回环不豁免**。未配置 key 表则不鉴权（S1 语义）。
+GET  /health                                                        // 免鉴权（探活）
 POST /kb/search  { "query": "…", "top_k": 20, "max_tokens": 3000, "filter": {} }
 → { "evidence": [{ "ref_id", "source_uri", "heading_path", "text", "score" }],
     "references": [{ "ref_id", "source_uri" }] }
@@ -339,3 +362,28 @@ $env:HF_ENDPOINT = "https://hf-mirror.com"                    # 国内下载镜�
     - **对比与不变量**：`/kb/search` / `/kb/answer` 在 Qdrant 不可达时仍返回
       503 `qdrant_unavailable`（错误信封，见 R-27i）。两者差异**刻意保留**，不是疏漏。
       本决定不改变任何字段，`/kb/stats` 仍**只读**。
+16. **S2 鉴权落地形态：单一 ASGI 中间件 + contextvar**（roadmap R-40，2026-09-25 实现）。
+    - **背景**：项目工程师 2026-09-25 认可方案 B。实现前用 Context7 核实过 FastMCP
+      鉴权能力：`FastMCP(auth=...)`、`get_access_token()`、`AuthProvider`、
+      `StaticTokenVerifier` 在项目实际安装的 **2.14.7** 里都存在，且 `http_app()` 中
+      `auth` 与 `stateless_http` 正交（与 R-44 兼容）。
+    - **为什么仍不用 FastMCP 原生 auth**：① `StaticTokenVerifier` 官方文档标注
+      *"Never use this in production"*（明文存 token，定位是开发测试）；
+      ② `AuthProvider` 在 2.14.7 是 OAuth 导向（`base_url`/`required_scopes`），
+      与 S2 的"静态 API key"模型不合；③ 给 MCP 用原生 auth、给 REST 另写一套 ⇒
+      两条鉴权路径必然分叉（同 R-45 的「同源同形」教训）；④ 不依赖 fastmcp 内部 API，
+      将来 2→3 升级对鉴权语义零影响。
+    - **决定**：`recall/api.py::IdentityMiddleware` 作为**唯一**鉴权点，详见 §7.1。
+    - **空 key 表的 fail-open 语义**：`RECALL_API_KEYS` 为空 ⇒ 不鉴权（S1 语义）。
+      这是**有意**的：升级不应打断本机使用，且 S1 的防线本就是绑定 127.0.0.1。
+      代价是"忘了配 key 就等于没有鉴权" ⇒ 因此：① 监听非回环地址且无 key 表时启动 WARNING；
+      ② **R-39 公网接入的前置条件明确包含"必须配置 key 表"**。
+    - **回环不豁免**（项目工程师认可）：避免"本机免检"这条隐性规则在容器 / 反向代理 /
+      隧道场景下静默失效。代价是 DSH 配置、验收脚本、curl 各加一个 key。
+    - **实现层关键点**：用**纯 ASGI 中间件**而非 `@app.middleware("http")` ——
+      `BaseHTTPMiddleware` 会把下游放进子任务并对响应体加包装，而 `/mcp` 是
+      `text/event-stream` 长连接；纯 ASGI 只代理 `send`，对响应流零干预。
+      身份经 **contextvar** 传递（MCP 工具函数拿不到 `Request`），
+      REST 侧 `get_identity(request)` 与 MCP 侧 `current_identity()` 读的是同一个值。
+    - **不变量**：MCP 工具名与参数、既有端点的路径与字段全部未变；身份模型
+      （`Identity`）与 `filter` 语义（只能收窄）未变。

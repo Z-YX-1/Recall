@@ -1,7 +1,14 @@
-"""身份与权限收敛（tech.md §7；code_standards §7；roadmap R-21）。
+"""身份与权限收敛（tech.md §7；code_standards §7；roadmap R-21、R-40）。
 
-**S1（现在）**：无身份模型，:func:`get_identity` 硬编码 ``{user:"me", groups:["owner"]}``。
-接口与字段第一天就位，S2 起只换实现不换链路（tech.md §7「现在就埋的三件套」）。
+**S1（无 key 表时）**：无身份模型，:func:`current_identity` 退回
+``{user:"me", groups:["owner"]}``。
+**S2（配置了 ``RECALL_API_KEYS``）**：由 ``recall.api`` 的单一 ASGI 中间件校验
+API key 并把 :class:`~recall.models.Identity` 写进 :mod:`contextvars`，
+REST 与 MCP 两条路径**读同一个 contextvar**（tech.md §7「只换实现不换链路」）。
+
+为什么用 contextvar 而不是把 identity 顺着函数参数传：MCP 工具函数**拿不到**
+FastAPI 的 :class:`~fastapi.Request`（它们由 FastMCP 的传输层调用），
+contextvar 在同一个请求任务内天然可见，是唯一能同时服务两条路径的做法。
 
 ``filter`` 语义 = **只能收窄不能放宽**：客户端 filter 与身份可见范围取**交集**，
 服务端绝不信客户端传参（code_standards §7）。
@@ -10,6 +17,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from contextvars import ContextVar, Token
 from typing import Any
 
 from fastapi import Request
@@ -21,25 +29,60 @@ from recall.models import Identity
 PUBLIC_VISIBILITY = "public"
 """公开可见的 ``visibility`` 取值。"""
 
+_identity_ctx: ContextVar[Identity | None] = ContextVar("recall_identity", default=None)
+"""当前请求的身份（由 :func:`set_current_identity` 写入，见模块 docstring）。
+
+``None`` 表示"中间件没写"——即未启用鉴权的 S1 语义，而不是"匿名用户"。
+"""
+
 
 class InvalidFilterError(ValueError):
     """客户端 ``filter`` 不是合法的 Qdrant 过滤表达式。"""
 
 
-def get_identity(request: Request | None = None) -> Identity:
-    """解析调用者身份（S1 占位实现）。
-
-    S1 无身份模型，恒定返回 ``Identity()``（``me`` / ``owner``）。S2 起换成为
-    「API key → 身份中间件」，本函数签名与调用点不变（tech.md §7）。
+def set_current_identity(identity: Identity) -> Token[Identity | None]:
+    """把身份写进当前请求的 contextvar（**只由身份中间件调用**）。
 
     Args:
-        request: 当前 HTTP 请求；S1 不读取，保留参数以固化链路。
+        identity: 已通过 API key 校验的调用者身份。
+
+    Returns:
+        :mod:`contextvars` 的复位令牌——中间件必须在 ``finally`` 里用它复位，
+        避免身份泄漏到同一任务后续的处理步骤。
+    """
+    return _identity_ctx.set(identity)
+
+
+def reset_current_identity(token: Token[Identity | None]) -> None:
+    """按令牌复位 contextvar（与 :func:`set_current_identity` 成对）。"""
+    _identity_ctx.reset(token)
+
+
+def current_identity() -> Identity:
+    """读当前请求身份；未写入时退回 S1 默认身份。
+
+    这是 **MCP 工具侧**的取用点（工具函数没有 ``Request`` 对象可用）。
+
+    Returns:
+        调用者身份；中间件未写入时为 ``Identity()``（``me`` / ``owner``）。
+    """
+    return _identity_ctx.get() or Identity()
+
+
+def get_identity(request: Request | None = None) -> Identity:
+    """解析调用者身份（**REST 侧**取用点）。
+
+    S2 起身份由中间件写入 contextvar，本函数只负责读取——签名与调用点自 S1 起
+    未变（tech.md §7 的「三件套」：将来只换实现不换链路）。
+
+    Args:
+        request: 当前 HTTP 请求；身份已由中间件放入 contextvar，此处不读取。
 
     Returns:
         调用者身份。
     """
-    del request  # S1 无身份模型，参数仅为固化调用链
-    return Identity()
+    del request  # 身份在 contextvar 里，参数仅为固化调用链
+    return current_identity()
 
 
 def build_scope_filter(identity: Identity) -> models.Filter:

@@ -380,17 +380,38 @@ created: 2026-09-04
     quick tunnel（`cloudflared tunnel --url`）与 named tunnel（config.yml ingress）两种成熟形态。
     待开工前按当时文档再核实：Coze 侧 MCP 连接是否支持自定义鉴权 header（不支持则需 Cloudflare Access 兜底）、
     限流选型（Cloudflare Access / 应用层）。**硬前置：R-40**（否则公网网关暴露无鉴权的 `POST /kb/ingest`）。
-- [ ] **R-40** 权限 S2：API key 中间件实现，`get_identity` 换真实实现，审计日志上线。
+- [x] **R-40** 权限 S2：API key 中间件实现，`get_identity` 换真实实现，审计日志上线。
     ✅ 预研（2026-09-25，Context7 核实 + 本机核验）：① **MCP 侧鉴权的最大未知已消除**——DSH 的 mcp-client
     支持自定义 header（`lib/index.js:48` 传入 `config.headers`、schema `:756` `z.dict(String)`）⇒ `/mcp` 加 key
     不打断 DSH 问答；② fastmcp 2.14.7 **原生支持鉴权**（`FastMCP(auth=...)`、`fastmcp.server.dependencies.
     get_access_token()`、`AuthProvider`/`StaticTokenVerifier` 均存在于本机装的实际版本；`http_app()` 源码中
     `auth` 与 `stateless_http` **正交** ⇒ 与 R-44 无会话模式兼容）；③ 但 `StaticTokenVerifier` 官方文档标注
     **仅供开发测试、切勿生产使用**，`AuthProvider` 在 2.14.7 是 OAuth 导向（`base_url`/`required_scopes`）⇒
-    **推荐不用 FastMCP 原生 auth**，改走**单一 ASGI 中间件 + contextvar**：REST 与 `/mcp` 共用一个 key 表
-    （`RECALL_API_KEYS`）、一份解析、同一 401 信封，避免两条鉴权路径分叉（R-45 同源同形教训），
-    且不依赖 fastmcp 内部 API（将来 2→3 升级零影响）——与 tech.md §7「API key → 身份中间件」的字面一致。
-    待拍板：回环是否免鉴权（推荐**不豁免**：语义统一；DSH 配置/验收脚本/curl 各加一个 key）。
+    不采用 FastMCP 原生 auth，改走**单一 ASGI 中间件 + contextvar**（详见 tech.md §7.1 与 §17 决策记录 16）。
+    ✅ **实现（2026-09-25）**：
+    - `recall/config.py`：新增 `DEFAULT_API_KEYS`、`parse_api_keys()`（`token:user` 逗号分隔；格式错误立即抛错且
+      **错误信息只回显 token 前 4 位**）、`Settings.api_keys` / `auth_enabled` / `audit_log_path`；
+    - `recall/auth.py`：新增 contextvar（`set_current_identity` / `reset_current_identity` / `current_identity`），
+      `get_identity(request)` 改为读 contextvar（**签名与调用点自 S1 起未变**，tech.md §7「只换实现不换链路」）；
+    - `recall/audit.py`（新）：`AuditLog` / `AuditRecord`，JSON lines 写 `data/logs/audit.jsonl`，
+      按 5MB 轮转，写失败只记 WARNING **不拖累业务**，**绝不写密钥**；
+    - `recall/api.py`：`IdentityMiddleware`（**纯 ASGI**，不用 `@app.middleware("http")`——后者会包装响应体，
+      而 `/mcp` 是 `text/event-stream` 长连接）；`X-API-Key` / `Authorization: Bearer` 两种携带方式；
+      `hmac.compare_digest` **常量时间**比较；免鉴权路径仅 `/health`；**回环不豁免**；
+      MCP 工具改为传 `current_identity()`（此前 `kb_search`/`kb_answer` **不传** identity，落后到
+      `api.py` 的 `Identity()` 兜底 ⇒ 多用户下 MCP 侧会串号）；非回环 + 无 key 表时启动 WARNING。
+    ✅ 验证（2026-09-25）：`tests/test_auth.py` 由 8 项增至 **19 项**（新增：无 key 401 / 错 key 401 /
+      两种头均可 / `/health` 免鉴权 / **`/kb/ingest` 写端点强制 401** / `/mcp` 同受同一中间件保护 /
+      **身份真正流进检索**（主人看得见、旁人 `evidence == []`，REST 与 MCP 两侧各一）/ 审计双份留痕且
+      **文件内不含密钥** / 空 key 表退回 S1）；`tests/test_config.py` 由 17 项增至 **27 项**。
+      全量 `pytest` **184 passed**、`ruff` 全绿、`mypy` strict **40 文件**零错误。
+    🧭 项目工程师指示：**待验收**（实现已完成，等你在真实 DSH 会话上复验——见下方验收方式）。
+    ✅ **验收方式**（项目工程师执行）：① 在 `.env` 写入 `RECALL_API_KEYS=<你的token>:me`，重启 `python -m recall.api`；
+    ② `GET /health` 不带 key 应 200；`GET /kb/stats` 不带 key 应 **401**；带 `X-API-Key` 应 200；
+    ③ 在 `$DSH_HOME/mcp-servers.json` 的 recall 条目加 `"headers": {"X-API-Key": "<你的token>"}`，
+    **重开 DSH 会话**后问答应正常（这是唯一不可替代的端到端判据）；
+    ④ `python tools\verify_r45.py --api-key <你的token>` 应 15/15 全绿；
+    ⑤ 查看 `data/logs/audit.jsonl` 应有一行行 JSON 记录，且**不含 token**。
 - [ ] **R-41** 新 Connector：飞书 / 语雀 / 网页（按 Connector 协议新增，不改管道其余部分）。
     📌 待开工前核实：飞书/语雀开放接口的鉴权与配额；`Connector` 协议的 `list()` 是**全量枚举（含 text）**，
     对远端源意味着每轮全量拉取才算得出 `hash_of`——增量能力可能需要在协议上开口子（与"不改管道其余部分"的承诺冲突，需立项时定）。
@@ -401,6 +422,24 @@ created: 2026-09-04
     post-RRF 按 `doc_id` 去重**（不改 RRF 语义、单变量 A/B），server-side groups 留作后续优化；② 首个动作是
     **测量而非改代码**：构造"笔记外问题集"与黄金集并跑，导出每题 rerank 分数分布，先判"相关 vs 相邻"分数是否可分
     （不可分则 BASELINE §6 候选 1 否决）；③ 方法论沿用 R-19b：逐题变化表（X 好 / Y 坏）+ 硬底线 Recall@10 ≥ 1.000。
+- [ ] **R-46** 本机系统代理会把"连不上"变成"HTTP 502"，导致 Qdrant 不可达时退化成 **500** 而非语义化 503。
+    ⚠️ **问题描述**（2026-09-25 实测发现，非 R-40 引入）：本机装了代理工具（`karingService`，PID 15580，
+    监听 `127.0.0.1:3067`）并写进了 **Windows 系统代理**设置。httpx 默认 `trust_env=True` 会读取它
+    （`urllib.request.getproxies()` ⇒ `{'http': 'http://127.0.0.1:3067', ...}`），于是**任何**不可达目标
+    （实测连保留地址 `192.0.2.1` 也一样）都返回代理生成的 **HTTP 502 空体**，而不是"连接被拒"。
+    **影响范围**：`recall/store.py` 的 `with_retry` 只把连接类异常折算成 `StoreUnavailableError`；
+    代理返回的 502 走的是 qdrant-client 的 `UnexpectedResponse` ⇒ **不会被折算**，
+    于是 Qdrant 挂掉时 `/kb/search` 会返回带堆栈的 **500**，而不是 R-27i 设计的 503 `qdrant_unavailable`
+    （正是项目工程师本该看到"请启动 qdrant.exe"提示的场景）。
+    📌 旁证：本轮两个既有用例 `test_unreachable_qdrant_raises_store_unavailable` /
+    `test_kb_search_reports_qdrant_down_as_semantic_503` 因此在全量跑时失败（单跑曾通过 ⇒ 环境已变）；
+    已在 `tests/conftest.py` 用 `NO_PROXY=*` 让**测试**不继承代理（测试全离线），
+    但**产品代码**在带代理的运行环境里仍有此退化。
+    💡 **建议方案**（待项目工程师定）：① 把 `UnexpectedResponse` 中状态码 502/503/504 折算成
+    `StoreUnavailableError`（最小改动、语义化）；② `QdrantStore` 显式 `trust_env=False` 建 httpx 客户端
+    （Qdrant 是本机服务，本就不该走代理，治本）；③ 仅在文档记一条运维提醒（把 127.0.0.1 加入代理绕过列表）。
+    倾向 **①+②**：②治本、①兜底（其他不可达形态也能语义化）。
+    🧭 项目工程师指示：**待请示**（属新发现的问题，未纳入 R-40 范围）。
 - [x] **R-43** `HF_HUB_OFFLINE` 升为配置项（**默认离线**）：把"模型加载前不回连 HF Hub"从"评测时的临时建议"变成服务进程的默认行为（tech.md §12 的"先建配置、后加载模型"顺序不变）。
     ⚠️ 现场证据（2026-09-23 真实 DSH 会话）：`kb_search` **每一次**都在 ~42s 后失败——`mcp__recall__kb_stats` 却全程正常（Qdrant 活着），说明故障不在检索库。`data/logs/api.log` 的异常链给出确切位置：`api.kb_search_core` → `embedder._encode_sync` → `model_cache.load_once` → `BGEM3FlagModel.__init__` → `transformers…tokenization_auto.from_pretrained` → **`transformers/utils/hub.py::list_repo_templates`** → `huggingface_hub.hf_api.list_repo_tree` → `httpx.ConnectTimeout`。
     根因：transformers 5.x 装载 tokenizer 时会去 Hub 拉 `chat_template.jinja` 清单，**权重已在本地缓存也照样走一次网络**；本机出网间歇不可达（§七 2026-09-23 R-32 环境记录），该请求挂在 TCP 连接上直到 httpx 超时 ⇒ 整个 `kb_search` 被拖死（实测 6 次调用 23:18:09→23:22:08 全部同一栈）。
@@ -483,24 +522,29 @@ created: 2026-09-04
 | 2026-09-24 | R-44 | R-43 修好后项目工程师**新开会话**依旧全量失败：`Streamable HTTP error … {"code":-32600,"message":"Session not found"}`（HTTP 404）。服务端会话表在进程内存里（空闲 30 分钟回收 + 进程重启即失效），而 MCP 客户端收到 404 **不会重新 initialize**（SDK 只翻成 `Session terminated` 就 return；DSH mcp-client 只在 transport onclose 时重连）⇒ 客户端永远拿着死 id，且 MCP 连接跨对话复用，"新开会话"也无解 | R-44：MCP 默认改为**无会话**（`Settings.mcp_stateless` / `RECALL_MCP_STATELESS`，`http_app(stateless_http=True)`）；新增过期 id 回归测试 | **已认可（2026-09-24）**：项目工程师答复「认可」⇒ 无会话定为最终默认值（tech.md §8 端点契约不变；代价是失去服务端主动推送，本项目未使用；`RECALL_MCP_STATELESS=0` 可回退） | ✅ 已解决 |
 | 2026-09-24 | R-43 | **R-43 的修复实际未生效**：默认离线只在"先设环境变量、后 import HF 栈"的顺序下有效；`recall.api` 是反的（顶部先 import embedder → FlagEmbedding → transformers → huggingface_hub），而 `huggingface_hub.constants.HF_HUB_OFFLINE` 在 import 时冻结 ⇒ 晚设无效，模型装载照样回连 Hub。**这正是项目工程师新会话里 `kb_search` 仍全量失败的真正原因**（R-43 的验证被测试顺序骗过：单跑 `Embedder().encode()` 时 `from_env()` 恰好在前） | R-43b：① `recall/__init__.py` 增加 `_bootstrap_environment()`（包导入即建配置，顺序由导入保证）；② `recall/config.py` 增加 `_sync_hf_offline()`（库已先导入时直接改其常量）；新增 3 项回归测试 | **待复核**（实现层修复，不动契约；项目工程师 2026-09-24 对该批实现细节答复「我再看看」，保持未结） | ✅ 已解决 |
 | 2026-09-24 | R-28 | 项目工程师实测 `GET /kb/stats` 返回 **404**：统计此前只有 MCP 工具、没有 REST 端点（tech.md §8 只列四个端点），人肉排查与 S2 网关按 REST 路径访问即落空 | R-45：抽出 `kb_stats_core()`，新增只读 `GET /kb/stats`（与 MCP 工具共用实现）；tech.md §8 补端点、§17 补决策记录 14；新增「REST 与 MCP 逐字段相等」回归测试 | **已确认（2026-09-24）**：项目工程师答复「加」 | ✅ 已解决 |
+| 2026-09-25 | R-40 | 做 R-40 期间发现：本机系统代理（`karingService` @127.0.0.1:3067）使 httpx 的 `trust_env` 走到代理，**任何不可达目标都返回代理的 HTTP 502**；qdrant-client 因此抛 `UnexpectedResponse` 而非连接错误，**不被 `with_retry` 折算成 `StoreUnavailableError`** ⇒ Qdrant 挂掉时 `/kb/search` 退化成 500，R-27i 的语义化 503 被绕过 | **R-46**（新登记）：建议 ① 502/503/504 折算为 `StoreUnavailableError`；② `QdrantStore` 用 `trust_env=False` 建客户端 | **待请示**（新发现问题，未纳入 R-40 范围） | ⏳ 待处理 |
 
 ---
 
 ## 六、 当前进度快照（每步完成/受阻后更新）
 
-- **当前阶段**：✅ **Phase 0~5 全部完成（首版交付验收达成）+ R-43c / R-45 已闭环**；Phase 6（R-38~R-42）待项目工程师排期
-- **当前步骤**：**R-45 验收通过（2026-09-25）** —— R-01~R-45 内除 R-02/R-03（已由 R-02b/R-03b 绕行）外全部闭环
+- **当前阶段**：✅ **Phase 0~5 全部完成（首版交付验收达成）+ R-43c / R-45 已闭环**；**Phase 6 已开工：R-40 权限 S2 实现完成、待验收**
+- **当前步骤**：**R-40 权限 S2（2026-09-25 实现完成，`pytest` 184 passed / ruff / mypy 全绿）⇒ 待项目工程师验收**
 - **已通过项**：R-01、R-02b、R-03b、R-04、R-05、R-06、R-07~R-17、R-18、R-19、R-19b、R-20~R-23c、R-24、R-25、R-26、R-27、R-27c~R-27i、R-28、R-28b、R-29、R-29b、R-30、R-31、R-32、R-32b、R-32c、R-33、R-34、R-35、R-36、R-37、R-43、R-43b、R-43c、R-44、R-45
+- **待验收项**：**R-40**（实现与 gates 已完成，等真实 DSH 会话复验）
 - **未通过项**：R-02（官方源网络超时，已走 R-02b）、R-03（Docker 未运行，已走 R-03b）
 - **待请示事项**（以下为**非阻塞**的后续选择）：
   - **需你拍板**：
-    1. **Phase 6 先做哪一步**（R-38 watchdog / R-39 Coze 公网 / R-40 权限 S2 / R-41 新 Connector / R-42 检索调优）。
-       ⚠️ **排期硬约束**：**R-40 必须早于 R-39** —— 现在 `POST /kb/ingest` 是**无鉴权的写端点**，
-       唯一防线是"只监听 127.0.0.1"；R-39 要把它挂上公网网关，两者顺序颠倒即等于把写入口公开
-       （tech.md §7、code_standards §6.1）。故列表顺序 R-38→R-39→R-40 不可照抄。
-       📌 项目工程师 2026-09-25 选择「**先讨论方案再定**」⇒ 方案对比已给出（见 §七同日「Phase 6 方案讨论」行）。
+    1. **R-40 验收**（实现与 gates 已完成）：按 R-40 条目的「验收方式」五步走，关键是第 ③ 步
+       ——在 `$DSH_HOME/mcp-servers.json` 加 `headers` 后**重开 DSH 会话**问答应正常。
+    2. **R-46 处置**（2026-09-25 新发现）：本机系统代理把"Qdrant 不可达"变成 HTTP 502，
+       绕过 R-27i 的语义化 503 ⇒ 建议 ① 502/503/504 折算为 `StoreUnavailableError` +
+       ② `QdrantStore` 用 `trust_env=False`。是否现在做？
+    3. **Phase 6 后续顺序**：R-40 之后按建议是 **R-38 → R-42（先测量）→ R-39 → R-41**。
+       ⚠️ **硬约束不变**：**R-39 必须晚于 R-40**（现已满足）+ **R-39 前置必须配置 key 表**
+       （`RECALL_API_KEYS` 为空时鉴权整体不启用，公网暴露即等于无鉴权）。
   - **需你背书的实现细节（均未触及 tech.md 契约）**：
-    2. R-14b / R-16b / R-21 / R-23b / R-23c / R-27c~R-27i / R-29b / R-32c / R-43b 的「项目工程师指示」待复核（项目工程师 2026-09-24 答复「**我再看看**」，保持未结）；
+    4. R-14b / R-16b / R-21 / R-23b / R-23c / R-27c~R-27i / R-29b / R-32c / R-43b 的「项目工程师指示」待复核（项目工程师 2026-09-24 答复「**我再看看**」，保持未结）；
   - **已决**：
     - ~~R-45 降级语义~~ → **已定案（2026-09-25）保持 200 + `qdrant=false`**（tech.md §8 + §17 决策记录 15）；
     - ~~R-28 遗留：`GET /kb/stats` 返回 404~~ → **已确认（2026-09-24）答复「加」** ⇒ 已落为 **R-45**（只读端点、与 MCP 工具共用 `kb_stats_core()`；tech.md §8 + §17 决策记录 14）；
@@ -508,10 +552,10 @@ created: 2026-09-04
     - ~~R-44：MCP 默认无会话~~ → **已认可（2026-09-24）** ⇒ 定为最终默认值，`RECALL_MCP_STATELESS=0` 可回退；
     - ~~R-19b 是否属契约变更~~ → **已确认（2026-09-23）**（已回写 tech.md §4 与 §17）；
     - ~~R-32d 检索阈值~~ → **已定案（2026-09-24）走回答模板路线**，胖端点侧候选转入 R-42。
-- **最近一次测试结果**（2026-09-25）：`pytest` **164 passed**；`ruff` 零告警；`mypy` strict **39 文件**零错误（新增 `tools/verify_r45.py` 已纳入）；R-45 验收脚本 **15/15 全绿**
+- **最近一次测试结果**（2026-09-25）：`pytest` **184 passed**；`ruff` 零告警；`mypy` strict **40 文件**零错误（新增 `tools/verify_r45.py` 与 `recall/audit.py` 已纳入）；R-45 验收脚本 **15/15 全绿**
 - **验收实测**（2026-09-24，项目工程师执行）：摄取 65 篇 0 失败；`/health` ok（972 点 / 65 篇）；检索 **Recall@1=0.767 / @3=0.933 / @5=0.933 / @10=1.000 / MRR=0.860**（与基线逐位一致）；Ragas **引用一致性 1.000 / faithfulness 0.858 / answer_relevancy 0.758**；DSH 问答带 `[n]` 引用通过
 - **验收实测**（2026-09-25，项目工程师执行）：**R-45 15/15 全绿**（`python tools\verify_r45.py`）
-- **本文件版本**：v0.12.5（2026-09-25 **Phase 6 预研落盘**：R-38/R-40/R-42 的 Context7 核实结论写入各步骤；spec 三文件曾被人为删除、已从 git 恢复。**当前待拍板：Phase 6 做哪一步 + 实现细节背书**）
+- **本文件版本**：v0.13.0（2026-09-25 **R-40 权限 S2 实现完成（待验收）**：单一 ASGI 中间件 + contextvar + 审计；同时登记 R-46 新发现问题。**当前待拍板：R-40 验收 + R-46 处置 + 实现细节背书**）
 
 ---
 
@@ -615,4 +659,8 @@ created: 2026-09-04
 | 2026-09-25 | — | 待请示收敛 | §四「待请示事项」再收敛：R-45 相关两项（新增端点、降级语义）均已决。**当前仅剩**：① Phase 6 排期；② R-14b 等实现细节背书 | Phase 6 排期新增硬约束：**R-40 须先于 R-39**（否则公网网关会暴露无鉴权的 `POST /kb/ingest`） |
 | 2026-09-25 | — | **Phase 6 方案讨论（调研结论）** | 项目工程师选「先讨论方案再定」⇒ 为降低 R-38/R-40 的不确定性，先行查证三项事实：① **DSH 的 MCP 客户端支持自定义 header**（`@deepseek-ai/dsh-mcp-client/lib/index.js:48` 把 `config.headers` 传给 `StreamableHTTPClientTransport` 的 `requestInit`；schema `:756` 为 `headers: z.dict(String).default({})`）⇒ **R-40 给 `/mcp` 加鉴权不会打断 DSH 问答**；② DSH MCP 工具调用默认超时 **60s**（`DEFAULT_TOOL_CALL_TIMEOUT_MS = 6e4`，`index.js`）⇒ 走 MCP 的 `kb_ingest` 长时间重建会客户端超时，R-38 的触发路径应走 REST；③ `recall/model_cache.py` 的 `inference_lock` 是**进程级单锁**（`embedder.py:129`、`rerank.py:134` 共用）⇒ **摄取期间检索会被阻塞**，R-38 设计必须考虑该串行化点 | 三项均为**代码/依赖取证**，非推测。R-40 最大未知（MCP 鉴权可行性）已由 ① 消除 |
 | 2026-09-25 | R-38,R-40,R-42 | **预研核实（Context7 + 本机）** | ① FastMCP 鉴权：v3 文档特性在本机 2.14.7 均存在（`FastMCP(auth=...)`/`get_access_token`/`AuthProvider`/`StaticTokenVerifier`；`http_app()` 源码中 `auth` 与 `stateless_http` 正交）——但 `StaticTokenVerifier` 官方标注 dev-only、`AuthProvider` 为 OAuth 导向 ⇒ **推荐单一 ASGI 中间件 + contextvar**；② Qdrant 分面检索：`AsyncQdrantClient.query_points_groups`（客户端 1.19.1）与 `/points/query/groups`（服务端 1.19.0）均已核实存在；③ watchdog：Windows 走 `ReadDirectoryChangesW` 原生事件，官方 `EventDebouncer` 负责去抖 | Context7 三次查询预算全部用于 R-40/R-42/R-38（下一步实际要写代码的部分）；R-39/R-41 的外部事实仅 web 初核，开工前须按当时文档再核实 |
-| 2026-09-25 | — | **工作区事故（已恢复）** | 发现 `spec/roadmap.md`、`spec/tech.md`、`spec/code_standards.md` 三个文件在工作区被删除（`git status` 显示 `D`）。git 仓库中版本完整（HEAD=`d96fff9`），已 `git restore` 全部复原并核对与 `origin/main` 一致 | 删除来源不明（非本轮会话操作，发生在两次用户消息之间）；因全部内容已入库、零丢失。**提醒**：spec 目录外的批量操作（清理/同步工具）不要覆盖该目录 |
+| 2026-09-25 | — | **工作区事故（已恢复）** | 发现 `spec/roadmap.md`、`spec/tech.md`、`spec/code_standards.md` 三个文件在工作区被删除（`git status` 显示 `D`）。git 仓库中版本完整（HEAD=`d96fff9`），已 `git restore` 全部复原并核对与 `origin/main` 一致 | 删除来源不明（非本轮会话操作，发生在两次用户消息之间）；因全部内容已入库、零丢失。**提醒**：spec 目录外的批量操作（清理/同步工具）不要覆盖该目录。项目工程师已确认是本人误删 |
+| 2026-09-25 | R-40 | **实现：单一 ASGI 中间件 + contextvar + 审计** | ① `config.py` 新增 `DEFAULT_API_KEYS` / `parse_api_keys()`（`token:user`；格式错误立即抛错且**只回显 token 前 4 位**）/ `Settings.api_keys`·`auth_enabled`·`audit_log_path`；② `auth.py` 新增 contextvar 三件套，`get_identity` 改读 contextvar（**签名与调用点自 S1 未变**）；③ 新增 `recall/audit.py`（JSON lines、5MB 轮转、写失败只 WARNING、**绝不写密钥**）；④ `api.py` 新增 `IdentityMiddleware`（**纯 ASGI**，避开 `BaseHTTPMiddleware` 对 `text/event-stream` 长连接的包装）+ 两种携带方式 + `hmac.compare_digest` 常量时间比较 + 仅 `/health` 免鉴权 + **回环不豁免** + 非回环无 key 时启动 WARNING | 见 tech.md §7.1 与 **§17 决策记录 16**。**修掉一个真实缺陷**：MCP 侧 `kb_search`/`kb_answer` 此前**不传 identity**，落到 `api.py:171` 的 `Identity()` 兜底 ⇒ 多用户下 MCP 调用会串号；现改为传 `current_identity()` |
+| 2026-09-25 | R-40 | 测试补强 | `tests/test_auth.py` 8 → **19** 项、`tests/test_config.py` 17 → **27** 项。关键用例：**身份真正流进检索**（主人看得见 / 旁人 `evidence == []`，REST 与 MCP 各一条）——若中间件只"校验通过就放行"不传身份，该断言必失败 | 全量 `pytest` **184 passed**；`ruff` 全绿；`mypy` strict **40 文件**零错误 |
+| 2026-09-25 | R-40 | 测试环境去不确定性 | `tests/conftest.py` 直接赋值 `RECALL_API_KEYS=""`（避免开发者 `.env` 里的 key 让既有用例全变 401）与 `NO_PROXY=*`（避免继承本机系统代理） | 见 R-46：本机代理会把"连不上"变成 HTTP 502，导致两个 Qdrant 不可达用例在全量跑时失败（单跑曾通过 ⇒ 环境已变），属**测试环境问题**而非代码回归 |
+| 2026-09-25 | **R-46** | **新发现问题登记（待请示）** | 本机系统代理（`karingService` @127.0.0.1:3067，写入 Windows 系统代理）使 httpx 读到代理 ⇒ 任何不可达目标返回代理的 **HTTP 502**，qdrant-client 抛 `UnexpectedResponse`，**不被 `with_retry` 折算成 `StoreUnavailableError`** ⇒ Qdrant 挂掉时 `/kb/search` 退化成 500 而非语义化 503（R-27i 的设计被绕过）。建议 ① 502/503/504 折算成 `StoreUnavailableError` + ② `QdrantStore` 用 `trust_env=False` 建客户端；倾向 ①+② | 属**新发现**、未纳入 R-40 范围，按 §二 问题处理协议登记待项目工程师拍板 |

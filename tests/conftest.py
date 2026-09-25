@@ -24,6 +24,19 @@ import pytest
 os.environ.setdefault("HF_HUB_OFFLINE", "1")
 # 测试不写 data/logs（避免用例污染运行期目录）
 os.environ.setdefault("RECALL_LOG_TO_FILE", "0")
+# 鉴权默认**关闭**（roadmap R-40）。这里刻意用直接赋值而不是 setdefault：
+# `Settings.from_env()` 走 `load_dotenv(override=False)`，只要进程环境里已有该变量，
+# 开发者 `.env` 里的 `RECALL_API_KEYS` 就不会生效 ⇒ 用例结果不受个人配置影响。
+# 需要鉴权的用例用 `monkeypatch.setenv` 自行打开（见 tests/test_auth.py 的 secured 夹具）。
+os.environ["RECALL_API_KEYS"] = ""
+# 测试**不得**继承本机 HTTP 代理（2026-09-25 实测踩到）。
+# Windows 的系统代理设置（本机是 karingService，监听 127.0.0.1:3067）会被
+# httpx 的 `trust_env=True` 读到，于是"连不上某个端口"变成代理返回的 **HTTP 502**；
+# 后果是 `test_unreachable_qdrant_raises_store_unavailable` 之类的用例拿到
+# `UnexpectedResponse` 而不是连接错误而失败。测试全离线（HF_HUB_OFFLINE=1），
+# 直接全局关掉代理，让"不可达"真的表现为不可达。
+os.environ["NO_PROXY"] = "*"
+os.environ["no_proxy"] = "*"
 
 from recall.api import close_service, get_service  # noqa: E402
 from recall.embedder import DEFAULT_MODEL_NAME, Embedder  # noqa: E402

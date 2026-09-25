@@ -12,10 +12,11 @@
 from __future__ import annotations
 
 import asyncio
+import hmac
 import logging
 import time
 import uuid
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Mapping, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, replace
 
@@ -27,9 +28,25 @@ from fastmcp.exceptions import ToolError
 from pydantic import ValidationError
 from qdrant_client import models as qmodels
 from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from recall.assemble import Candidate, assemble, assemble_evidence
-from recall.auth import InvalidFilterError, effective_filter, get_identity
+from recall.audit import (
+    OUTCOME_ERROR,
+    OUTCOME_OK,
+    OUTCOME_UNAUTHORIZED,
+    AuditLog,
+    AuditRecord,
+    utc_now_iso,
+)
+from recall.auth import (
+    InvalidFilterError,
+    current_identity,
+    effective_filter,
+    get_identity,
+    reset_current_identity,
+    set_current_identity,
+)
 from recall.chunker import CHUNKER_NAME
 from recall.config import Settings, configure_logging
 from recall.embedder import DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_VERSION, Embedder
@@ -62,6 +79,38 @@ DEFAULT_COLLECTION = collection_name(
 )
 """默认检索 collection：``recall__bge-m3@v1__md``（tech.md §3.1 命名契约）。"""
 
+PUBLIC_PATHS = frozenset({"/health"})
+"""**免鉴权**路径（roadmap R-40）。
+
+只放探活端点：``/health`` 要被监控/脚本无凭据调用，且它不返回任何笔记内容。
+其余一切（含 ``/kb/stats``、``/mcp`` 与**回环请求**）在启用鉴权后都要求 API key
+—— 项目工程师 2026-09-25 定案「不豁免回环」，理由是避免"本机就免检"这条隐性规则
+在将来（容器 / 反向代理 / 隧道）突然失效时变成静默的鉴权缺口。
+"""
+
+LOCAL_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
+"""回环监听地址；不在其中即视为"对外暴露"。"""
+
+
+def _warn_if_exposed_without_keys(settings: Settings) -> None:
+    """监听非回环地址却**没有** key 表时大声告警。
+
+    ``RECALL_API_KEYS`` 为空时鉴权整体不启用（见
+    :data:`~recall.config.DEFAULT_API_KEYS` 的 fail-open 说明）。那条默认值是为了
+    不让升级打断本机使用，但"监听 0.0.0.0 且无 key"就是真的敞开了
+    （``POST /kb/ingest`` 是写端点）——所以这里补一条启动告警。
+
+    Args:
+        settings: 运行配置。
+    """
+    if settings.host not in LOCAL_HOSTS and not settings.auth_enabled:
+        logger.warning(
+            "api.exposed_without_auth 监听 %s 但未配置 RECALL_API_KEYS："
+            "所有端点（含写端点 /kb/ingest）当前无需凭据即可访问。",
+            settings.host,
+            extra={"host": settings.host},
+        )
+
 
 class ApiError(Exception):
     """带语义化错误码与 HTTP 状态的业务异常。"""
@@ -91,6 +140,8 @@ class Service:
     registry: Registry
     llm: DeepSeekClient
     collection: str
+    audit: AuditLog
+    """审计写入器（roadmap R-40）；随服务单例重建，测试可拿到干净状态。"""
 
     @classmethod
     async def create(cls, settings: Settings, *, collection: str | None = None) -> Service:
@@ -107,6 +158,7 @@ class Service:
         registry = Registry(settings.registry_db)
         await registry.initialize()
         configure_logging(settings, component="api")
+        _warn_if_exposed_without_keys(settings)
         return cls(
             settings=settings,
             store=QdrantStore(settings.qdrant_url),
@@ -115,6 +167,7 @@ class Service:
             registry=registry,
             llm=DeepSeekClient.from_settings(settings),
             collection=collection or settings.collection or DEFAULT_COLLECTION,
+            audit=AuditLog(settings.audit_log_path if settings.log_to_file else None),
         )
 
     async def aclose(self) -> None:
@@ -496,6 +549,157 @@ def _format_validation_error(exc: RequestValidationError | ValidationError) -> s
     return "; ".join(parts) or "请求体校验失败"
 
 
+# --------------------------------------------------------------------------------------
+# 身份中间件（roadmap R-40；tech.md §7 的 S2）—— 全项目**唯一**的鉴权点
+# --------------------------------------------------------------------------------------
+
+
+def _extract_api_token(request: Request) -> str:
+    """从请求头取 API key：``X-API-Key`` 优先，其次 ``Authorization: Bearer``。
+
+    Args:
+        request: 当前请求。
+
+    Returns:
+        token 原文；两种头都没带时返回空串。
+    """
+    api_key = request.headers.get("x-api-key", "").strip()
+    if api_key:
+        return api_key
+    authorization = request.headers.get("authorization", "").strip()
+    prefix = "bearer "
+    if authorization.lower().startswith(prefix):
+        return authorization[len(prefix) :].strip()
+    return ""
+
+
+def _resolve_identity(request: Request, api_keys: Mapping[str, str]) -> Identity | None:
+    """用 key 表解析身份；未携带或匹配不上时返回 ``None``。
+
+    ⚠️ 用 :func:`hmac.compare_digest` **逐条常量时间比较**，不用 ``dict.get``：
+    后者会因命中位置不同产生可测量的时间差，等于给暴力枚举留了旁路。
+
+    Args:
+        request: 当前请求。
+        api_keys: ``{token: user}`` 映射（来自 ``RECALL_API_KEYS``）。
+
+    Returns:
+        匹配成功时的身份（``groups`` 暂留空，S3 再加组）；否则 ``None``。
+    """
+    token = _extract_api_token(request)
+    if not token:
+        return None
+    candidate = token.encode("utf-8")
+    for expected, user in api_keys.items():
+        if hmac.compare_digest(expected.encode("utf-8"), candidate):
+            return Identity(user=user, groups=[])
+    return None
+
+
+def _record_audit(
+    service: Service,
+    request: Request,
+    status: int,
+    started: float,
+    identity: Identity | None,
+    outcome: str,
+) -> None:
+    """写一行审计（内容与失败处理见 :mod:`recall.audit`）。"""
+    service.audit.record(
+        AuditRecord(
+            ts=utc_now_iso(),
+            user=identity.user if identity is not None else "-",
+            groups=list(identity.groups) if identity is not None else [],
+            method=request.method,
+            path=request.url.path,
+            status=status,
+            duration_ms=round((time.perf_counter() - started) * 1000, 1),
+            outcome=outcome,
+            trace_id=uuid.uuid4().hex[:12],
+            client=request.client.host if request.client is not None else "-",
+        )
+    )
+
+
+class IdentityMiddleware:
+    """**唯一的鉴权点**：校验 API key → 写身份 contextvar → 审计（roadmap R-40）。
+
+    为什么是"一个中间件"而不是"MCP 用 FastMCP 原生 auth + REST 另写一套"：
+    两条鉴权路径必然分叉（R-45 的教训）。这里 REST 与 ``/mcp`` 共用**同一份**
+    key 表、同一段解析、同一个 401 信封；``/mcp`` 是挂载的子应用，而 ASGI
+    中间件包住整个 app（含挂载），因此必然在它之前生效。
+
+    为什么用**纯 ASGI 中间件**而不是 ``@app.middleware("http")``：
+
+    1. ``BaseHTTPMiddleware`` 会把下游放进子任务并对响应体加一层包装，而 ``/mcp``
+       走的是 ``text/event-stream`` **长连接**——纯 ASGI 只代理 ``send``，对流式响应零干预；
+    2. contextvar 在同一任务内可见是身份传递的前提，纯 ASGI 下无歧义。
+
+    未配置 key 表时**整段跳过**（S1 语义，见 :data:`~recall.config.DEFAULT_API_KEYS`）。
+    """
+
+    def __init__(self, app: ASGIApp) -> None:
+        """包装下游 ASGI 应用。
+
+        Args:
+            app: 下游 ASGI 应用（Starlette 处理链）。
+        """
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        """ASGI 入口：非 HTTP 作用域（lifespan 等）直接透传。"""
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        request = Request(scope, receive)
+        started = time.perf_counter()
+        service = await get_service()
+
+        identity: Identity | None = None
+        if service.settings.auth_enabled and request.url.path not in PUBLIC_PATHS:
+            identity = _resolve_identity(request, service.settings.api_keys)
+            if identity is None:
+                _record_audit(service, request, 401, started, None, OUTCOME_UNAUTHORIZED)
+                await _error_response(
+                    401,
+                    "unauthorized",
+                    "缺少或无效的 API key：请携带 X-API-Key 或 Authorization: Bearer <key>。",
+                )(scope, receive, send)
+                return
+
+        status = 500
+
+        async def _capture_status(message: Message) -> None:
+            """记录下游响应状态码供审计用，其余原样透传。"""
+            nonlocal status
+            if message["type"] == "http.response.start":
+                status = int(message["status"])
+            await send(message)
+
+        token = set_current_identity(identity) if identity is not None else None
+        try:
+            await self.app(scope, receive, _capture_status)
+        except Exception:  # noqa: BLE001 - 记录审计后原样重抛，不吞异常
+            _record_audit(service, request, status, started, identity, OUTCOME_ERROR)
+            raise
+        finally:
+            if token is not None:
+                reset_current_identity(token)
+
+        _record_audit(
+            service,
+            request,
+            status,
+            started,
+            identity,
+            OUTCOME_OK if status < 400 else OUTCOME_ERROR,
+        )
+
+
+app.add_middleware(IdentityMiddleware)
+
+
 @app.get("/health")
 async def health() -> HealthResult:
     """健康检查：Qdrant 可达性 + collection 状态 + 注册表文档数。"""
@@ -602,7 +806,9 @@ async def kb_search(query: str, top_k: int = 20, max_tokens: int = 3000) -> Sear
         max_tokens: 调用方可接受的证据 token 预算
     """
     try:
-        return await kb_search_core(SearchRequest(query=query, top_k=top_k, max_tokens=max_tokens))
+        return await kb_search_core(
+            SearchRequest(query=query, top_k=top_k, max_tokens=max_tokens), current_identity()
+        )
     except ValidationError as exc:
         raise ToolError(f"参数不合法：{_format_validation_error(exc)}") from exc
     except ApiError as exc:
@@ -645,7 +851,9 @@ async def kb_answer(query: str, max_tokens: int = 3000) -> AnswerResult:
         answer 正文（引用处为 [n]）、citations（用到的编号）、references（与 [n] 一一对应）。
     """
     try:
-        return await kb_answer_core(AnswerRequest(query=query, max_tokens=max_tokens))
+        return await kb_answer_core(
+            AnswerRequest(query=query, max_tokens=max_tokens), current_identity()
+        )
     except ValidationError as exc:
         raise ToolError(f"参数不合法：{_format_validation_error(exc)}") from exc
     except ApiError as exc:

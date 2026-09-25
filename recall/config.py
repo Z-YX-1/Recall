@@ -56,6 +56,22 @@ mcp-client 只在 transport 关闭时才重连）：
 不需要；需要时设 ``RECALL_MCP_STATELESS=0`` 回到状态化。
 """
 
+DEFAULT_API_KEYS = ""
+"""API key 表默认值：**空**（roadmap R-40，tech.md §7 的 S2 身份中间件）。
+
+格式 ``token:user``，多个用逗号分隔：``RECALL_API_KEYS="tok1:me,tok2:alice"``。
+
+**空的语义（重要，且是有意的）**：空 ⇒ **不启用鉴权**，退回 S1「无身份」语义。
+S1 的防线本来就是"只绑定 ``127.0.0.1``"，而本项目交付时并不存在 key 表；
+若把"没配 key"当成"拒绝一切请求"，升级即中断日常使用。因此这里选择
+**fail-open**：只有**配置了** key 表才启用强制鉴权。
+
+⚠️ 由此推出一条硬约束：**R-39（Coze 公网接入）的前置条件之一是必须配置 key 表**——
+否则公网网关一挂，``POST /kb/ingest`` 这个写端点就是公开的（tech.md §7、code_standards §6.1）。
+配置 key 表后，除 ``/health`` 外的**所有**端点（**含回环请求与 ``/mcp``**）都必须携带
+``X-API-Key`` 或 ``Authorization: Bearer``。
+"""
+
 LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s %(message)s"
 LOG_MAX_BYTES = 5 * 1024 * 1024
 LOG_BACKUP_COUNT = 3
@@ -81,6 +97,37 @@ def _read_bool(name: str, *, default: bool) -> bool:
     if raw in {"1", "true", "yes", "on"}:
         return True
     return default
+
+
+def parse_api_keys(raw: str) -> dict[str, str]:
+    """解析 ``RECALL_API_KEYS``（``token:user``，逗号分隔）→ ``{token: user}``。
+
+    空串与纯空白条目都会被跳过；格式错误**立即抛错**——配置错误必须在启动时
+    大声失败，而不是悄悄退化成"没有鉴权"（这是 fail-open 默认值之外唯一的兜底）。
+
+    Args:
+        raw: 环境变量原文；空串表示不启用鉴权。
+
+    Returns:
+        ``{"tok1": "me"}`` 形式的映射；``raw`` 为空时返回空字典。
+
+    Raises:
+        ValueError: 条目缺少冒号、token / user 为空，或出现重复 token。
+    """
+    keys: dict[str, str] = {}
+    for item in raw.split(","):
+        entry = item.strip()
+        if not entry:
+            continue
+        token, sep, user = entry.partition(":")
+        token, user = token.strip(), user.strip()
+        if not sep or not token or not user:
+            raise ValueError(f"RECALL_API_KEYS 条目格式应为 token:user，实得 {entry!r}")
+        if token in keys:
+            # ⚠️ 只回显前 4 位：错误信息会进日志，不能把完整密钥写进去
+            raise ValueError(f"RECALL_API_KEYS 出现重复 token（前缀 {token[:4]}…）")
+        keys[token] = user
+    return keys
 
 
 def _sync_hf_offline(offline: bool) -> None:
@@ -126,6 +173,10 @@ class Settings:
             :data:`DEFAULT_HF_HUB_OFFLINE`。
         mcp_stateless: MCP Streamable HTTP 是否走**无会话**模式；默认
             ``True``，见 :data:`DEFAULT_MCP_STATELESS`。
+        api_keys: API key 表 ``{token: user}``（``RECALL_API_KEYS``）；
+            **空表示不启用鉴权**（S1 语义），见 :data:`DEFAULT_API_KEYS`。
+            非空时除 ``/health`` 外所有端点强制携带 ``X-API-Key`` /
+            ``Authorization: Bearer``。绝不入日志（错误信息只回显前 4 位）。
         deepseek_api_key: DeepSeek API key（仅胖端点使用；绝不入日志/库/payload）。
         deepseek_base_url: DeepSeek OpenAI 兼容接口地址。
         deepseek_model: 生成用模型名。
@@ -144,6 +195,7 @@ class Settings:
     hf_endpoint: str
     hf_hub_offline: bool
     mcp_stateless: bool
+    api_keys: dict[str, str]
     deepseek_api_key: str | None
     deepseek_base_url: str
     deepseek_model: str
@@ -183,6 +235,7 @@ class Settings:
             hf_endpoint=os.getenv("HF_ENDPOINT", DEFAULT_HF_ENDPOINT).strip(),
             hf_hub_offline=_read_bool("HF_HUB_OFFLINE", default=DEFAULT_HF_HUB_OFFLINE),
             mcp_stateless=_read_bool("RECALL_MCP_STATELESS", default=DEFAULT_MCP_STATELESS),
+            api_keys=parse_api_keys(os.getenv("RECALL_API_KEYS", DEFAULT_API_KEYS)),
             deepseek_api_key=os.getenv("DEEPSEEK_API_KEY") or None,
             deepseek_base_url=os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com").strip(),
             deepseek_model=os.getenv("DEEPSEEK_MODEL", "deepseek-chat").strip(),
@@ -196,6 +249,26 @@ class Settings:
         os.environ.setdefault("HF_HUB_OFFLINE", "1" if settings.hf_hub_offline else "0")
         _sync_hf_offline(settings.hf_hub_offline)
         return settings
+
+    @property
+    def auth_enabled(self) -> bool:
+        """是否启用强制鉴权（即是否配置了 key 表）。
+
+        Returns:
+            配置了至少一个 key 时为 ``True``；空 key 表表示 S1 语义、不鉴权。
+        """
+        return bool(self.api_keys)
+
+    @property
+    def audit_log_path(self) -> Path:
+        """审计日志文件路径（JSON lines，与结构化日志同目录但独立文件）。
+
+        独立成文件是为了便于单独轮转与审计检索（``data/logs/audit.jsonl``）。
+
+        Returns:
+            审计日志的绝对路径。
+        """
+        return self.log_dir / "audit.jsonl"
 
 
 def configure_logging(
