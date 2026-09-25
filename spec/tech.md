@@ -390,9 +390,9 @@ httpx 默认 `trust_env=True` 会读到它，**连本机服务也会发给代理
 审计行同时记 `peer`，因此"这个 `client` 是不是转发头来的"永远可追溯。
 ⚠️ `RECALL_TRUSTED_PROXIES` 表达的是**链路可信**，不是业务信任；显式置空即"谁都不信"。
 
-### 12.3 Qdrant 的间歇性 IO 失败与存储泄漏（2026-09-25 深入定位，**未解决**）
+### 12.3 Qdrant 间歇性 IO 失败：**已解决（升级 1.19.0 → 1.19.1）**，2026-09-25
 
-**症状**：全量 `pytest` **每次跑都有 3~4 个用例失败**，且**失败用例每次不同、单跑必过**。
+**症状**：全量 `pytest` **每次跑都有 3~4 个用例失败**，**失败用例每次不同、单跑必过**。
 
 **原始报文**（抓到多次，签名完全一致）：
 
@@ -404,41 +404,36 @@ Unexpected Response: 500 (Internal Server Error)
 
 **失败点**：集中在**给新建 collection 建 payload 索引**时（实测 `index:groups`、`index:updated_at_ts`）。
 
-**已排除**（逐项实测）：
+**根因（证据链闭合）**：本机原为 **Qdrant v1.19.0**（正式稳定版，`prerelease=false`，
+2026-08-05 发布 —— **不是**预发布构建），而
+[v1.19.1 的 changelog](https://github.com/qdrant/qdrant/releases/tag/v1.19.1) 的
+Bug Fixes **第一条**正是：
 
-| 候选 | 证据 | 结论 |
-|---|---|---|
-| 磁盘满 | 清理后 D 盘余 12.6~14GB | ❌ 排除 |
-| 杀毒软件锁文件 | `DisableRealtimeMonitoring = True`（Defender 实时防护**已关**） | ❌ 排除 |
-| 文件系统语义 | D: 为 **NTFS**（非 exFAT/网络盘） | ❌ 排除 |
-| Qdrant 进程状态 | **重启 Qdrant 后仍复现** | ❌ 排除 |
-| 本项目代码改动 | 该现象**早于**本轮所有改动（round 9 首次出现，当时改动只在 `tools/` 与文档） | ❌ 排除 |
+> PR #10201 — **"Fix data consistency, flush CoW segments before building payload index"**
 
-**目前最可疑（2026-09-25 查证，证据链闭合）**：本机 Qdrant 是 **v1.19.0**，而
-**Qdrant 官方 changelog 里 v1.19.1 的第一条 Bug Fix 正中我们的失败点**：
+—— 与我们的失败点（**建 payload 索引**时报 IO 错误）**完全吻合**。
+旁证：v1.19.0 自身也带了一批 CoW/segment-flush 竞态修复（PR #9424 等），说明 1.19.x
+这条线正在密集改这块。
 
-> v1.19.1（2026-09-04 发布）· Bug Fixes · PR #10201 —
-> **"Fix data consistency, flush CoW segments before building payload index"**
+**验证**：升级到 **1.19.1**（commit `6ab21cac18`）后——
+**升级前连续 4 次全量：4 / 1 / 1+1error / 4 项失败；升级后：`287 passed`（全绿）**。
+故障消失，根因确认。
 
-我们的失败点**就是"建 payload 索引"**（`index:groups` / `index:updated_at_ts`），
-报错形态是 IO 错误 —— 与该修复描述**高度吻合**。旁证：v1.19.0 自身也带了一批
-CoW/segment-flush 竞态修复（PR #9424 等），说明 1.19.x 这条线正在密集改动这块。
-
-📌 **更正一处先前的错误判断**：我曾把本机版本描述为"比已知稳定线更新、疑似预发布构建"。
-**这是错的** —— 官方 API 明确 `prerelease=false, draft=false`，**v1.19.0 是正式稳定版**
-（2026-08-05 发布）。问题不是"用了预发布"，而是**用了一个其后被补丁修复的版本**。
-
-**升级路径（v1.19.0 → v1.19.1，同 minor 版，存储格式兼容）**：
+**升级路径与踩坑记录**：
 
 | 项 | 值 |
 | :--- | :--- |
 | 资产 | `qdrant-x86_64-pc-windows-msvc.zip`（29,671,153 字节） |
-| URL | `https://github.com/qdrant/qdrant/releases/download/v1.19.1/qdrant-x86_64-pc-windows-msvc.zip` |
 | SHA-256 | `9b6f69bd85f6abed4bc13f943099f55c6ffd55f5dd90388635320d8fbb569eb0` |
+| 回退 | 旧二进制留档为 `tools/qdrant/qdrant-1.19.0.exe.bak`，换回即回退 |
 
-**升级步骤**：① 停 Qdrant；② 把现有 `tools/qdrant/qdrant.exe` **改名留档**（回退只需换回）；
-③ 解压新 zip 覆盖 `qdrant.exe`（**保留 `storage/` 与 `snapshots/` 不动**）；④ 启动并核对
-`GET /` 版本号与 `GET /collections` 两个真实库健在；⑤ 复跑全量看是否转绿。
+⚠️ **镜像不可信，必须校验 sha256**：本次下载中，**直连 GitHub** 只拿到 2,292,163 字节、
+**ghproxy.net** 只拿到 2,143,543 字节（均为**截断**文件），**是 sha256 校验把它们拦下的**；
+最终 `gh-proxy.com` 给出完整文件且哈希一致。⇒ 从任何第三方镜像取二进制都要比对官方哈希。
+
+**伴生问题（仍存在，非本 bug）**：Qdrant 删除 collection 时**不删磁盘目录** ⇒
+**每跑一次全量测试泄漏约 0.7~1.4GB**（1.19.1 上依旧）。故 `tools/clean_qdrant_orphans.py`
+仍需定期使用（**默认只列出**，确认后 `--yes`）。
 
 **伴生的存储泄漏（已解决）**：测试夹具每用例建一个一次性 collection，**API 删除成功但磁盘目录
 不删** ⇒ **每跑一次全量泄漏约 1.4GB**（实测一次 run 让 D 盘 14.09 → 12.66GB）。

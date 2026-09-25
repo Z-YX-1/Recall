@@ -12,6 +12,7 @@ data/
 tools/qdrant/*.zip
 tools/qdrant/qdrant.exe
 tools/qdrant/*.dll
+tools/qdrant/*.bak
 tools/qdrant/storage/
 tools/qdrant/snapshots/
 tools/qdrant/.qdrant-initialized

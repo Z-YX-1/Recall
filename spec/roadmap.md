@@ -733,12 +733,10 @@ created: 2026-09-04
     - ~~R-44：MCP 默认无会话~~ → **已认可（2026-09-24）** ⇒ 定为最终默认值，`RECALL_MCP_STATELESS=0` 可回退；
     - ~~R-19b 是否属契约变更~~ → **已确认（2026-09-23）**（已回写 tech.md §4 与 §17）；
     - ~~R-32d 检索阈值~~ → **已定案（2026-09-24）走回答模板路线**，胖端点侧候选转入 R-42。
-- **最近一次测试结果**（2026-09-25）：⚠️ **`pytest` 未全绿（环境级故障）** —— 复跑 4 次分别
-  **4 / 1 / 1+1error / 4 项失败**（283~286 passed），签名恒为 Qdrant
-  `500 + Not recovered from previous error: IO Error: 拒绝访问 (os error 5)`，失败点集中在
-  **新建 collection 建 payload 索引**；已排除磁盘/杀毒/文件系统/进程状态/本项目改动，
-  最可疑为 **Qdrant v1.19.0 构建**（详见 `tech.md` §12.3 与 §七）。
-  `ruff` 零告警、`mypy` strict **53 文件**零错误；R-45 验收脚本 15/15（鉴权关闭态）。
+- **最近一次测试结果**（2026-09-25）：✅ **`pytest` 全绿 —— 287 passed**（升级 Qdrant 至 **1.19.1**
+  后恢复；升级前连续 4 次全量为 4 / 1 / 1+1error / 4 项环境性失败，详见 §七 与 `tech.md` §12.3）；
+  `ruff` 零告警；`mypy` strict **53 文件**零错误；R-45 验收脚本 15/15（鉴权关闭态）。
+  📌 全量跑仍会泄漏 Qdrant 存储目录（每跑一次 0.7~1.4GB），定期跑 `tools\clean_qdrant_orphans.py`
 - ⚠️ **已定位但未解决（2026-09-25）**：**每次全量跑都有 3~4 项环境性失败** —— Qdrant 报
   `500 + Not recovered from previous error: IO Error: 拒绝访问`，失败点在**给新建 collection
   建 payload 索引**。已逐项排除磁盘满 / 杀毒 / 文件系统 / 进程状态 / 本项目改动，
@@ -748,7 +746,7 @@ created: 2026-09-04
   本机 D 盘从 7.76GB 清到 14.84GB）；④ 保持 D 盘余量充裕
 - **验收实测**（2026-09-24，项目工程师执行）：摄取 65 篇 0 失败；`/health` ok（972 点 / 65 篇）；检索 **Recall@1=0.767 / @3=0.933 / @5=0.933 / @10=1.000 / MRR=0.860**（与基线逐位一致）；Ragas **引用一致性 1.000 / faithfulness 0.858 / answer_relevancy 0.758**；DSH 问答带 `[n]` 引用通过
 - **验收实测**（2026-09-25，项目工程师执行）：**R-45 15/15 全绿**（`python tools\verify_r45.py`）
-- **本文件版本**：v0.24.1（2026-09-25 **Qdrant 故障根因指向版本：1.19.0 是正式稳定版，但 v1.19.1 的第一条修复正中"建 payload 索引"，升级路径已写明** + 存储泄漏清理工具。**当前待项目工程师：是否升级 Qdrant 至 1.19.1 / 重启验收 + R-42 门槛 + R-39 路线 + R-41 平台 + 实现细节背书**）
+- **本文件版本**：v0.25.0（2026-09-25 ✅ **Qdrant 升级 1.19.0 → 1.19.1，全量恢复全绿（287 passed）**；根因即该补丁修的"建 payload 索引前 flush CoW 段"。**当前待项目工程师：重启 `recall.api` 后跑验收脚本 + R-42 门槛 + R-39 路线 + R-41 平台 + 实现细节背书**）
 
 ---
 
@@ -875,5 +873,7 @@ created: 2026-09-04
 | 2026-09-25 | R-40,R-38,R-42,R-39 | **验收脚本扩到覆盖 Phase 6 全部增量** | `tools/verify_phase6.py` 新增三节：① **MCP 工具可见性** —— 按 key 表里**每个身份**实调 `tools/list` 并核对白名单（未配 key 时以匿名身份验证，顺带验证 MCP SSE 响应解析）；② **文档权限分布** —— 只读注册表报告 `owner/visibility`，无 public 文档时明确提示"外部身份检索不到任何东西"；③ **网关与审计来源** —— 报告 `mcp_auth_mode`/`trusted_proxies`，网关模式下**校验是否配了该身份工具白名单**（没配判 FAIL）并验 `/mcp` 不再 401，再统计最近 200 条审计的 `client_source` 分布 | 至此"一条命令验完 Phase 6"成立：R-40/R-38/R-42/R-39 前置件全覆盖，只剩"用 DSH 问一句"仍需人工。**本机实测**：正确报出注册表 65 篇全为 `me/private`（⇒ 给外部的 token 必须映射到 `me`），并识别出服务进程陈旧 |
 | 2026-09-25 | — | ⚠️ **偶发失败登记（待观察）** | 本轮全量 `pytest` **首次跑出现 2 项失败**（`test_auth.py::test_client_filter_cannot_widen_visibility`、`test_search.py::test_rest_stats_endpoint_matches_the_mcp_tool`），**单独复跑两项均通过**，**紧接着复跑全量 285 passed**。本轮代码改动只在 `tools/verify_phase6.py` 与文档（不被测试覆盖）⇒ 判为**偶发**而非回归 | **假设（未证实）**：跑全量时本机**同时驻留着 API 服务进程（PID 6804，模型常驻显存）**，与 pytest 自己的模型叠加造成消费级显存紧张 ⇒ 偶发。📌 下次复现时用 `pytest -x --tb=long` 抓详情再定因；排查方向：先停 `recall.api` 再跑全量，若不再复现即证实该假设 |
 | 2026-09-25 | — | 🔴 **Qdrant 间歇性 IO 失败：已定位（环境级）** | 复跑全量 **4 次，每次都失败**（4 / 1 / 1+1error / 4 项），签名始终一致：`500` + `Not recovered from previous error: IO Error: 拒绝访问。 (os error 5)`，失败点集中在**给新建 collection 建 payload 索引**（`index:groups`、`index:updated_at_ts`）。**逐项排除**：磁盘满（清理后余 12.6~14GB）、杀毒（Defender 实时防护**已关**）、文件系统（**NTFS**）、进程状态（**重启 Qdrant 仍复现**）、本项目改动（现象**早于**本轮改动） | ⚠️ **本轮 gates 不是全绿**（283~286 passed / 每次 3~4 项环境性失败），如实登记。**根因指向 Qdrant 版本**，见下一条 |
-| 2026-09-25 | — | ✅ **版本查证：1.19.0 是正式稳定版；v1.19.1 的第一条修复正中我们的失败点** | 查 GitHub Releases API（`api.github.com/repos/qdrant/qdrant/releases`）：**v1.19.0 `prerelease=false, draft=false`**（2026-08-05 发布）⇒ **是正式稳定版，不是预发布**（**更正我上一条"疑似预发布构建"的判断**，问题不在"用了预发布"，而在"用了一个其后被补丁修复的版本"）。**v1.19.1**（2026-09-04，同样 `prerelease=false`）的 Bug Fixes **第一条**即：PR #10201 **"Fix data consistency, flush CoW segments before building payload index"** —— 而我们的失败点**正是"建 payload 索引"**（`index:groups`/`index:updated_at_ts`）并报 IO 错误，**高度吻合**。旁证：v1.19.0 自身也带了一批 CoW/segment-flush 竞态修复（PR #9424 等） | v1.19.1 是最新发布（无更新版本）。**升级路径已写入 `tech.md` §12.3**：Windows 资产 `qdrant-x86_64-pc-windows-msvc.zip`（29,671,153 字节，sha256 `9b6f69bd…`）；步骤 = 停 → **旧 exe 改名留档** → 解压覆盖（**保留 `storage/`/`snapshots/`**）→ 启动核对版本与两个真实库 → 复跑全量 |
+| 2026-09-25 | — | ✅ **版本查证：1.19.0 是正式稳定版；v1.19.1 第一条修复正中失败点** | 查 GitHub Releases API：**v1.19.0 `prerelease=false, draft=false`**（2026-08-05 发布）⇒ **是正式稳定版，不是预发布**（**更正"疑似预发布构建"的旧判断**——问题不在用了预发布，而在用了一个其后被补丁修复的版本）。**v1.19.1**（2026-09-04，同样 `prerelease=false`）Bug Fixes **第一条**：PR #10201 **"Fix data consistency, flush CoW segments before building payload index"** —— 而我们的失败点**正是"建 payload 索引"**（`index:groups`/`index:updated_at_ts`）且报 IO 错误，**高度吻合**；旁证：v1.19.0 自身也带了一批 CoW/segment-flush 竞态修复（PR #9424 等） | v1.19.1 是最新发布。元数据与升级路径见 `tech.md` §12.3：Windows 资产 `qdrant-x86_64-pc-windows-msvc.zip`（29,671,153 字节，sha256 `9b6f69bd…`） |
+| 2026-09-25 | — | ✅ **已解决：升级 Qdrant 1.19.0 → 1.19.1** | 项目工程师批准后执行：停 → 旧 exe 留档（`qdrant-1.19.0.exe.bak`，回退一条命令）→ 下载校验 → 覆盖（`storage/`/`snapshots/` 未动）→ 启动核对（**1.19.1**，commit `6ab21cac18`，两个真实库健在）→ 复跑全量。**结果：`287 passed`（全绿）**；升级前连续 4 次全量为 4 / 1 / 1+1error / 4 项失败 ⇒ **故障消失，根因确认**。⚠️ **镜像不可信的实证**：直连 GitHub 只下到 2,292,163 字节、ghproxy.net 只下到 2,143,543 字节（**均截断**），**是 sha256 校验拦下的**；`gh-proxy.com` 给出完整文件且哈希一致 | 教训写入 `tech.md` §12.3：**从任何第三方镜像取二进制都必须比对官方 sha256**。📌 伴生的**存储泄漏仍存在**（1.19.1 上 Qdrant 删 collection 依然不删磁盘目录，每跑一次全量漏 0.7~1.4GB）⇒ `tools/clean_qdrant_orphans.py` 仍需定期使用 |
+| 2026-09-25 | — | 忽略规则补强 | `.gitignore` 的 Qdrant 二进制段补 **`tools/qdrant/*.bak`** | 升级时留档的旧二进制（80MB）**差点被 `git add -A` 提交进仓库** —— 原规则只列了 `qdrant.exe` / `*.zip` / `*.dll` 等具体文件名，`*.bak` 不在其中。已 `git restore --staged` 并补规则、`git check-ignore` 复核通过 |
 | 2026-09-25 | — | ✅ **存储泄漏定位与清理（伴生问题）** | 测试每用例建一次性 collection，**API 删除成功但磁盘目录不删** ⇒ **每跑一次全量泄漏约 1.4GB**（实测 D 盘 14.09 → 12.66GB）。处置：① `tests/conftest.py` 的清理失败由**静默 `contextlib.suppress`** 改为**记 WARNING**（泄漏从此看得见）；② 新增 `tools/clean_qdrant_orphans.py`（**默认只列出**、`--yes` 才删、只删 `recall-test-*` 前缀）⇒ 本机执行后 **D 盘 7.76 → 14.84GB**，两个真实库完好。⚠️ **安全性更正**：该工具原本以"不在 Qdrant collection 列表里"判定孤儿，但实测 **Qdrant 降级时其列表不可靠**（重启后多出两个之前未列出的测试 collection）⇒ 真正兜底的是**前缀约束**（生产集合命名含 `recall__…@…__`，不可能匹配 `recall-test-*`） | 另修正上一条登记的**错误假设**（"显存紧张"）—— 已由原始报文推翻；`store.py` 把该降级 500 归入 `StoreUnavailableError`（**只认这一种 500**，其它 500 仍原样抛），使失败从"无从下手的 500"变成"语义化 503 + 提示重启"；新增 2 项回归测试 |
