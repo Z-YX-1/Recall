@@ -16,7 +16,7 @@ created: 2026-09-04
 ## 1. 架构总览
 
 ```
-┌──────────────────────── 摄取侧（CLI 手动触发 / 后续 watchdog 常驻） ────────────────────────┐
+┌──────────────────────── 摄取侧（CLI 手动触发 / `python -m recall.watchdog` 常驻） ────────────────────────┐
 │  Connector(Obsidian v1) → 文档注册表(SQLite) → 切分器(标题主切+递归兜底)                  │
 │    → bge-m3(dense+sparse, GPU) → Qdrant upsert（内容寻址 id + 孤儿清理）                   │
 └────────────────────────────────┬──────────────────────────────────────────────────────────┘
@@ -133,6 +133,27 @@ query → bge-m3 同模型编码(dense+sparse)
 | 孤儿清理 | 删除 doc 名下不在新 id 集合的旧块 | 重灌完成后按 doc_id 扫 |
 
 重灌脚本 = 同一管道参数化：`ingest.py --rebuild --collection recall__bge-m3@v2__md --model bge-m3@v2 --chunker md-heading-v1`；幂等、可断点续传、可重复执行。
+
+### 5.1 常驻增量同步 `python -m recall.watchdog`（roadmap R-38，2026-09-25）
+
+它堵的是一条**静默失败**：写完笔记后检索看到的还是旧内容，而且不报错。
+
+| 项 | 契约 |
+|---|---|
+| 形态 | `watchdog` 的 `Observer`（Windows 走 `ReadDirectoryChangesW` 原生事件）+ 官方 `EventDebouncer` 去抖（默认 1s） |
+| **触发方式** | 只发 `POST /kb/ingest {"mode": "update"}` 给**已在跑的 API** —— watcher 进程**不装载任何模型**（否则会出现第二份 bge-m3 ≈ 2.2GB，是 R-23b 那类崩溃的土壤，还会与 API 抢显存） |
+| **只做增量** | 请求体恒为 `update`；`--rebuild` 仍须人工触发（它会持有 `inference_lock` 数分钟，期间检索全部排队） |
+| 过滤 | 只认 `.md`；跳过任何以 `.` 开头的目录与 `DEFAULT_SKIP_DIRS`（`.obsidian`/`.trash`/`node_modules`…）——**规则直接复用摄取侧常量**，避免为 ingest 不在乎的文件空跑；`.obsidian/` 高频写，不挡会无限自触发 |
+| 鉴权 | 启用鉴权时用 `RECALL_WATCHDOG_API_KEY`（或 `--api-key`）发 `X-API-Key` |
+| 失败处理 | 重试（默认 3 次 / 间隔 2s）后只记日志**绝不退出进程**——watcher 死了就再没人提醒你笔记过期 |
+| 并发 | 同步进行中再有变化 ⇒ 记 `pending`，跑完再来一轮（最多 5 轮，防持续写入饿死）；**不并发触发**，免把模型锁挤爆 |
+| 启动补同步 | 默认启动时先同步一次（抓 watcher 没跑时发生的改动），`--no-initial-sync` 可关 |
+| 逃生口 | `--force-polling`（原生事件异常时改轮询）；`--once`（同步一次即退，供 cron / 排错） |
+| 退出码 | 常驻正常退出 `0`；`--once` 失败 `1`；缺 vault `2` |
+
+**验收判据**（端到端，比看数字重要）：改一篇笔记 ⇒ 等一个去抖周期 ⇒ `GET /kb/stats` 的
+`points_count`/`documents` 变化 ⇒ **立刻用 DSH 问该笔记的内容能命中**；
+期间并发 `kb_search` 仍 200；连续触发两次 `points_count` 不变（幂等）。
 
 ## 6. 组装层（瘦/胖分界）
 
@@ -272,7 +293,8 @@ $env:HF_ENDPOINT = "https://hf-mirror.com"                    # 国内下载镜�
 # 进程
 进程1: qdrant 服务       127.0.0.1:6333
 进程2: uvicorn recall.api 127.0.0.1:8000（REST + /mcp）
-进程3: python ingest.py --update（手动 / 后续 watchdog 常驻）
+进程3: python ingest.py --update（手动）
+进程4: python -m recall.watchdog（常驻增量同步，R-38；它只 POST /kb/ingest 给进程2）
 ```
 
 ## 13. 落地路线与验收

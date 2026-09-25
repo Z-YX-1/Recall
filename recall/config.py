@@ -177,6 +177,9 @@ class Settings:
             **空表示不启用鉴权**（S1 语义），见 :data:`DEFAULT_API_KEYS`。
             非空时除 ``/health`` 外所有端点强制携带 ``X-API-Key`` /
             ``Authorization: Bearer``。绝不入日志（错误信息只回显前 4 位）。
+        watchdog_api_key: vault 监听进程（roadmap R-38）调 ``POST /kb/ingest`` 时
+            使用的 token（``RECALL_WATCHDOG_API_KEY``）。取 :attr:`api_keys` 里
+            任意一把即可；**未启用鉴权时留空**。
         deepseek_api_key: DeepSeek API key（仅胖端点使用；绝不入日志/库/payload）。
         deepseek_base_url: DeepSeek OpenAI 兼容接口地址。
         deepseek_model: 生成用模型名。
@@ -196,6 +199,7 @@ class Settings:
     hf_hub_offline: bool
     mcp_stateless: bool
     api_keys: dict[str, str]
+    watchdog_api_key: str | None
     deepseek_api_key: str | None
     deepseek_base_url: str
     deepseek_model: str
@@ -236,6 +240,7 @@ class Settings:
             hf_hub_offline=_read_bool("HF_HUB_OFFLINE", default=DEFAULT_HF_HUB_OFFLINE),
             mcp_stateless=_read_bool("RECALL_MCP_STATELESS", default=DEFAULT_MCP_STATELESS),
             api_keys=parse_api_keys(os.getenv("RECALL_API_KEYS", DEFAULT_API_KEYS)),
+            watchdog_api_key=os.getenv("RECALL_WATCHDOG_API_KEY") or None,
             deepseek_api_key=os.getenv("DEEPSEEK_API_KEY") or None,
             deepseek_base_url=os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com").strip(),
             deepseek_model=os.getenv("DEEPSEEK_MODEL", "deepseek-chat").strip(),

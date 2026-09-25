@@ -226,6 +226,7 @@ def test_from_settings_reads_deepseek_config() -> None:
         hf_hub_offline=True,
         mcp_stateless=True,
         api_keys={},
+        watchdog_api_key=None,
         deepseek_api_key="secret",
         deepseek_base_url="https://api.deepseek.com",
         deepseek_model="deepseek-chat",

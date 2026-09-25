@@ -212,3 +212,17 @@ def test_audit_log_path_sits_next_to_the_structured_logs(monkeypatch: pytest.Mon
     monkeypatch.setenv("RECALL_LOG_DIR", "D:/tmp/recall-logs")
 
     assert Settings.from_env().audit_log_path.name == "audit.jsonl"
+
+
+def test_watchdog_api_key_is_optional(monkeypatch: pytest.MonkeyPatch) -> None:
+    """未启用鉴权时 watcher 不需要 key ⇒ 默认 ``None``（roadmap R-38）。"""
+    monkeypatch.delenv("RECALL_WATCHDOG_API_KEY", raising=False)
+
+    assert Settings.from_env().watchdog_api_key is None
+
+
+def test_watchdog_api_key_is_read_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """启用鉴权后，watcher 用这把 token 调 ``POST /kb/ingest``。"""
+    monkeypatch.setenv("RECALL_WATCHDOG_API_KEY", "tok-watchdog")
+
+    assert Settings.from_env().watchdog_api_key == "tok-watchdog"

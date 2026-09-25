@@ -366,15 +366,44 @@ created: 2026-09-04
 
 ### Phase 6：后续迭代预留（不在首版验收范围，项目工程师另行排期）
 
-- [ ] **R-38** watchdog 常驻增量同步（监听 vault 变化自动 `ingest --update`）。
+- [x] **R-38** watchdog 常驻增量同步（监听 vault 变化自动 `ingest --update`）。
     ✅ 预研（2026-09-25，Context7 核实 + 本机核验）：① watchdog 在 Windows Vista+ 走 `ReadDirectoryChangesW`
     **原生事件**（官方文档），纯 Python 无编译依赖；② 官方提供 `EventDebouncer(debounce_interval_seconds,
     events_callback)` 处理"编辑器保存即多次写"的事件风暴 ⇒ **去抖不用手搓**；③ 已知怪癖：目录删除可能报成文件删除、
     目录移动事件可能早于 I/O 完成 ⇒ 触发路径必须是**幂等**的 `POST /kb/ingest {"mode":"update"}`
     （doc 级 hash 跳过兜底），且必须**过滤 `.obsidian/`、`.trash/`**（Obsidian 自己的索引目录高频写，否则无限自触发）。
-    建议形态：watchdog + EventDebouncer（近实时）；轮询 mtime 为无依赖备选。watcher **不自己装载模型**（防 R-23b 类
-    双份 bge-m3），只 POST 给已在跑的 API（R-40 后带 key）。只做增量；`--rebuild` 仍人工触发（`inference_lock`
-    是进程级单锁，重建期间检索排队——已核实 `embedder.py:129`/`rerank.py:134`）。形态与常驻方式待拍板。
+    watcher **不自己装载模型**（防 R-23b 类双份 bge-m3），只 POST 给已在跑的 API（R-40 后带 key）。
+    只做增量；`--rebuild` 仍人工触发（`inference_lock` 是进程级单锁，重建期间检索排队）。
+    ✅ **实现（2026-09-25）**：
+    - `recall/watchdog.py`（新）：`should_index()`（过滤规则**复用摄取侧的 `DEFAULT_SKIP_DIRS`/`MARKDOWN_SUFFIX`**）、
+      `IngestTrigger`（唯一副作用出口，`POST /kb/ingest {"mode":"update"}` + `X-API-Key`；重试 3 次/间隔 2s，
+      **失败只记日志绝不退出进程**）、`_VaultEventHandler`（只筛选，不做耗时操作）、
+      `VaultWatcher`（`Observer` + 官方 `EventDebouncer` 去抖；同步中再有变化记 pending、跑完再来一轮，
+      最多 5 轮；**不并发触发**）、`main()`（`python -m recall.watchdog`）；
+    - CLI：`--vault/--api-url/--api-key/--debounce/--once/--no-initial-sync/--force-polling/--timeout/--retries/--retry-delay/--log-level`；
+      退出码：常驻正常 `0`、`--once` 失败 `1`、缺 vault `2`；
+    - `recall/config.py`：新增 `Settings.watchdog_api_key`（env `RECALL_WATCHDOG_API_KEY`）；
+    - 依赖新增 **`watchdog>=6.0.0,<7`**（`pyproject.toml` + `requirements.lock` 已同步；Windows 为预编译 wheel）。
+    ✅ 验证（2026-09-25）：
+    - 离线单测 `tests/test_watchdog.py` **20 项**：路径过滤（含 `.obsidian`/`.trash`/`node_modules`/非 md/vault 外）、
+      **报文三要素**（`/kb/ingest` + `mode=update` + `X-API-Key`，用**真实本地 HTTP 桩**验证）、
+      **永不出现 `rebuild`**、去抖（连发 5 次写 ⇒ **只触发 1 次**）、`.obsidian` 内写入**不触发**、
+      不可达时重试后返回 `False` 且不抛、CLI 默认值与三种退出码；
+    - **真实端到端**（项目工程师环境，2026-09-25 19:22）：`python -m recall.watchdog --once` 对正在运行的
+      API（PID 6804）触发成功（`watchdog.ingest_ok`，退出码 0）⇒ 增量重索引 3 篇（vault 内的
+      `project/Recall/spec/{roadmap,tech,code_standards}.md` 快照当日有更新），`orphans_deleted` 正常执行；
+      **账目核对**：`sum(chunk_count) = points_count = 1019`、65 篇、0 失败 ⇒ 幂等三机制完好、无孤儿；
+      **第二次触发** points 仍 1019（反复触发不污染）。
+    - gates：`ruff` 全绿、`mypy` strict **42 文件**零错误、全量 `pytest` **206 passed**。
+    🧭 项目工程师指示：**待验收**（实现与 gates 已完成）。
+    ✅ **验收方式**（项目工程师执行）：① 起服务（`python -m recall.api`）与 watcher
+    （`python -m recall.watchdog`，另开终端；启用鉴权时先设 `RECALL_WATCHDOG_API_KEY`）；
+    ② 在 vault 里**新建/修改一篇笔记**；③ 等一个去抖周期（默认 1s）后
+    `GET /kb/stats` 的 `documents`/`points_count` 应变化；
+    ④ **立刻用 DSH 问该笔记里的内容 ⇒ 能命中**（这是唯一不可替代的端到端判据）；
+    ⑤ 期间并发 `kb_search` 仍 200；⑥ 再触发一次 `points_count` 不变（幂等）；
+    ⑦ 在 `.obsidian/` 里写文件**不应**触发同步。
+    📌 常驻方式（手动终端 vs 计划任务开机自启）：建议**先手动**跑稳，再上计划任务。
 - [ ] **R-39** Coze 接入：公网网关（Cloudflare Tunnel / 云服务器）+ API key + 限流 + 审计——权限 S2 的触发点（tech.md §7）。
     📌 外部现状（2026-09-25 web 核实）：Coze 支持接入外部 MCP（docs.coze.cn/mcp）；Cloudflare Tunnel 有
     quick tunnel（`cloudflared tunnel --url`）与 named tunnel（config.yml ingress）两种成熟形态。
@@ -528,19 +557,23 @@ created: 2026-09-04
 
 ## 六、 当前进度快照（每步完成/受阻后更新）
 
-- **当前阶段**：✅ **Phase 0~5 全部完成（首版交付验收达成）+ R-43c / R-45 已闭环**；**Phase 6 已开工：R-40 权限 S2 实现完成、待验收**
-- **当前步骤**：**R-40 权限 S2（2026-09-25 实现完成，`pytest` 184 passed / ruff / mypy 全绿）⇒ 待项目工程师验收**
+- **当前阶段**：✅ **Phase 0~5 全部完成（首版交付验收达成）+ R-43c / R-45 已闭环**；**Phase 6 进行中：R-40、R-38 实现完成，均待验收**
+- **当前步骤**：**R-38 watchdog 常驻增量同步（2026-09-25 实现完成 + 真实端到端验证，`pytest` 206 passed）⇒ 待项目工程师验收**；R-40 亦待验收
 - **已通过项**：R-01、R-02b、R-03b、R-04、R-05、R-06、R-07~R-17、R-18、R-19、R-19b、R-20~R-23c、R-24、R-25、R-26、R-27、R-27c~R-27i、R-28、R-28b、R-29、R-29b、R-30、R-31、R-32、R-32b、R-32c、R-33、R-34、R-35、R-36、R-37、R-43、R-43b、R-43c、R-44、R-45
-- **待验收项**：**R-40**（实现与 gates 已完成，等真实 DSH 会话复验）
+- **待验收项**：**R-40**（权限 S2）、**R-38**（watchdog）—— 实现与 gates 均已完成
 - **未通过项**：R-02（官方源网络超时，已走 R-02b）、R-03（Docker 未运行，已走 R-03b）
 - **待请示事项**（以下为**非阻塞**的后续选择）：
   - **需你拍板**：
     1. **R-40 验收**（实现与 gates 已完成）：按 R-40 条目的「验收方式」五步走，关键是第 ③ 步
        ——在 `$DSH_HOME/mcp-servers.json` 加 `headers` 后**重开 DSH 会话**问答应正常。
-    2. **R-46 处置**（2026-09-25 新发现）：本机系统代理把"Qdrant 不可达"变成 HTTP 502，
+    2. **R-38 验收**（实现完成 + 已做真实端到端验证）：起 watcher 后改一篇笔记 ⇒
+       `GET /kb/stats` 数字变化 ⇒ **立刻用 DSH 问新内容能命中**；另附 6 项边界判据（见 R-38 条目）。
+       常驻方式建议**先手动跑稳再上计划任务**。
+    3. **R-46 处置**（2026-09-25 新发现）：本机系统代理把"Qdrant 不可达"变成 HTTP 502，
        绕过 R-27i 的语义化 503 ⇒ 建议 ① 502/503/504 折算为 `StoreUnavailableError` +
-       ② `QdrantStore` 用 `trust_env=False`。是否现在做？
-    3. **Phase 6 后续顺序**：R-40 之后按建议是 **R-38 → R-42（先测量）→ R-39 → R-41**。
+       ② `QdrantStore` 用 `trust_env=False`。是否先做掉再继续 **R-42**？
+    4. **Phase 6 后续顺序**：R-40、R-38 已完成 ⇒ 按建议下一步是 **R-42（先做"测量 rerank 分数分布"）**
+       → R-39 → R-41。
        ⚠️ **硬约束不变**：**R-39 必须晚于 R-40**（现已满足）+ **R-39 前置必须配置 key 表**
        （`RECALL_API_KEYS` 为空时鉴权整体不启用，公网暴露即等于无鉴权）。
   - **需你背书的实现细节（均未触及 tech.md 契约）**：
@@ -552,10 +585,10 @@ created: 2026-09-04
     - ~~R-44：MCP 默认无会话~~ → **已认可（2026-09-24）** ⇒ 定为最终默认值，`RECALL_MCP_STATELESS=0` 可回退；
     - ~~R-19b 是否属契约变更~~ → **已确认（2026-09-23）**（已回写 tech.md §4 与 §17）；
     - ~~R-32d 检索阈值~~ → **已定案（2026-09-24）走回答模板路线**，胖端点侧候选转入 R-42。
-- **最近一次测试结果**（2026-09-25）：`pytest` **184 passed**；`ruff` 零告警；`mypy` strict **40 文件**零错误（新增 `tools/verify_r45.py` 与 `recall/audit.py` 已纳入）；R-45 验收脚本 **15/15 全绿**
+- **最近一次测试结果**（2026-09-25）：`pytest` **206 passed**；`ruff` 零告警；`mypy` strict **42 文件**零错误；R-45 验收脚本 **15/15 全绿**（鉴权关闭态）
 - **验收实测**（2026-09-24，项目工程师执行）：摄取 65 篇 0 失败；`/health` ok（972 点 / 65 篇）；检索 **Recall@1=0.767 / @3=0.933 / @5=0.933 / @10=1.000 / MRR=0.860**（与基线逐位一致）；Ragas **引用一致性 1.000 / faithfulness 0.858 / answer_relevancy 0.758**；DSH 问答带 `[n]` 引用通过
 - **验收实测**（2026-09-25，项目工程师执行）：**R-45 15/15 全绿**（`python tools\verify_r45.py`）
-- **本文件版本**：v0.13.0（2026-09-25 **R-40 权限 S2 实现完成（待验收）**：单一 ASGI 中间件 + contextvar + 审计；同时登记 R-46 新发现问题。**当前待拍板：R-40 验收 + R-46 处置 + 实现细节背书**）
+- **本文件版本**：v0.14.0（2026-09-25 **R-38 watchdog 实现完成 + 真实端到端验证**（206 passed），R-40 亦待验收；R-46 待处置。**当前待项目工程师：R-40/R-38 验收 + R-46 处置 + 实现细节背书**）
 
 ---
 
@@ -664,3 +697,6 @@ created: 2026-09-04
 | 2026-09-25 | R-40 | 测试补强 | `tests/test_auth.py` 8 → **19** 项、`tests/test_config.py` 17 → **27** 项。关键用例：**身份真正流进检索**（主人看得见 / 旁人 `evidence == []`，REST 与 MCP 各一条）——若中间件只"校验通过就放行"不传身份，该断言必失败 | 全量 `pytest` **184 passed**；`ruff` 全绿；`mypy` strict **40 文件**零错误 |
 | 2026-09-25 | R-40 | 测试环境去不确定性 | `tests/conftest.py` 直接赋值 `RECALL_API_KEYS=""`（避免开发者 `.env` 里的 key 让既有用例全变 401）与 `NO_PROXY=*`（避免继承本机系统代理） | 见 R-46：本机代理会把"连不上"变成 HTTP 502，导致两个 Qdrant 不可达用例在全量跑时失败（单跑曾通过 ⇒ 环境已变），属**测试环境问题**而非代码回归 |
 | 2026-09-25 | **R-46** | **新发现问题登记（待请示）** | 本机系统代理（`karingService` @127.0.0.1:3067，写入 Windows 系统代理）使 httpx 读到代理 ⇒ 任何不可达目标返回代理的 **HTTP 502**，qdrant-client 抛 `UnexpectedResponse`，**不被 `with_retry` 折算成 `StoreUnavailableError`** ⇒ Qdrant 挂掉时 `/kb/search` 退化成 500 而非语义化 503（R-27i 的设计被绕过）。建议 ① 502/503/504 折算成 `StoreUnavailableError` + ② `QdrantStore` 用 `trust_env=False` 建客户端；倾向 ①+② | 属**新发现**、未纳入 R-40 范围，按 §二 问题处理协议登记待项目工程师拍板 |
+| 2026-09-25 | R-38 | **实现：常驻增量同步** | 新增 `recall/watchdog.py`（`should_index` / `IngestTrigger` / `_VaultEventHandler` / `VaultWatcher` / `main`）与 CLI（`--once`、`--force-polling`、`--debounce` 等）；`Settings.watchdog_api_key`（env `RECALL_WATCHDOG_API_KEY`）；依赖新增 `watchdog>=6.0.0,<7`（pyproject + lock 同步） | 三条铁律：**不自己装载模型**（只 POST 给已跑的 API，防 R-23b 类双份 bge-m3）/ **只做增量**（`mode=update`，永不 rebuild）/ **过滤 `.obsidian` 等目录**（规则复用摄取侧常量，否则无限自触发）。详见 tech.md §5.1 |
+| 2026-09-25 | R-38 | 测试补强 | `tests/test_watchdog.py` **20 项**：过滤规则、**真实本地 HTTP 桩**验证报文（`/kb/ingest` + `mode=update` + `X-API-Key`、永不含 rebuild）、去抖合并（5 次写 ⇒ 1 次同步）、`.obsidian` 写入不触发、不可达重试后返回 False 不抛异常、CLI 默认值与退出码 0/1/2；`tests/test_config.py` 补 2 项 | 全量 `pytest` **206 passed**；`ruff` 全绿；`mypy` strict **42 文件**零错误 |
+| 2026-09-25 | R-38 | **真实端到端验证（项目工程师环境）** | `python -m recall.watchdog --once` 对运行中的 API（PID 6804）触发成功（`watchdog.ingest_ok`、退出码 0）⇒ 增量重索引 3 篇（vault 内 `project/Recall/spec/*.md` 快照当日有更新）、`orphans_deleted` 正常；**账目核对** `sum(chunk_count)=points_count=1019`、65 篇、0 失败；第二次触发 points 仍 1019 | 顺带确认：**vault 里存着项目 spec 的三份快照**（`source_uri=project/Recall/spec/*.md`），故改 spec 会（正确地）触发重索引。仓库内 spec 文件为 CRLF（`core.autocrlf=true`），属本仓库正常配置 |
