@@ -296,9 +296,13 @@ project/Recall/
 │  ├─ store.py                 # Qdrant 适配（建库/upsert/孤儿清理/混合查询/payload index）
 │  ├─ rerank.py                # bge-reranker-v2-m3（fp16）
 │  ├─ assemble.py              # 组装（编号/预算截断/忠实度模板/证据即数据）
-│  ├─ auth.py                  # get_identity 占位（S1 硬编码 → S2 换实现）
-│  └─ api.py                   # FastAPI：REST + FastMCP 挂载（同端口 8000）
-├─ eval/                       # golden_set.jsonl + eval_retrieval.py + eval_ragas.py + promptfoo/
+│  ├─ auth.py                  # 身份与权限收敛（S2：contextvar 读中间件写入的身份）
+│  ├─ audit.py                 # 审计（JSON lines，绝不写密钥）
+│  ├─ ratelimit.py             # 写端点滑动窗口限流（code_standards §6.1）
+│  ├─ watchdog.py              # vault 监听 → 增量摄取（R-38，不自行装载模型）
+│  └─ api.py                   # FastAPI：REST + FastMCP 挂载 + 身份中间件（同端口 8000）
+├─ eval/                       # golden_set.jsonl + eval_retrieval.py + eval_ragas.py + measure_scores.py + promptfoo/
+├─ tools/                      # verify_r45.py（R-45 验收）、verify_phase6.py（Phase 6 验收）等
 ├─ skill/recall-assembly.md    # → 复制到 ~/.dsh/skills/
 ├─ data/                       # qdrant 存储、registry.db、日志（gitignore）
 └─ README.md
