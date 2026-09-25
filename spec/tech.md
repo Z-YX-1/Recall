@@ -414,8 +414,31 @@ Unexpected Response: 500 (Internal Server Error)
 | Qdrant 进程状态 | **重启 Qdrant 后仍复现** | ❌ 排除 |
 | 本项目代码改动 | 该现象**早于**本轮所有改动（round 9 首次出现，当时改动只在 `tools/` 与文档） | ❌ 排除 |
 
-**目前最可疑**：本机 Qdrant 是 **v1.19.0（commit `74f3e85b…`）** —— 比已知稳定线更新，
-疑似该构建在 Windows 上建索引/删目录时的缺陷。
+**目前最可疑（2026-09-25 查证，证据链闭合）**：本机 Qdrant 是 **v1.19.0**，而
+**Qdrant 官方 changelog 里 v1.19.1 的第一条 Bug Fix 正中我们的失败点**：
+
+> v1.19.1（2026-09-04 发布）· Bug Fixes · PR #10201 —
+> **"Fix data consistency, flush CoW segments before building payload index"**
+
+我们的失败点**就是"建 payload 索引"**（`index:groups` / `index:updated_at_ts`），
+报错形态是 IO 错误 —— 与该修复描述**高度吻合**。旁证：v1.19.0 自身也带了一批
+CoW/segment-flush 竞态修复（PR #9424 等），说明 1.19.x 这条线正在密集改动这块。
+
+📌 **更正一处先前的错误判断**：我曾把本机版本描述为"比已知稳定线更新、疑似预发布构建"。
+**这是错的** —— 官方 API 明确 `prerelease=false, draft=false`，**v1.19.0 是正式稳定版**
+（2026-08-05 发布）。问题不是"用了预发布"，而是**用了一个其后被补丁修复的版本**。
+
+**升级路径（v1.19.0 → v1.19.1，同 minor 版，存储格式兼容）**：
+
+| 项 | 值 |
+| :--- | :--- |
+| 资产 | `qdrant-x86_64-pc-windows-msvc.zip`（29,671,153 字节） |
+| URL | `https://github.com/qdrant/qdrant/releases/download/v1.19.1/qdrant-x86_64-pc-windows-msvc.zip` |
+| SHA-256 | `9b6f69bd85f6abed4bc13f943099f55c6ffd55f5dd90388635320d8fbb569eb0` |
+
+**升级步骤**：① 停 Qdrant；② 把现有 `tools/qdrant/qdrant.exe` **改名留档**（回退只需换回）；
+③ 解压新 zip 覆盖 `qdrant.exe`（**保留 `storage/` 与 `snapshots/` 不动**）；④ 启动并核对
+`GET /` 版本号与 `GET /collections` 两个真实库健在；⑤ 复跑全量看是否转绿。
 
 **伴生的存储泄漏（已解决）**：测试夹具每用例建一个一次性 collection，**API 删除成功但磁盘目录
 不删** ⇒ **每跑一次全量泄漏约 1.4GB**（实测一次 run 让 D 盘 14.09 → 12.66GB）。
