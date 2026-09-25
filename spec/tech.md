@@ -217,6 +217,7 @@ JSON 模式与状态码都不变。
 | 身份传递 | 校验通过 ⇒ `set_current_identity()` 写入 **contextvar**；REST 经 `get_identity(request)` 读、MCP 工具经 `current_identity()` 读（工具函数拿不到 `Request`） |
 | 比较方式 | `hmac.compare_digest` **逐条常量时间**比较，不用 `dict.get`（避免时间旁路） |
 | 审计 | `data/logs/audit.jsonl`（JSON lines）：`ts/user/groups/method/path/status/duration_ms/outcome/trace_id/client`；**绝不写密钥**；受 `RECALL_LOG_TO_FILE` 控制 |
+| **限流** | `RECALL_INGEST_RATE_LIMIT`（默认 `10/60` = 10 次 / 60 秒，`0` 关闭）：**只针对写端点** `POST /kb/ingest`（code_standards §6.1 要求"鉴权 + 限流"）。实现见 `recall/ratelimit.py`（滑动窗口），判定放在 **`kb_ingest_core`** 而不是中间件——`/mcp` 的 `kb_ingest` 工具走同一个 core，放中间件只挡得住 REST 那条路。超限返回 **429 `rate_limited`**（统一错误信封）。⚠️ 状态在**进程内**，多进程各算一份；公网暴露时应在网关层再加一道（R-39） |
 | 启动保护 | 监听非回环地址且未配 key 表 ⇒ WARNING `api.exposed_without_auth` |
 
 ## 8. API 契约

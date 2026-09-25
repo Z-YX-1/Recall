@@ -63,6 +63,7 @@ from recall.models import (
     SearchResult,
     StatsResult,
 )
+from recall.ratelimit import SlidingWindowLimiter
 from recall.registry import Registry
 from recall.rerank import Reranker, build_rerank_document
 from recall.store import (
@@ -142,6 +143,8 @@ class Service:
     collection: str
     audit: AuditLog
     """审计写入器（roadmap R-40）；随服务单例重建，测试可拿到干净状态。"""
+    limiter: SlidingWindowLimiter
+    """写端点限流器（code_standards §6.1；roadmap R-40）；同样随服务单例重建。"""
 
     @classmethod
     async def create(cls, settings: Settings, *, collection: str | None = None) -> Service:
@@ -168,6 +171,9 @@ class Service:
             llm=DeepSeekClient.from_settings(settings),
             collection=collection or settings.collection or DEFAULT_COLLECTION,
             audit=AuditLog(settings.audit_log_path if settings.log_to_file else None),
+            limiter=SlidingWindowLimiter(
+                settings.ingest_rate_limit, settings.ingest_rate_window_s
+            ),
         )
 
     async def aclose(self) -> None:
@@ -468,9 +474,30 @@ async def kb_ingest_core(request: IngestRequest) -> IngestSummary:
         本次 run 的汇总。
 
     Raises:
-        ApiError: vault 未配置或不存在等参数问题。
+        ApiError: vault 未配置或不存在等参数问题；或**触发限流**（429 ``rate_limited``）。
     """
     from ingest import build_parser, run_ingest  # 延迟导入：CLI 模块只在真正摄取时加载
+
+    service = await get_service()
+    decision = service.limiter.check("ingest")
+    if not decision.allowed:
+        # code_standards §6.1：写端点必须限流。放在**写入口**而不是中间件 ——
+        # `/mcp` 的 kb_ingest 走的是同一个 core，中间件只挡得住 REST 那条路。
+        logger.warning(
+            "kb_ingest.rate_limited",
+            extra={
+                "limit": service.limiter.limit,
+                "window_s": service.settings.ingest_rate_window_s,
+                "retry_after_s": decision.retry_after_s,
+            },
+        )
+        raise ApiError(
+            "rate_limited",
+            f"摄取请求过于频繁（上限 {service.limiter.limit} 次 /"
+            f" {service.settings.ingest_rate_window_s:g} 秒），"
+            f"请 {decision.retry_after_s} 秒后重试。",
+            429,
+        )
 
     argv = [f"--{request.mode}", "--log-level", "WARNING"]
     if request.collection:

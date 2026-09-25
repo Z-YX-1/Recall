@@ -255,3 +255,44 @@ def test_evidence_threshold_rejects_invalid_values(raw: str) -> None:
             Settings.from_env()
     finally:
         monkeypatch.undo()
+
+
+# ------------------------------------------------------------- 写端点限流（R-40 补记）
+
+
+def test_ingest_rate_limit_defaults_to_ten_per_minute(monkeypatch: pytest.MonkeyPatch) -> None:
+    """默认 ``10/60``：远高于任何合理本地用量，但挡得住跑飞的脚本。"""
+    monkeypatch.delenv("RECALL_INGEST_RATE_LIMIT", raising=False)
+
+    settings = Settings.from_env()
+
+    assert (settings.ingest_rate_limit, settings.ingest_rate_window_s) == (10, 60.0)
+
+
+def test_ingest_rate_limit_is_parsed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """支持 ``N/W`` 形式（次数/秒数）。"""
+    monkeypatch.setenv("RECALL_INGEST_RATE_LIMIT", "3/15")
+
+    settings = Settings.from_env()
+
+    assert (settings.ingest_rate_limit, settings.ingest_rate_window_s) == (3, 15.0)
+
+
+@pytest.mark.parametrize("raw", ["0", "off", "OFF", "none", "disable"])
+def test_ingest_rate_limit_can_be_disabled(raw: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    """显式关闭的几种写法都要认（运维手写配置时不该踩坑）。"""
+    monkeypatch.setenv("RECALL_INGEST_RATE_LIMIT", raw)
+
+    assert Settings.from_env().ingest_rate_limit == 0
+
+
+@pytest.mark.parametrize("raw", ["abc", "10", "10/0", "0/60", "-1/5", "10/x"])
+def test_ingest_rate_limit_rejects_invalid_values(raw: str) -> None:
+    """格式错误**启动即失败**——静默不限制比报错危险得多。"""
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setenv("RECALL_INGEST_RATE_LIMIT", raw)
+    try:
+        with pytest.raises(ValueError, match="RECALL_INGEST_RATE_LIMIT"):
+            Settings.from_env()
+    finally:
+        monkeypatch.undo()

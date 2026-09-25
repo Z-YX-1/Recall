@@ -170,6 +170,47 @@ def _read_min_score(name: str, default: float) -> float:
     return value
 
 
+DEFAULT_INGEST_RATE_LIMIT = "10/60"
+"""写端点（``POST /kb/ingest``）的限流默认值：**10 次 / 60 秒**。
+
+code_standards §6.1：写端点"自 S2 起必须挂鉴权 + 限流"。默认值取得**远高于**任何
+合理本地用量（watcher 去抖后一次变更只触发一次；偶发的手工 `--update` 也算在内），
+所以正常使用不会撞到；但一个跑飞的脚本或未来的公网调用会被挡住。
+
+设 ``RECALL_INGEST_RATE_LIMIT=0``（或 ``off``）可**关闭**限流。
+"""
+
+
+def _read_rate_limit(name: str, default: str) -> tuple[int, float]:
+    """解析限流配置 ``"N/W"``（N 次 / W 秒）。
+
+    Args:
+        name: 环境变量名。
+        default: 未设置时的取值。
+
+    Returns:
+        ``(limit, window_s)``；``limit == 0`` 表示关闭。
+
+    Raises:
+        ValueError: 格式不是 ``N/W``，或 N/W 非正数。
+    """
+    raw = (os.getenv(name) or default).strip()
+    text = raw.lower()
+    if text in {"", "0", "off", "none", "disable", "disabled"}:
+        return 0, 0.0
+    limit_raw, separator, window_raw = text.partition("/")
+    if not separator:
+        raise ValueError(f"{name} 格式应为「次数/秒数」（如 10/60）或用 0 关闭，实得 {raw!r}")
+    try:
+        limit = int(limit_raw)
+        window = float(window_raw)
+    except ValueError as exc:
+        raise ValueError(f"{name} 的次数与秒数都必须是数字，实得 {raw!r}") from exc
+    if limit <= 0 or window <= 0:
+        raise ValueError(f"{name} 的次数与秒数都必须为正，实得 {raw!r}")
+    return limit, window
+
+
 def _sync_hf_offline(offline: bool) -> None:
     """把离线开关同步给**已导入**的 ``huggingface_hub``（兜底，见模块 docstring）。
 
@@ -223,6 +264,9 @@ class Settings:
         evidence_min_score: 证据门槛（``RECALL_EVIDENCE_MIN_SCORE``）：精排最高分低于它
             即判"笔记里没有"，返回空证据包；**0.0 = 不启用**（默认），见
             :data:`DEFAULT_EVIDENCE_MIN_SCORE`。
+        ingest_rate_limit: 写端点限流次数（``RECALL_INGEST_RATE_LIMIT``，格式 ``N/W``）；
+            **0 = 关闭**。默认见 :data:`DEFAULT_INGEST_RATE_LIMIT`。
+        ingest_rate_window_s: 写端点限流窗口秒数（与 ``ingest_rate_limit`` 同源）。
         deepseek_api_key: DeepSeek API key（仅胖端点使用；绝不入日志/库/payload）。
         deepseek_base_url: DeepSeek OpenAI 兼容接口地址。
         deepseek_model: 生成用模型名。
@@ -244,6 +288,8 @@ class Settings:
     api_keys: dict[str, str]
     watchdog_api_key: str | None
     evidence_min_score: float
+    ingest_rate_limit: int
+    ingest_rate_window_s: float
     deepseek_api_key: str | None
     deepseek_base_url: str
     deepseek_model: str
@@ -275,6 +321,9 @@ class Settings:
         db_raw = os.getenv("RECALL_REGISTRY_DB", "").strip()
         log_raw = os.getenv("RECALL_LOG_DIR", "").strip()
         collection_raw = os.getenv("RECALL_COLLECTION", "").strip()
+        rate_limit, rate_window = _read_rate_limit(
+            "RECALL_INGEST_RATE_LIMIT", DEFAULT_INGEST_RATE_LIMIT
+        )
         settings = cls(
             qdrant_url=os.getenv("QDRANT_URL", DEFAULT_QDRANT_URL).strip(),
             vault_path=Path(vault_raw) if vault_raw else None,
@@ -288,6 +337,8 @@ class Settings:
             evidence_min_score=_read_min_score(
                 "RECALL_EVIDENCE_MIN_SCORE", DEFAULT_EVIDENCE_MIN_SCORE
             ),
+            ingest_rate_limit=rate_limit,
+            ingest_rate_window_s=rate_window,
             deepseek_api_key=os.getenv("DEEPSEEK_API_KEY") or None,
             deepseek_base_url=os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com").strip(),
             deepseek_model=os.getenv("DEEPSEEK_MODEL", "deepseek-chat").strip(),

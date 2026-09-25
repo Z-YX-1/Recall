@@ -228,6 +228,8 @@ def test_from_settings_reads_deepseek_config() -> None:
         api_keys={},
         watchdog_api_key=None,
         evidence_min_score=0.0,
+        ingest_rate_limit=10,
+        ingest_rate_window_s=60.0,
         deepseek_api_key="secret",
         deepseek_base_url="https://api.deepseek.com",
         deepseek_model="deepseek-chat",
