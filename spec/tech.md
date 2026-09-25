@@ -182,6 +182,13 @@ tools: kb_search / kb_answer / kb_ingest / kb_stats
 > `GET /kb/stats` 与 MCP 工具 `kb_stats` **同源同形**（共用 `kb_stats_core()`），
 > 存在的理由是"不依赖 MCP 也能查状态"（脚本 / 运维）。新增于 2026-09-24，
 > 由项目工程师确认（见 §17 决策记录 14）。
+>
+> **降级语义**（2026-09-25 项目工程师确认）：Qdrant 不可达时 `/kb/stats` 仍返回 **200**，
+> 以 `qdrant=false` / `collection_ready=false` / `points_count=0` / `collections=[]` 表达降级，
+> **不返回 503**（`documents` 仍取自本地 SQLite 注册表，故依然准确）。
+> 理由：统计端点的职责是**报告**状态而非**依赖**状态——若它自己也 503，Qdrant 一挂就失去了
+> 唯一的排查入口。对比：`/kb/search` / `/kb/answer` 在同场景返回 503 `qdrant_unavailable`，
+> 该差异是刻意的。见 §17 决策记录 15。
 
 ```jsonc
 // $DSH_HOME/mcp-servers.json 注册
@@ -323,3 +330,12 @@ $env:HF_ENDPOINT = "https://hf-mirror.com"                    # 国内下载镜�
       单测直接断言两者的 structuredContent **逐字段相等**，防止将来只改一边。
     - **性质**：只读、无副作用；S2 起与其它端点一样走身份中间件（tech.md §7）。
     - **不变量**：MCP 工具名、既有四个端点的路径与字段全部未变 ⇒ 属**新增**而非修改。
+15. **`GET /kb/stats` 的降级语义 = 200 + `qdrant=false`**（项目工程师 2026-09-25 确认）。
+    - **背景**：R-45 实现为"Qdrant 不可达时不抛错、以字段表达降级"。该行为在提交时
+      作为待拍板项显式提出（因为它与 `/kb/search` 的 503 语义不一致），项目工程师决定保留。
+    - **决定**：保持 **200**。统计端点**报告**状态，**不依赖**状态。
+    - **理由**：Qdrant 挂掉时，`/kb/stats` 是唯一仍能作答的端点——它会告诉你
+      `qdrant=false` 而 `documents` 仍准确（取自 SQLite）。若它也 503，就同时失去了排查入口。
+    - **对比与不变量**：`/kb/search` / `/kb/answer` 在 Qdrant 不可达时仍返回
+      503 `qdrant_unavailable`（错误信封，见 R-27i）。两者差异**刻意保留**，不是疏漏。
+      本决定不改变任何字段，`/kb/stats` 仍**只读**。
