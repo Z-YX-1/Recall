@@ -367,10 +367,40 @@ created: 2026-09-04
 ### Phase 6：后续迭代预留（不在首版验收范围，项目工程师另行排期）
 
 - [ ] **R-38** watchdog 常驻增量同步（监听 vault 变化自动 `ingest --update`）。
+    ✅ 预研（2026-09-25，Context7 核实 + 本机核验）：① watchdog 在 Windows Vista+ 走 `ReadDirectoryChangesW`
+    **原生事件**（官方文档），纯 Python 无编译依赖；② 官方提供 `EventDebouncer(debounce_interval_seconds,
+    events_callback)` 处理"编辑器保存即多次写"的事件风暴 ⇒ **去抖不用手搓**；③ 已知怪癖：目录删除可能报成文件删除、
+    目录移动事件可能早于 I/O 完成 ⇒ 触发路径必须是**幂等**的 `POST /kb/ingest {"mode":"update"}`
+    （doc 级 hash 跳过兜底），且必须**过滤 `.obsidian/`、`.trash/`**（Obsidian 自己的索引目录高频写，否则无限自触发）。
+    建议形态：watchdog + EventDebouncer（近实时）；轮询 mtime 为无依赖备选。watcher **不自己装载模型**（防 R-23b 类
+    双份 bge-m3），只 POST 给已在跑的 API（R-40 后带 key）。只做增量；`--rebuild` 仍人工触发（`inference_lock`
+    是进程级单锁，重建期间检索排队——已核实 `embedder.py:129`/`rerank.py:134`）。形态与常驻方式待拍板。
 - [ ] **R-39** Coze 接入：公网网关（Cloudflare Tunnel / 云服务器）+ API key + 限流 + 审计——权限 S2 的触发点（tech.md §7）。
+    📌 外部现状（2026-09-25 web 核实）：Coze 支持接入外部 MCP（docs.coze.cn/mcp）；Cloudflare Tunnel 有
+    quick tunnel（`cloudflared tunnel --url`）与 named tunnel（config.yml ingress）两种成熟形态。
+    待开工前按当时文档再核实：Coze 侧 MCP 连接是否支持自定义鉴权 header（不支持则需 Cloudflare Access 兜底）、
+    限流选型（Cloudflare Access / 应用层）。**硬前置：R-40**（否则公网网关暴露无鉴权的 `POST /kb/ingest`）。
 - [ ] **R-40** 权限 S2：API key 中间件实现，`get_identity` 换真实实现，审计日志上线。
+    ✅ 预研（2026-09-25，Context7 核实 + 本机核验）：① **MCP 侧鉴权的最大未知已消除**——DSH 的 mcp-client
+    支持自定义 header（`lib/index.js:48` 传入 `config.headers`、schema `:756` `z.dict(String)`）⇒ `/mcp` 加 key
+    不打断 DSH 问答；② fastmcp 2.14.7 **原生支持鉴权**（`FastMCP(auth=...)`、`fastmcp.server.dependencies.
+    get_access_token()`、`AuthProvider`/`StaticTokenVerifier` 均存在于本机装的实际版本；`http_app()` 源码中
+    `auth` 与 `stateless_http` **正交** ⇒ 与 R-44 无会话模式兼容）；③ 但 `StaticTokenVerifier` 官方文档标注
+    **仅供开发测试、切勿生产使用**，`AuthProvider` 在 2.14.7 是 OAuth 导向（`base_url`/`required_scopes`）⇒
+    **推荐不用 FastMCP 原生 auth**，改走**单一 ASGI 中间件 + contextvar**：REST 与 `/mcp` 共用一个 key 表
+    （`RECALL_API_KEYS`）、一份解析、同一 401 信封，避免两条鉴权路径分叉（R-45 同源同形教训），
+    且不依赖 fastmcp 内部 API（将来 2→3 升级零影响）——与 tech.md §7「API key → 身份中间件」的字面一致。
+    待拍板：回环是否免鉴权（推荐**不豁免**：语义统一；DSH 配置/验收脚本/curl 各加一个 key）。
 - [ ] **R-41** 新 Connector：飞书 / 语雀 / 网页（按 Connector 协议新增，不改管道其余部分）。
+    📌 待开工前核实：飞书/语雀开放接口的鉴权与配额；`Connector` 协议的 `list()` 是**全量枚举（含 text）**，
+    对远端源意味着每轮全量拉取才算得出 `hash_of`——增量能力可能需要在协议上开口子（与"不改管道其余部分"的承诺冲突，需立项时定）。
 - [ ] **R-42** 检索调优 A/B：top_k / rerank / 切分参数用黄金集 + Recall@K 并排对比，数据驱动决策（tech.md §10 触发点）。
+    ✅ 预研（2026-09-25，Context7 核实 + 本机核验）：① "同文档多样性约束"候选**有现成服务器能力**——
+    qdrant-client 1.19.1 的 `AsyncQdrantClient.query_points_groups(group_by=..., limit=..., group_size=...)`
+    （本机 hasattr 已验）与 Qdrant 1.19.0 的 `/points/query/groups` 端点 ⇒ 不必自写 MMR；但**推荐先走客户端
+    post-RRF 按 `doc_id` 去重**（不改 RRF 语义、单变量 A/B），server-side groups 留作后续优化；② 首个动作是
+    **测量而非改代码**：构造"笔记外问题集"与黄金集并跑，导出每题 rerank 分数分布，先判"相关 vs 相邻"分数是否可分
+    （不可分则 BASELINE §6 候选 1 否决）；③ 方法论沿用 R-19b：逐题变化表（X 好 / Y 坏）+ 硬底线 Recall@10 ≥ 1.000。
 - [x] **R-43** `HF_HUB_OFFLINE` 升为配置项（**默认离线**）：把"模型加载前不回连 HF Hub"从"评测时的临时建议"变成服务进程的默认行为（tech.md §12 的"先建配置、后加载模型"顺序不变）。
     ⚠️ 现场证据（2026-09-23 真实 DSH 会话）：`kb_search` **每一次**都在 ~42s 后失败——`mcp__recall__kb_stats` 却全程正常（Qdrant 活着），说明故障不在检索库。`data/logs/api.log` 的异常链给出确切位置：`api.kb_search_core` → `embedder._encode_sync` → `model_cache.load_once` → `BGEM3FlagModel.__init__` → `transformers…tokenization_auto.from_pretrained` → **`transformers/utils/hub.py::list_repo_templates`** → `huggingface_hub.hf_api.list_repo_tree` → `httpx.ConnectTimeout`。
     根因：transformers 5.x 装载 tokenizer 时会去 Hub 拉 `chat_template.jinja` 清单，**权重已在本地缓存也照样走一次网络**；本机出网间歇不可达（§七 2026-09-23 R-32 环境记录），该请求挂在 TCP 连接上直到 httpx 超时 ⇒ 整个 `kb_search` 被拖死（实测 6 次调用 23:18:09→23:22:08 全部同一栈）。
@@ -481,7 +511,7 @@ created: 2026-09-04
 - **最近一次测试结果**（2026-09-25）：`pytest` **164 passed**；`ruff` 零告警；`mypy` strict **39 文件**零错误（新增 `tools/verify_r45.py` 已纳入）；R-45 验收脚本 **15/15 全绿**
 - **验收实测**（2026-09-24，项目工程师执行）：摄取 65 篇 0 失败；`/health` ok（972 点 / 65 篇）；检索 **Recall@1=0.767 / @3=0.933 / @5=0.933 / @10=1.000 / MRR=0.860**（与基线逐位一致）；Ragas **引用一致性 1.000 / faithfulness 0.858 / answer_relevancy 0.758**；DSH 问答带 `[n]` 引用通过
 - **验收实测**（2026-09-25，项目工程师执行）：**R-45 15/15 全绿**（`python tools\verify_r45.py`）
-- **本文件版本**：v0.12.4（2026-09-25 **R-45 验收通过 + 降级语义定案**；Phase 6 排期硬约束（R-40 先于 R-39）与方案对比已登记。**当前待拍板：Phase 6 做哪一步 + 实现细节背书**）
+- **本文件版本**：v0.12.5（2026-09-25 **Phase 6 预研落盘**：R-38/R-40/R-42 的 Context7 核实结论写入各步骤；spec 三文件曾被人为删除、已从 git 恢复。**当前待拍板：Phase 6 做哪一步 + 实现细节背书**）
 
 ---
 
@@ -584,3 +614,5 @@ created: 2026-09-04
 | 2026-09-25 | R-45 | **降级语义定案** | 项目工程师确认 Qdrant 不可达时 `/kb/stats` **保持 200 + `qdrant=false`**，不改 503。回写 `tech.md` §8 与 §17 **决策记录 15** | 无代码改动（行为本就如此），属**决策登记**。理由：统计端点报告状态而非依赖状态；若它也 503，Qdrant 一挂就没有可用的排查入口。与 `/kb/search` 的 503 差异刻意保留 |
 | 2026-09-25 | — | 待请示收敛 | §四「待请示事项」再收敛：R-45 相关两项（新增端点、降级语义）均已决。**当前仅剩**：① Phase 6 排期；② R-14b 等实现细节背书 | Phase 6 排期新增硬约束：**R-40 须先于 R-39**（否则公网网关会暴露无鉴权的 `POST /kb/ingest`） |
 | 2026-09-25 | — | **Phase 6 方案讨论（调研结论）** | 项目工程师选「先讨论方案再定」⇒ 为降低 R-38/R-40 的不确定性，先行查证三项事实：① **DSH 的 MCP 客户端支持自定义 header**（`@deepseek-ai/dsh-mcp-client/lib/index.js:48` 把 `config.headers` 传给 `StreamableHTTPClientTransport` 的 `requestInit`；schema `:756` 为 `headers: z.dict(String).default({})`）⇒ **R-40 给 `/mcp` 加鉴权不会打断 DSH 问答**；② DSH MCP 工具调用默认超时 **60s**（`DEFAULT_TOOL_CALL_TIMEOUT_MS = 6e4`，`index.js`）⇒ 走 MCP 的 `kb_ingest` 长时间重建会客户端超时，R-38 的触发路径应走 REST；③ `recall/model_cache.py` 的 `inference_lock` 是**进程级单锁**（`embedder.py:129`、`rerank.py:134` 共用）⇒ **摄取期间检索会被阻塞**，R-38 设计必须考虑该串行化点 | 三项均为**代码/依赖取证**，非推测。R-40 最大未知（MCP 鉴权可行性）已由 ① 消除 |
+| 2026-09-25 | R-38,R-40,R-42 | **预研核实（Context7 + 本机）** | ① FastMCP 鉴权：v3 文档特性在本机 2.14.7 均存在（`FastMCP(auth=...)`/`get_access_token`/`AuthProvider`/`StaticTokenVerifier`；`http_app()` 源码中 `auth` 与 `stateless_http` 正交）——但 `StaticTokenVerifier` 官方标注 dev-only、`AuthProvider` 为 OAuth 导向 ⇒ **推荐单一 ASGI 中间件 + contextvar**；② Qdrant 分面检索：`AsyncQdrantClient.query_points_groups`（客户端 1.19.1）与 `/points/query/groups`（服务端 1.19.0）均已核实存在；③ watchdog：Windows 走 `ReadDirectoryChangesW` 原生事件，官方 `EventDebouncer` 负责去抖 | Context7 三次查询预算全部用于 R-40/R-42/R-38（下一步实际要写代码的部分）；R-39/R-41 的外部事实仅 web 初核，开工前须按当时文档再核实 |
+| 2026-09-25 | — | **工作区事故（已恢复）** | 发现 `spec/roadmap.md`、`spec/tech.md`、`spec/code_standards.md` 三个文件在工作区被删除（`git status` 显示 `D`）。git 仓库中版本完整（HEAD=`d96fff9`），已 `git restore` 全部复原并核对与 `origin/main` 一致 | 删除来源不明（非本轮会话操作，发生在两次用户消息之间）；因全部内容已入库、零丢失。**提醒**：spec 目录外的批量操作（清理/同步工具）不要覆盖该目录 |
