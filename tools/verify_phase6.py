@@ -9,7 +9,9 @@
   审计文件留痕且**不含密钥**。
 - **R-42 证据门槛**：当前取值；开启时"笔记内命中 / 笔记外返回空证据"。
 - **R-38 watchdog**：watcher 日志新鲜度；``--probe-vault`` 时做**完整**端到端
-  （改笔记 → 数字变化 → 再触发幂等 → 删笔记 → 数字复原）。
+  （**先静止**：补入 vault 里既有的未入库改动 → 改笔记 → 数字变化 → 再触发幂等 →
+  删笔记 → 数字复原）。⚠️"先静止 + 等稳定"这两条是 2026-09-26 实测补上的：
+  没有它们，探针会把**别人的**改动记成自己的（详见 :func:`probe_vault`）。
 
 仍需人工：**用 DSH 问一句笔记里的内容**（唯一不可替代的判据）；
 启用鉴权时还要在 ``mcp-servers.json`` 加 ``headers`` 并重开 DSH 会话。
@@ -286,8 +288,12 @@ def check_gate(report: Report, base: str, headers: dict[str, str], settings: Any
     else:
         report.info(
             f"门槛未启用（默认）⇒ 笔记外问题仍返回 {len(out_evidence)} 条低相关片段。"
-            "若要用门槛，在 .env 写 RECALL_EVIDENCE_MIN_SCORE=0.58 并重启"
-            "（见 eval/BASELINE.md §7.5）"
+            "若要用门槛，在 .env 写 RECALL_EVIDENCE_MIN_SCORE=0.60 并重启"
+            "（见 eval/BASELINE.md §7.6）"
+        )
+        report.info(
+            "📌 门槛只管「远域 + 完全没提」两类；「提了名没解释」分数与笔记内重叠，"
+            "门槛拒不掉，必须由答案模板声明『笔记只提及、未解释』并转联网搜索（roadmap R-47）"
         )
 
 
@@ -327,6 +333,15 @@ def probe_vault(report: Report, base: str, headers: dict[str, str], settings: An
     """R-38 端到端探测：改笔记 → 数字变化 → 幂等 → 删笔记 → 复原。
 
     ⚠️ 会**真实写入并删除** vault 里一个临时文件（``finally`` 保证删除）。
+
+    ⚠️ 两个**必须**的前置动作（2026-09-26 实测踩到）：
+
+    1. **先静止**：跑一次全量 ``update``，把 vault 里既有的**未入库改动**补掉再取基线 ——
+       否则它们是"隐藏变量"，会在同一次触发里一起入库（实测：vault 里两份项目 spec
+       快照改动未入库 ⇒ 多出 35 点，被误报成"幂等失效"）；
+    2. **等稳定**：``documents`` 取自 SQLite 注册表，会**早于向量点**增长 ⇒ 只看
+       ``documents`` 会采到摄取中途的快照（实测采到 1020，稳定值是 1055）。
+       故所有读数都以"连续两次一致"作为"本轮摄取已跑完"的判据。
     """
     step("R-38 二、端到端探测（--probe-vault；会临时写一个探针文件并删除）")
     vault: Path | None = settings.vault_path
@@ -334,11 +349,11 @@ def probe_vault(report: Report, base: str, headers: dict[str, str], settings: An
         report.check("vault 可用", False, f"RECALL_VAULT_PATH={vault}")
         return
 
-    before = _stats_documents(base, headers)
+    before = _quiesce(report, base, headers)
     if before is None:
-        report.check("读取 /kb/stats 基线", False, "拿不到统计")
+        report.check("读取 /kb/stats 基线", False, "拿不到稳定统计")
         return
-    report.info(f"基线：documents={before[0]} points={before[1]}")
+    report.info(f"基线（已静止）：documents={before[0]} points={before[1]}")
 
     probe = vault / f"_recall_验收探针_{uuid.uuid4().hex[:8]}.md"
     probe.write_text(
@@ -347,21 +362,31 @@ def probe_vault(report: Report, base: str, headers: dict[str, str], settings: An
     )
     report.info(f"已写入探针 {probe.name}，等待 watcher 触发…")
     try:
-        grown = _wait_for_documents(base, headers, before[0] + 1)
+        seen = _wait_for_documents(base, headers, before[0] + 1)
         report.check(
-            f"watcher 触发后 documents 增长（{before[0]} → {grown[0] if grown else '未变化'}）",
-            grown is not None,
+            f"watcher 触发后 documents 增长（{before[0]} → {seen[0] if seen else '未变化'}）",
+            seen is not None,
             f"等待 {PROBE_TIMEOUT_S:.0f}s 未见变化 ⇒ watcher 没在跑，或去抖后未触发",
         )
-        if grown is None:
+        if seen is None:
             return
+        grown = _wait_for_stable_stats(base, headers)
+        if grown is None:
+            report.check("读取摄取完成后的稳定统计", False, "统计一直没静止")
+            return
+        report.info(f"摄取完成：documents={grown[0]} points={grown[1]}")
+        report.check(
+            "探针把新块写进了向量库（points 增长）",
+            grown[1] > before[1],
+            f"{before[1]} → {grown[1]}",
+        )
 
-        # 幂等：再直接触发一次，点数不应变化
+        # 幂等：再直接触发一次，**稳定后**的点数不应变化
         status, _ = request(
             "POST", f"{base}/kb/ingest", headers=headers, payload={"mode": "update"}
         )
         report.check("手动再触发一次摄取（幂等检查）", status == 200, f"实得 HTTP {status}")
-        again = _stats_documents(base, headers)
+        again = _wait_for_stable_stats(base, headers)
         report.check(
             "重复触发后 points 不变（幂等三机制）",
             again is not None and again[1] == grown[1],
@@ -376,6 +401,12 @@ def probe_vault(report: Report, base: str, headers: dict[str, str], settings: An
         f"删除探针后 documents 复原（→ {before[0]}）",
         restored is not None,
         "等待超时：孤儿清理可能还没跑完",
+    )
+    settled = _wait_for_stable_stats(base, headers)
+    report.check(
+        f"删除探针后 points 复原（→ {before[1]}，孤儿清理）",
+        settled is not None and settled[1] == before[1],
+        f"{before[1]} → {settled[1] if settled else '?'}",
     )
 
 
@@ -398,6 +429,48 @@ def _wait_for_documents(
             return current
         time.sleep(PROBE_POLL_S)
     return None
+
+
+def _wait_for_stable_stats(base: str, headers: dict[str, str]) -> tuple[int, int] | None:
+    """等统计**连续两次一致**（= 本轮摄取已跑完），返回该读数。
+
+    见 :func:`probe_vault` 第 2 条：``documents`` 会早于向量点更新，
+    "等于某个数"≠"摄取完成"，只有"连续两次相同"才算静止。
+    """
+    deadline = time.monotonic() + PROBE_TIMEOUT_S
+    previous: tuple[int, int] | None = None
+    while time.monotonic() < deadline:
+        current = _stats_documents(base, headers)
+        if current is not None and current == previous:
+            return current
+        previous = current
+        time.sleep(PROBE_POLL_S)
+    return None
+
+
+def _quiesce(report: Report, base: str, headers: dict[str, str]) -> tuple[int, int] | None:
+    """先补入 vault 里既有的未入库改动，再返回**静止**的基线统计。
+
+    不做这一步，探针测的就不是"只有探针在变"这一个变量：别的笔记改动会与探针一起
+    入库，把 +N 记到探针头上、或让幂等检查假红。补入的篇数会明确报出来。
+    """
+    status, body = request(
+        "POST", f"{base}/kb/ingest", headers=headers, payload={"mode": "update"}
+    )
+    if status != 200 or not isinstance(body, dict):
+        report.info(f"⚠️ 基线前的预处理 update 未成功（HTTP {status}）—— 基线可能含未入库改动")
+        return _wait_for_stable_stats(base, headers)
+    indexed = int(body.get("indexed_docs", 0))
+    if indexed:
+        report.info(
+            f"⚠️ 基线前先补入了 {indexed} 篇**未入库的改动**（扫描 {body.get('scanned')} / "
+            f"跳过 {body.get('skipped')}）—— 这些**不是**探针造成的，已排除在基线之外"
+        )
+    else:
+        report.info(
+            f"基线前预处理：扫描 {body.get('scanned')}、跳过 {body.get('skipped')}、无待补改动"
+        )
+    return _wait_for_stable_stats(base, headers)
 
 
 # --------------------------------------------------------------------------------------

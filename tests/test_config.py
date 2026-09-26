@@ -239,10 +239,10 @@ def test_evidence_threshold_defaults_to_disabled(monkeypatch: pytest.MonkeyPatch
 
 
 def test_evidence_threshold_is_read_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    """测量给出的建议值是 0.58（空档中点），必须能被配置进去。"""
-    monkeypatch.setenv("RECALL_EVIDENCE_MIN_SCORE", "0.58")
+    """实测建议值（0.60，空档中点）必须能被原样配置进去。"""
+    monkeypatch.setenv("RECALL_EVIDENCE_MIN_SCORE", "0.60")
 
-    assert Settings.from_env().evidence_min_score == pytest.approx(0.58)
+    assert Settings.from_env().evidence_min_score == pytest.approx(0.60)
 
 
 @pytest.mark.parametrize("raw", ["abc", "-0.1", "1.5", "2"])
