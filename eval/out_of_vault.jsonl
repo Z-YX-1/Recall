@@ -16,6 +16,20 @@
 {"question": "MoE 混合专家模型的负载均衡损失是怎么设计的？", "group": "adjacent"}
 {"question": "FlashAttention 的分块计算为什么能省显存？", "group": "adjacent"}
 {"question": "GPTQ 和 AWQ 这两种权重量化方法有什么区别？", "group": "adjacent"}
-{"question": "投机解码（speculative decoding）是怎么加速推理的？", "group": "adjacent"}
 {"question": "HyDE 假设文档嵌入在检索里是怎么用的？", "group": "adjacent"}
-{"question": "大模型的知识蒸馏一般怎么做？", "group": "adjacent"}
+{"question": "Mamba（状态空间模型）为什么能做到线性复杂度？", "group": "adjacent"}
+{"question": "RAPTOR 的树状递归摘要检索是怎么组织的？", "group": "adjacent"}
+{"question": "训练大模型时的张量并行和流水线并行分别解决什么问题？", "group": "adjacent"}
+{"question": "DeepSpeed ZeRO 的三个阶段分别省下的是什么？", "group": "adjacent"}
+{"question": "联邦学习在数据不出域的场景下是怎么训练模型的？", "group": "adjacent"}
+{"question": "差分隐私训练（DP-SGD）是怎么给梯度加噪的？", "group": "adjacent"}
+{"question": "投机解码（speculative decoding）是怎么加速推理的？", "group": "mentioned"}
+{"question": "大模型的知识蒸馏一般怎么做？", "group": "mentioned"}
+{"question": "YaRN 和 LongRoPE 这类位置外推方法是怎么把上下文窗口拉长的？", "group": "mentioned"}
+{"question": "vLLM 的 PagedAttention 是怎么管理 KV Cache 的？", "group": "mentioned"}
+{"question": "ColBERT 的 late-interaction 检索比双塔强在哪里？", "group": "mentioned"}
+{"question": "SPLADE 这种可学习稀疏表示是怎么工作的？", "group": "mentioned"}
+{"question": "GraphRAG 用知识图谱做检索和向量检索有什么不同？", "group": "mentioned"}
+{"question": "语义路由（semantic router）是怎么在多个模型或链路之间做选择的？", "group": "mentioned"}
+{"question": "CLIP 这类多模态模型是怎么训练出图文同一空间的？", "group": "mentioned"}
+{"question": "KV Cache 量化（如 SnapKV、H2O）是怎么压缩显存的？", "group": "mentioned"}

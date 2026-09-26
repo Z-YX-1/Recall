@@ -122,7 +122,7 @@
       "top1": 0.9537942509646805,
       "top3_mean": 0.9169678030180193,
       "top5_mean": 0.865729167390074,
-      "count": 16,
+      "count": 17,
       "rank": 3,
       "expected": [
         "AI/ai-JSON 模式与结构化输出.md"
@@ -135,6 +135,7 @@
         "AI/ai-自回归生成与注意力机制.md",
         "project/Recall/spec/tech.md",
         "AI/ai-Function Calling (函数调用) 原理.md",
+        "AI/ai-Embedding (向量) 的几何意义.md",
         "AI/ai-JSON 模式与结构化输出.md",
         "AI/ai-Token (词元) 的计费与拆分机制.md",
         "AI/ai-Function Calling (函数调用) 原理.md",
@@ -153,6 +154,7 @@
         0.715622774752325,
         0.7093212546090173,
         0.6552257197361661,
+        0.6125414676176866,
         0.5115030968363788,
         0.4765035250558567,
         0.47105595552645013,
@@ -1560,7 +1562,7 @@
       "top1": 0.005021149947632315,
       "top3_mean": 0.004259959382715244,
       "top5_mean": 0.003749290451409793,
-      "count": 18,
+      "count": 17,
       "rank": null,
       "expected": [],
       "sources": [
@@ -1574,13 +1576,12 @@
         "AI/ai-JSON 模式与结构化输出.md",
         "AI/ai-Embedding (嵌入模型) 原理.md",
         "AI/ai-Embedding (嵌入模型) 原理.md",
-        "AI/ai-流式输出 (Streaming) 原理.md",
         "AI/ai-Embedding (嵌入模型) 原理.md",
+        "AI/ai-流式输出 (Streaming) 原理.md",
         "project/bamboo-old/spec/DSH扩展点-实测.md",
         "project/Recall/spec/roadmap.md",
         "Embedding (向量) 的几何意义.md",
         "AI/ai-Embedding (向量) 的几何意义.md",
-        "AI/ai-Embedding (嵌入模型) 原理.md",
         "project/bamboo-old/spec/路线图.md"
       ],
       "scores": [
@@ -1593,14 +1594,13 @@
         0.002521268321045645,
         0.002424914266755245,
         0.0024154832575663415,
+        0.002406088839117293,
         0.002115703400593114,
         0.0019570169401946333,
-        0.0019117693602301456,
         0.001761469680073981,
         0.0015129383618884117,
         0.0014895173647107272,
         0.0014493984078166476,
-        0.0013831174237397678,
         0.0013406204230996855
       ]
     },
@@ -1744,7 +1744,7 @@
         0.0014953384533104661,
         0.001410358496618023,
         0.001356401797461394,
-        0.0013406204230996855,
+        0.0013511208328778794,
         0.001289328279003597
       ]
     },
@@ -2071,11 +2071,11 @@
         "AI/ai-Embedding (嵌入模型) 原理.md",
         "project/bamboo-old/plugin/README.md",
         "AI/ai-轻量级向量数据库选型.md",
-        "AI/ai-Embedding (嵌入模型) 原理.md",
         "三阶段方案评审与路线图.md",
         "AI/ai-向量相似度计算.md",
         "AI/ai-轻量级向量数据库选型.md",
-        "project/bamboo-old/spec/教练守则-v1.md"
+        "project/bamboo-old/spec/教练守则-v1.md",
+        "project/bamboo-old/spec/代码教练-设计草案.md"
       ],
       "scores": [
         0.002424914266755245,
@@ -2091,10 +2091,10 @@
         0.0008492456216931709,
         0.0007916296072837432,
         0.0007702931971871535,
-        0.0006386796026437196,
         0.0006214630161383599,
         0.0006142271998613951,
         0.0005792916699214216,
+        0.0005747861775648728,
         0.0005747861775648728
       ]
     },
@@ -2245,52 +2245,6 @@
       ]
     },
     {
-      "question": "投机解码（speculative decoding）是怎么加速推理的？",
-      "group": "adjacent",
-      "top1": 0.11221037236225713,
-      "top3_mean": 0.08843353908118,
-      "top5_mean": 0.06945571041325863,
-      "count": 16,
-      "rank": null,
-      "expected": [],
-      "sources": [
-        "AI/ai-自回归生成与注意力机制.md",
-        "AI/ai-Temperature 与确定性控制.md",
-        "AI/ai-自回归生成与注意力机制.md",
-        "AI/ai-Temperature 与确定性控制.md",
-        "AI/ai-Temperature 与确定性控制.md",
-        "AI/ai-模型的能力对齐与缩放定律.md",
-        "AI/ai-Function Calling (函数调用) 原理.md",
-        "AI/ai-JSON 模式与结构化输出.md",
-        "AI/ai-JSON 模式与结构化输出.md",
-        "AI/ai-流式输出 (Streaming) 原理.md",
-        "临时笔记.md",
-        "AI/ai-Function Calling (函数调用) 原理.md",
-        "AI/ai-Temperature 与确定性控制.md",
-        "AI/ai-Embedding (嵌入模型) 原理.md",
-        "AI/ai-JSON 模式与结构化输出.md",
-        "AI/ai-JSON 模式与结构化输出.md"
-      ],
-      "scores": [
-        0.11221037236225713,
-        0.07992552347565954,
-        0.0731647214056233,
-        0.04689925817986902,
-        0.03507867664288415,
-        0.03397199715737667,
-        0.032405517498642296,
-        0.030444348432624533,
-        0.02228618553922549,
-        0.015906391711814714,
-        0.015306354560694806,
-        0.014281933925111154,
-        0.012722708199923247,
-        0.007260866498285616,
-        0.006463137718154743,
-        0.0057525450502372046
-      ]
-    },
-    {
       "question": "HyDE 假设文档嵌入在检索里是怎么用的？",
       "group": "adjacent",
       "top1": 0.3177437334891158,
@@ -2341,8 +2295,340 @@
       ]
     },
     {
-      "question": "大模型的知识蒸馏一般怎么做？",
+      "question": "Mamba（状态空间模型）为什么能做到线性复杂度？",
       "group": "adjacent",
+      "top1": 0.0025114635138098534,
+      "top3_mean": 0.002460075843606835,
+      "top5_mean": 0.0023689446268781063,
+      "count": 20,
+      "rank": null,
+      "expected": [],
+      "sources": [
+        "AI/ai-Message History (多轮对话上下文管理).md",
+        "AI/ai-模型的能力对齐与缩放定律.md",
+        "AI/ai-Message History (多轮对话上下文管理).md",
+        "project/bamboo-old/spec/路线图.md",
+        "Embedding (向量) 的几何意义.md",
+        "AI/ai-Message History (多轮对话上下文管理).md",
+        "AI/ai-JSON 模式与结构化输出.md",
+        "AI/ai-Temperature 与确定性控制.md",
+        "AI/ai-自回归生成与注意力机制.md",
+        "project/bamboo-old/engine/README.md",
+        "临时笔记.md",
+        "AI/ai-向量相似度计算.md",
+        "AI/ai-Embedding (嵌入模型) 原理.md",
+        "AI/ai-Temperature 与确定性控制-问答自测.md",
+        "AI/ai-JSON 模式与结构化输出.md",
+        "AI/ai-Function Calling (函数调用) 原理.md",
+        "AI/ai-轻量级向量数据库选型.md",
+        "AI/ai-Temperature 与确定性控制.md",
+        "AI/ai-向量相似度计算.md",
+        "AI/ai-Embedding (嵌入模型) 原理.md"
+      ],
+      "scores": [
+        0.0025114635138098534,
+        0.002434382008505326,
+        0.002434382008505326,
+        0.00233223391758734,
+        0.0021322616859826855,
+        0.002123966441797725,
+        0.0020911062524060883,
+        0.0020911062524060883,
+        0.0018530593956144392,
+        0.001796149154900369,
+        0.001674399303710119,
+        0.0016420666692028368,
+        0.0016229670614688403,
+        0.0014953384533104661,
+        0.0014837189029090864,
+        0.0014493984078166476,
+        0.0014325365947100792,
+        0.0013670256456563559,
+        0.0013458604012970923,
+        0.0013302015099117557
+      ]
+    },
+    {
+      "question": "RAPTOR 的树状递归摘要检索是怎么组织的？",
+      "group": "adjacent",
+      "top1": 0.02025469056473905,
+      "top3_mean": 0.015663713542681163,
+      "top5_mean": 0.013060346815894752,
+      "count": 14,
+      "rank": null,
+      "expected": [],
+      "sources": [
+        "AI/ai-文本切分器 (Text Splitter).md",
+        "AI/ai-Embedding (嵌入模型) 原理.md",
+        "project/Recall/spec/tech.md",
+        "AI/ai-文本切分器 (Text Splitter).md",
+        "AI/ai-文本切分器 (Text Splitter).md",
+        "AI/ai-文本切分器 (Text Splitter).md",
+        "AI/ai-联网搜索与RAG原理.md",
+        "AI/ai-上下文窗口溢出处理.md",
+        "AI/ai-文本切分器 (Text Splitter).md",
+        "project/Recall/spec/roadmap.md",
+        "project/Recall/spec/code_standards.md",
+        "AI/ai-Embedding (向量) 的几何意义.md",
+        "AI/ai-上下文窗口溢出处理.md",
+        "AI/ai-Embedding (嵌入模型) 原理.md"
+      ],
+      "scores": [
+        0.02025469056473905,
+        0.014447852533602465,
+        0.012288597529701977,
+        0.01024860192315863,
+        0.008061991528271641,
+        0.00793799410140732,
+        0.0073743653082378275,
+        0.006388320909721285,
+        0.005322535451112772,
+        0.004773722390757114,
+        0.004663654952382039,
+        0.004609572179374208,
+        0.004314687956362679,
+        0.0036642203307843528
+      ]
+    },
+    {
+      "question": "训练大模型时的张量并行和流水线并行分别解决什么问题？",
+      "group": "adjacent",
+      "top1": 0.1974444571048067,
+      "top3_mean": 0.13539835301455697,
+      "top5_mean": 0.10788106040668981,
+      "count": 15,
+      "rank": null,
+      "expected": [],
+      "sources": [
+        "AI/ai-流式输出 (Streaming) 原理.md",
+        "AI/ai-Message History (多轮对话上下文管理).md",
+        "AI/ai-Embedding (嵌入模型) 原理.md",
+        "AI/ai-Embedding (向量) 的几何意义.md",
+        "AI/ai-流式输出 (Streaming) 原理.md",
+        "AI/ai-向量相似度计算.md",
+        "AI/ai-轻量级向量数据库选型.md",
+        "AI/ai-System Prompt 的威力.md",
+        "AI/ai-Token (词元) 的计费与拆分机制.md",
+        "AI/ai-上下文窗口溢出处理-问答自测.md",
+        "AI/ai-上下文窗口溢出处理.md",
+        "AI/ai-Embedding (嵌入模型) 原理.md",
+        "AI/ai-轻量级向量数据库选型.md",
+        "AI/ai-JSON 模式与结构化输出.md",
+        "AI/ai-Temperature 与确定性控制.md"
+      ],
+      "scores": [
+        0.1974444571048067,
+        0.11961366366632262,
+        0.08913693827254159,
+        0.07779744860800895,
+        0.05541279438176918,
+        0.05281402133724091,
+        0.04603390239924038,
+        0.044265878099717125,
+        0.03378022896841,
+        0.030502052682714217,
+        0.029591373189293963,
+        0.028598360546466143,
+        0.025957357197796852,
+        0.02346465669263196,
+        0.020645930739218447
+      ]
+    },
+    {
+      "question": "DeepSpeed ZeRO 的三个阶段分别省下的是什么？",
+      "group": "adjacent",
+      "top1": 0.012673735693033067,
+      "top3_mean": 0.011039194702362254,
+      "top5_mean": 0.00896993354485611,
+      "count": 18,
+      "rank": null,
+      "expected": [],
+      "sources": [
+        "AI/ai-文本切分器 (Text Splitter).md",
+        "大模型速成开发MOC.md",
+        "三阶段方案评审与路线图.md",
+        "AI/ai-文本切分器 (Text Splitter).md",
+        "project/Recall/spec/roadmap.md",
+        "三阶段方案评审与路线图.md",
+        "AI/ai-轻量级向量数据库选型.md",
+        "project/Recall/spec/roadmap.md",
+        "project/Recall/spec/tech.md",
+        "project/bamboo-old/spec/教练引擎设计.md",
+        "AI/ai-轻量级向量数据库选型.md",
+        "AI/ai-Token (词元) 的计费与拆分机制.md",
+        "project/bamboo-old/spec/DSH扩展点-实测.md",
+        "project/Recall/spec/roadmap.md",
+        "AI/ai-向量相似度计算.md",
+        "project/Recall/spec/roadmap.md",
+        "AI/ai-上下文窗口溢出处理.md",
+        "project/bamboo-old/spec/路线图.md"
+      ],
+      "scores": [
+        0.012673735693033067,
+        0.011732463956348185,
+        0.008711384457705508,
+        0.005957153763749635,
+        0.005774929853444153,
+        0.0050998183029534174,
+        0.004314687956362679,
+        0.0037217086507213993,
+        0.003298651257832941,
+        0.003222484324002434,
+        0.003123648599853311,
+        0.0026010937937507752,
+        0.002406088839117293,
+        0.002305125202793809,
+        0.00225184727950302,
+        0.0021489492836254285,
+        0.0018895386578398718,
+        0.0018530593956144392
+      ]
+    },
+    {
+      "question": "联邦学习在数据不出域的场景下是怎么训练模型的？",
+      "group": "adjacent",
+      "top1": 0.3921040337224664,
+      "top3_mean": 0.2142752966919065,
+      "top5_mean": 0.1510422343119317,
+      "count": 17,
+      "rank": null,
+      "expected": [],
+      "sources": [
+        "project/Recall/spec/tech.md",
+        "AI/ai-大模型 API 鉴权与基础调用.md",
+        "AI/ai-Token (词元) 的计费与拆分机制.md",
+        "AI/ai-Embedding (嵌入模型) 原理.md",
+        "AI/ai-Embedding (嵌入模型) 原理.md",
+        "AI/ai-文本切分器 (Text Splitter).md",
+        "AI/ai-Embedding (嵌入模型) 原理.md",
+        "AI/ai-Function Calling (函数调用) 原理.md",
+        "AI/ai-Embedding (嵌入模型) 原理.md",
+        "AI/ai-Token (词元) 的计费与拆分机制.md",
+        "AI/ai-上下文窗口溢出处理.md",
+        "AI/ai-Embedding (嵌入模型) 原理.md",
+        "AI/ai-Embedding (嵌入模型) 原理.md",
+        "AI/ai-Temperature 与确定性控制.md",
+        "AI/ai-模型的能力对齐与缩放定律.md",
+        "AI/ai-联网搜索与RAG原理.md",
+        "AI/ai-JSON 模式与结构化输出.md"
+      ],
+      "scores": [
+        0.3921040337224664,
+        0.1865392127442335,
+        0.06418264360901972,
+        0.05717659415987708,
+        0.05520868732406192,
+        0.03055986285813286,
+        0.01998515199474335,
+        0.011508149064303402,
+        0.011331753531361455,
+        0.010944577400979882,
+        0.007695647178392188,
+        0.007577241267860811,
+        0.006265533775839072,
+        0.005957153763749635,
+        0.005663865237178831,
+        0.005469274598698992,
+        0.005199880176696375
+      ]
+    },
+    {
+      "question": "差分隐私训练（DP-SGD）是怎么给梯度加噪的？",
+      "group": "adjacent",
+      "top1": 0.00498226973042126,
+      "top3_mean": 0.0031038027071548352,
+      "top5_mean": 0.0021389506184649075,
+      "count": 17,
+      "rank": null,
+      "expected": [],
+      "sources": [
+        "AI/ai-Embedding (嵌入模型) 原理.md",
+        "AI/ai-向量相似度计算.md",
+        "AI/ai-轻量级向量数据库选型.md",
+        "AI/ai-System Prompt 的威力.md",
+        "AI/ai-向量相似度计算.md",
+        "AI/ai-Embedding (向量) 的几何意义.md",
+        "AI/ai-Embedding (向量) 的几何意义.md",
+        "AI/ai-Temperature 与确定性控制.md",
+        "AI/ai-Embedding (嵌入模型) 原理.md",
+        "AI/ai-向量相似度计算.md",
+        "project/Recall/spec/roadmap.md",
+        "AI/ai-向量相似度计算.md",
+        "AI/ai-Embedding (向量) 的几何意义.md",
+        "AI/ai-System Prompt 的威力.md",
+        "AI/ai-上下文窗口溢出处理.md",
+        "AI/ai-文本切分器 (Text Splitter).md",
+        "AI/ai-Embedding (向量) 的几何意义.md"
+      ],
+      "scores": [
+        0.00498226973042126,
+        0.003469890732315233,
+        0.0008592476587280132,
+        0.0007643033095615912,
+        0.0006190416612984411,
+        0.0006047102482557324,
+        0.000593021029357059,
+        0.0005815576348560962,
+        0.0005770345289316386,
+        0.0005658799865413885,
+        0.0005571117181506888,
+        0.0005527786369235996,
+        0.0004936049895909173,
+        0.00044770084688020684,
+        0.0004390453304730707,
+        0.00043224150570179065,
+        0.0004272078909473254
+      ]
+    },
+    {
+      "question": "投机解码（speculative decoding）是怎么加速推理的？",
+      "group": "mentioned",
+      "top1": 0.11221037236225713,
+      "top3_mean": 0.08843353908118,
+      "top5_mean": 0.06945571041325863,
+      "count": 16,
+      "rank": null,
+      "expected": [],
+      "sources": [
+        "AI/ai-自回归生成与注意力机制.md",
+        "AI/ai-Temperature 与确定性控制.md",
+        "AI/ai-自回归生成与注意力机制.md",
+        "AI/ai-Temperature 与确定性控制.md",
+        "AI/ai-Temperature 与确定性控制.md",
+        "AI/ai-模型的能力对齐与缩放定律.md",
+        "AI/ai-Function Calling (函数调用) 原理.md",
+        "AI/ai-JSON 模式与结构化输出.md",
+        "AI/ai-JSON 模式与结构化输出.md",
+        "AI/ai-流式输出 (Streaming) 原理.md",
+        "临时笔记.md",
+        "AI/ai-Function Calling (函数调用) 原理.md",
+        "AI/ai-Temperature 与确定性控制.md",
+        "AI/ai-Embedding (嵌入模型) 原理.md",
+        "AI/ai-JSON 模式与结构化输出.md",
+        "AI/ai-JSON 模式与结构化输出.md"
+      ],
+      "scores": [
+        0.11221037236225713,
+        0.07992552347565954,
+        0.0731647214056233,
+        0.04689925817986902,
+        0.03507867664288415,
+        0.03397199715737667,
+        0.032405517498642296,
+        0.030444348432624533,
+        0.02228618553922549,
+        0.015906391711814714,
+        0.015306354560694806,
+        0.014281933925111154,
+        0.012722708199923247,
+        0.007260866498285616,
+        0.006463137718154743,
+        0.0057525450502372046
+      ]
+    },
+    {
+      "question": "大模型的知识蒸馏一般怎么做？",
+      "group": "mentioned",
       "top1": 0.09518112544911916,
       "top3_mean": 0.07162064061787488,
       "top5_mean": 0.06444605063983691,
@@ -2389,6 +2675,372 @@
         0.01155267033522081,
         0.011375600238837661
       ]
+    },
+    {
+      "question": "YaRN 和 LongRoPE 这类位置外推方法是怎么把上下文窗口拉长的？",
+      "group": "mentioned",
+      "top1": 0.9017477678631268,
+      "top3_mean": 0.7815069380929417,
+      "top5_mean": 0.5929412294973885,
+      "count": 13,
+      "rank": null,
+      "expected": [],
+      "sources": [
+        "AI/ai-上下文窗口溢出处理.md",
+        "AI/ai-上下文窗口溢出处理-问答自测.md",
+        "AI/ai-上下文窗口溢出处理.md",
+        "AI/ai-上下文窗口溢出处理.md",
+        "AI/ai-上下文窗口溢出处理-问答自测.md",
+        "AI/ai-上下文窗口溢出处理.md",
+        "AI/ai-Message History (多轮对话上下文管理).md",
+        "AI/ai-System Prompt 的威力.md",
+        "AI/ai-Message History (多轮对话上下文管理).md",
+        "上下文窗口 (Context Window) 溢出处理.md",
+        "AI/ai-上下文窗口溢出处理.md",
+        "AI/ai-文本切分器 (Text Splitter).md",
+        "AI/ai-Function Calling (函数调用) 原理.md"
+      ],
+      "scores": [
+        0.9017477678631268,
+        0.7877679704369172,
+        0.6550050759787809,
+        0.3194397542668761,
+        0.3007455789412415,
+        0.16559311363082369,
+        0.13195425991293627,
+        0.13061774667060078,
+        0.11104825424740741,
+        0.09585608228230953,
+        0.08419108099457717,
+        0.0740972611781265,
+        0.0570713972253977
+      ]
+    },
+    {
+      "question": "vLLM 的 PagedAttention 是怎么管理 KV Cache 的？",
+      "group": "mentioned",
+      "top1": 0.6454552005947138,
+      "top3_mean": 0.5448029720047317,
+      "top5_mean": 0.47690595174511835,
+      "count": 17,
+      "rank": null,
+      "expected": [],
+      "sources": [
+        "AI/ai-自回归生成与注意力机制.md",
+        "AI/ai-上下文窗口溢出处理.md",
+        "AI/ai-上下文窗口溢出处理.md",
+        "AI/ai-上下文窗口溢出处理.md",
+        "AI/ai-上下文窗口溢出处理-问答自测.md",
+        "AI/ai-上下文窗口溢出处理.md",
+        "AI/ai-Temperature 与确定性控制.md",
+        "AI/ai-上下文窗口溢出处理.md",
+        "AI/ai-Message History (多轮对话上下文管理).md",
+        "AI/ai-上下文窗口溢出处理-问答自测.md",
+        "上下文窗口 (Context Window) 溢出处理.md",
+        "project/bamboo-old/spec/知识点词表-v0.md",
+        "AI/ai-流式输出 (Streaming) 原理.md",
+        "AI/ai-大模型 API 鉴权与基础调用.md",
+        "AI/ai-Temperature 与确定性控制.md",
+        "AI/ai-流式输出 (Streaming) 原理.md",
+        "AI/ai-上下文窗口溢出处理-问答自测.md"
+      ],
+      "scores": [
+        0.6454552005947138,
+        0.5317261172571521,
+        0.4572275981623293,
+        0.43470125649395686,
+        0.31541958621743976,
+        0.3015676930738543,
+        0.2890705661777971,
+        0.26378900655783316,
+        0.24202643355734138,
+        0.21255875527247142,
+        0.1834472938323525,
+        0.06336634320336171,
+        0.03782128658136544,
+        0.03501262694674069,
+        0.030502052682714217,
+        0.02104456579396102,
+        0.017780390073110934
+      ]
+    },
+    {
+      "question": "ColBERT 的 late-interaction 检索比双塔强在哪里？",
+      "group": "mentioned",
+      "top1": 0.8822250804291385,
+      "top3_mean": 0.8382899016713985,
+      "top5_mean": 0.6448921939218252,
+      "count": 15,
+      "rank": null,
+      "expected": [],
+      "sources": [
+        "AI/ai-Embedding (嵌入模型) 原理.md",
+        "AI/ai-Embedding (嵌入模型) 原理.md",
+        "AI/ai-Embedding (嵌入模型) 原理.md",
+        "AI/ai-Embedding (嵌入模型) 原理.md",
+        "AI/ai-Embedding (嵌入模型) 原理.md",
+        "AI/ai-Embedding (向量) 的几何意义.md",
+        "AI/ai-Embedding (向量) 的几何意义.md",
+        "AI/ai-向量相似度计算.md",
+        "AI/ai-Embedding (嵌入模型) 原理.md",
+        "AI/ai-向量相似度计算.md",
+        "AI/ai-Embedding (嵌入模型) 原理.md",
+        "AI/ai-向量相似度计算.md",
+        "AI/ai-Embedding (嵌入模型) 原理.md",
+        "AI/ai-Embedding (嵌入模型) 原理.md",
+        "project/bamboo-old/spec/知识点词表-v0.md"
+      ],
+      "scores": [
+        0.8822250804291385,
+        0.8185918194864789,
+        0.8140528050985784,
+        0.4000460018275384,
+        0.30954526276739164,
+        0.18198897778208856,
+        0.17009403930712164,
+        0.14306793437031923,
+        0.13386748775351784,
+        0.06119922577327548,
+        0.0544998743411987,
+        0.04594820734917414,
+        0.031380429512976746,
+        0.02665773968397867,
+        0.024987794590900315
+      ]
+    },
+    {
+      "question": "SPLADE 这种可学习稀疏表示是怎么工作的？",
+      "group": "mentioned",
+      "top1": 0.25091278688527247,
+      "top3_mean": 0.08995888772900944,
+      "top5_mean": 0.055419261592704085,
+      "count": 18,
+      "rank": null,
+      "expected": [],
+      "sources": [
+        "AI/ai-Embedding (嵌入模型) 原理.md",
+        "project/Recall/spec/tech.md",
+        "AI/ai-Embedding (嵌入模型) 原理.md",
+        "AI/ai-向量相似度计算.md",
+        "AI/ai-Embedding (嵌入模型) 原理.md",
+        "project/bamboo-old/spec/路线图.md",
+        "AI/ai-JSON 模式与结构化输出.md",
+        "AI/ai-Function Calling (函数调用) 原理.md",
+        "AI/ai-文本切分器 (Text Splitter).md",
+        "AI/ai-向量相似度计算.md",
+        "AI/ai-向量相似度计算.md",
+        "project/bamboo-old/spec/教练引擎设计.md",
+        "AI/ai-JSON 模式与结构化输出.md",
+        "AI/ai-Token (词元) 的计费与拆分机制.md",
+        "AI/ai-JSON 模式与结构化输出.md",
+        "AI/ai-流式输出 (Streaming) 原理.md",
+        "AI/ai-大模型 API 鉴权与基础调用.md",
+        "AI/ai-流式输出 (Streaming) 原理.md"
+      ],
+      "scores": [
+        0.25091278688527247,
+        0.013121271126550958,
+        0.0058426051752048505,
+        0.0037362205834114964,
+        0.003483424193080668,
+        0.0028560125258528077,
+        0.002768385516913781,
+        0.0026112476034906565,
+        0.0022961590064970627,
+        0.0021997980436915168,
+        0.002011158341826152,
+        0.0019877742123839116,
+        0.0017477857726837605,
+        0.0015548133490423032,
+        0.0015070488633593833,
+        0.0014214043524267083,
+        0.0014158706681133846,
+        0.001393950226675411
+      ]
+    },
+    {
+      "question": "GraphRAG 用知识图谱做检索和向量检索有什么不同？",
+      "group": "mentioned",
+      "top1": 0.8278281530486042,
+      "top3_mean": 0.6539723205851112,
+      "top5_mean": 0.5578234793204478,
+      "count": 17,
+      "rank": null,
+      "expected": [],
+      "sources": [
+        "AI/ai-Embedding (向量) 的几何意义.md",
+        "project/bamboo-old/spec/知识点词表-v0.md",
+        "Embedding (向量) 的几何意义.md",
+        "AI/ai-向量相似度计算.md",
+        "AI/ai-轻量级向量数据库选型.md",
+        "AI/ai-Embedding (嵌入模型) 原理.md",
+        "AI/ai-向量相似度计算.md",
+        "AI/ai-Function Calling (函数调用) 原理.md",
+        "AI/ai-轻量级向量数据库选型.md",
+        "AI/ai-轻量级向量数据库选型.md",
+        "AI/ai-Embedding (向量) 的几何意义.md",
+        "AI大模型开发架构大纲MOC.md",
+        "大模型测试MOC.md",
+        "AI/ai-向量相似度计算.md",
+        "AI/ai-轻量级向量数据库选型.md",
+        "AI/ai-Embedding (向量) 的几何意义.md",
+        "AI/ai-轻量级向量数据库选型.md"
+      ],
+      "scores": [
+        0.8278281530486042,
+        0.6064984551609598,
+        0.5275903535457698,
+        0.4172121172776659,
+        0.4099883175692392,
+        0.34609914343883474,
+        0.2893716974101632,
+        0.27318641537475025,
+        0.24653334600973578,
+        0.22000709974589316,
+        0.2183358626245593,
+        0.16118815642887163,
+        0.15431227344123113,
+        0.14057204393325687,
+        0.13432105377342904,
+        0.13095079263999304,
+        0.13028542074923347
+      ]
+    },
+    {
+      "question": "语义路由（semantic router）是怎么在多个模型或链路之间做选择的？",
+      "group": "mentioned",
+      "top1": 0.05281402133724091,
+      "top3_mean": 0.02437797304965128,
+      "top5_mean": 0.018458011435747403,
+      "count": 18,
+      "rank": null,
+      "expected": [],
+      "sources": [
+        "AI/ai-Embedding (嵌入模型) 原理.md",
+        "AI/ai-Message History (多轮对话上下文管理).md",
+        "AI/ai-Function Calling (函数调用) 原理.md",
+        "AI/ai-Embedding (嵌入模型) 原理.md",
+        "AI/ai-模型的能力对齐与缩放定律.md",
+        "AI/ai-向量相似度计算.md",
+        "AI/ai-模型的能力对齐与缩放定律.md",
+        "AI/ai-Embedding (嵌入模型) 原理.md",
+        "AI/ai-向量相似度计算.md",
+        "AI/ai-Embedding (嵌入模型) 原理.md",
+        "Embedding (向量) 的几何意义.md",
+        "AI/ai-Embedding (嵌入模型) 原理.md",
+        "AI/ai-JSON 模式与结构化输出.md",
+        "AI/ai-JSON 模式与结构化输出.md",
+        "Message History (多轮对话上下文管理).md",
+        "AI/ai-Embedding (嵌入模型) 原理.md",
+        "AI/ai-文本切分器 (Text Splitter).md",
+        "AI/ai-JSON 模式与结构化输出.md"
+      ],
+      "scores": [
+        0.05281402133724091,
+        0.010611421330238862,
+        0.009708476481474066,
+        0.009633652359446517,
+        0.009522485670336662,
+        0.009522485670336662,
+        0.009303949868393646,
+        0.008577485413711984,
+        0.007547923375900623,
+        0.00740301408887263,
+        0.00593406683938367,
+        0.005511934210807019,
+        0.004700060535050778,
+        0.004700060535050778,
+        0.0039762279744753005,
+        0.0037072528743862213,
+        0.003456409668065429,
+        0.003247676499188751
+      ]
+    },
+    {
+      "question": "CLIP 这类多模态模型是怎么训练出图文同一空间的？",
+      "group": "mentioned",
+      "top1": 0.3976459872975533,
+      "top3_mean": 0.19428797894992142,
+      "top5_mean": 0.12491286875350678,
+      "count": 14,
+      "rank": null,
+      "expected": [],
+      "sources": [
+        "AI/ai-Embedding (嵌入模型) 原理.md",
+        "AI/ai-Embedding (嵌入模型) 原理.md",
+        "AI/ai-向量相似度计算.md",
+        "Embedding (向量) 的几何意义.md",
+        "AI/ai-向量相似度计算.md",
+        "AI/ai-Embedding (向量) 的几何意义.md",
+        "AI/ai-Embedding (嵌入模型) 原理.md",
+        "AI/ai-Embedding (向量) 的几何意义.md",
+        "AI/ai-向量相似度计算.md",
+        "AI/ai-联网搜索与RAG原理.md",
+        "AI/ai-Message History (多轮对话上下文管理).md",
+        "AI/ai-Embedding (向量) 的几何意义.md",
+        "AI/ai-Embedding (向量) 的几何意义.md",
+        "AI/ai-向量相似度计算.md"
+      ],
+      "scores": [
+        0.3976459872975533,
+        0.1412814160007008,
+        0.04393653355151015,
+        0.02333076880848049,
+        0.018369638109289186,
+        0.01124456072066409,
+        0.011158031248084035,
+        0.011072160183234295,
+        0.010091315485195006,
+        0.008677716704989246,
+        0.0073743653082378275,
+        0.005888159475804548,
+        0.005663865237178831,
+        0.0055982486146598995
+      ]
+    },
+    {
+      "question": "KV Cache 量化（如 SnapKV、H2O）是怎么压缩显存的？",
+      "group": "mentioned",
+      "top1": 0.7483522975713798,
+      "top3_mean": 0.7114161593855636,
+      "top5_mean": 0.6636661742373267,
+      "count": 15,
+      "rank": null,
+      "expected": [],
+      "sources": [
+        "AI/ai-上下文窗口溢出处理.md",
+        "AI/ai-上下文窗口溢出处理.md",
+        "上下文窗口 (Context Window) 溢出处理.md",
+        "AI/ai-上下文窗口溢出处理-问答自测.md",
+        "AI/ai-上下文窗口溢出处理.md",
+        "AI/ai-上下文窗口溢出处理.md",
+        "AI/ai-上下文窗口溢出处理-问答自测.md",
+        "AI/ai-上下文窗口溢出处理.md",
+        "AI/ai-Message History (多轮对话上下文管理).md",
+        "AI/ai-自回归生成与注意力机制.md",
+        "AI/ai-上下文窗口溢出处理-问答自测.md",
+        "project/bamboo-old/spec/知识点词表-v0.md",
+        "AI/ai-Token (词元) 的计费与拆分机制.md",
+        "AI/ai-向量相似度计算.md",
+        "AI/ai-向量相似度计算.md"
+      ],
+      "scores": [
+        0.7483522975713798,
+        0.7275885048718822,
+        0.6583076757134286,
+        0.5961392876756155,
+        0.5879431053543276,
+        0.572842259981366,
+        0.5590794170765362,
+        0.42226637701622904,
+        0.3636468869428737,
+        0.32487764370395467,
+        0.14965561299902605,
+        0.0573875346753933,
+        0.020685459290040977,
+        0.020488554684743848,
+        0.014842417234248268
+      ]
     }
   ],
   "stats": [
@@ -2412,12 +3064,21 @@
     },
     {
       "group": "adjacent",
-      "n": 6,
-      "minimum": 0.0031726828424851893,
-      "p25": 0.0357710214788768,
-      "median": 0.10369574890568814,
-      "p75": 0.2663603932074011,
-      "maximum": 0.35353978666593344
+      "n": 10,
+      "minimum": 0.0025114635138098534,
+      "p25": 0.006905136221074212,
+      "median": 0.018111172026767534,
+      "p75": 0.2876689143930385,
+      "maximum": 0.3921040337224664
+    },
+    {
+      "group": "mentioned",
+      "n": 10,
+      "minimum": 0.05281402133724091,
+      "p25": 0.14688597599301095,
+      "median": 0.5215505939461336,
+      "p75": 0.8079591891792981,
+      "maximum": 0.9017477678631268
     }
   ],
   "sweep": [
@@ -2425,611 +3086,712 @@
       "threshold": 0.0,
       "golden_kept": 1.0,
       "far_rejected": 0.0,
-      "adjacent_rejected": 0.0
+      "adjacent_rejected": 0.0,
+      "mentioned_rejected": 0.0
     },
     {
       "threshold": 0.01,
       "golden_kept": 1.0,
       "far_rejected": 0.8666666666666667,
-      "adjacent_rejected": 0.16666666666666666
+      "adjacent_rejected": 0.3,
+      "mentioned_rejected": 0.0
     },
     {
       "threshold": 0.02,
       "golden_kept": 1.0,
       "far_rejected": 1.0,
-      "adjacent_rejected": 0.3333333333333333
+      "adjacent_rejected": 0.5,
+      "mentioned_rejected": 0.0
     },
     {
       "threshold": 0.03,
       "golden_kept": 1.0,
       "far_rejected": 1.0,
-      "adjacent_rejected": 0.3333333333333333
+      "adjacent_rejected": 0.6,
+      "mentioned_rejected": 0.0
     },
     {
       "threshold": 0.04,
       "golden_kept": 1.0,
       "far_rejected": 1.0,
-      "adjacent_rejected": 0.3333333333333333
+      "adjacent_rejected": 0.6,
+      "mentioned_rejected": 0.0
     },
     {
       "threshold": 0.05,
       "golden_kept": 1.0,
       "far_rejected": 1.0,
-      "adjacent_rejected": 0.3333333333333333
+      "adjacent_rejected": 0.6,
+      "mentioned_rejected": 0.0
     },
     {
       "threshold": 0.06,
       "golden_kept": 1.0,
       "far_rejected": 1.0,
-      "adjacent_rejected": 0.3333333333333333
+      "adjacent_rejected": 0.6,
+      "mentioned_rejected": 0.1
     },
     {
       "threshold": 0.07,
       "golden_kept": 1.0,
       "far_rejected": 1.0,
-      "adjacent_rejected": 0.3333333333333333
+      "adjacent_rejected": 0.6,
+      "mentioned_rejected": 0.1
     },
     {
       "threshold": 0.08,
       "golden_kept": 1.0,
       "far_rejected": 1.0,
-      "adjacent_rejected": 0.3333333333333333
+      "adjacent_rejected": 0.6,
+      "mentioned_rejected": 0.1
     },
     {
       "threshold": 0.09,
       "golden_kept": 1.0,
       "far_rejected": 1.0,
-      "adjacent_rejected": 0.3333333333333333
+      "adjacent_rejected": 0.6,
+      "mentioned_rejected": 0.1
     },
     {
       "threshold": 0.1,
       "golden_kept": 1.0,
       "far_rejected": 1.0,
-      "adjacent_rejected": 0.5
+      "adjacent_rejected": 0.6,
+      "mentioned_rejected": 0.2
     },
     {
       "threshold": 0.11,
       "golden_kept": 1.0,
       "far_rejected": 1.0,
-      "adjacent_rejected": 0.5
+      "adjacent_rejected": 0.6,
+      "mentioned_rejected": 0.2
     },
     {
       "threshold": 0.12,
       "golden_kept": 1.0,
       "far_rejected": 1.0,
-      "adjacent_rejected": 0.6666666666666666
+      "adjacent_rejected": 0.6,
+      "mentioned_rejected": 0.3
     },
     {
       "threshold": 0.13,
       "golden_kept": 1.0,
       "far_rejected": 1.0,
-      "adjacent_rejected": 0.6666666666666666
+      "adjacent_rejected": 0.6,
+      "mentioned_rejected": 0.3
     },
     {
       "threshold": 0.14,
       "golden_kept": 1.0,
       "far_rejected": 1.0,
-      "adjacent_rejected": 0.6666666666666666
+      "adjacent_rejected": 0.6,
+      "mentioned_rejected": 0.3
     },
     {
       "threshold": 0.15,
       "golden_kept": 1.0,
       "far_rejected": 1.0,
-      "adjacent_rejected": 0.6666666666666666
+      "adjacent_rejected": 0.6,
+      "mentioned_rejected": 0.3
     },
     {
       "threshold": 0.16,
       "golden_kept": 1.0,
       "far_rejected": 1.0,
-      "adjacent_rejected": 0.6666666666666666
+      "adjacent_rejected": 0.6,
+      "mentioned_rejected": 0.3
     },
     {
       "threshold": 0.17,
       "golden_kept": 1.0,
       "far_rejected": 1.0,
-      "adjacent_rejected": 0.6666666666666666
+      "adjacent_rejected": 0.6,
+      "mentioned_rejected": 0.3
     },
     {
       "threshold": 0.18,
       "golden_kept": 1.0,
       "far_rejected": 1.0,
-      "adjacent_rejected": 0.6666666666666666
+      "adjacent_rejected": 0.6,
+      "mentioned_rejected": 0.3
     },
     {
       "threshold": 0.19,
       "golden_kept": 1.0,
       "far_rejected": 1.0,
-      "adjacent_rejected": 0.6666666666666666
+      "adjacent_rejected": 0.6,
+      "mentioned_rejected": 0.3
     },
     {
       "threshold": 0.2,
       "golden_kept": 1.0,
       "far_rejected": 1.0,
-      "adjacent_rejected": 0.6666666666666666
+      "adjacent_rejected": 0.7,
+      "mentioned_rejected": 0.3
     },
     {
       "threshold": 0.21,
       "golden_kept": 1.0,
       "far_rejected": 1.0,
-      "adjacent_rejected": 0.6666666666666666
+      "adjacent_rejected": 0.7,
+      "mentioned_rejected": 0.3
     },
     {
       "threshold": 0.22,
       "golden_kept": 1.0,
       "far_rejected": 1.0,
-      "adjacent_rejected": 0.6666666666666666
+      "adjacent_rejected": 0.7,
+      "mentioned_rejected": 0.3
     },
     {
       "threshold": 0.23,
       "golden_kept": 1.0,
       "far_rejected": 1.0,
-      "adjacent_rejected": 0.6666666666666666
+      "adjacent_rejected": 0.7,
+      "mentioned_rejected": 0.3
     },
     {
       "threshold": 0.24,
       "golden_kept": 1.0,
       "far_rejected": 1.0,
-      "adjacent_rejected": 0.6666666666666666
+      "adjacent_rejected": 0.7,
+      "mentioned_rejected": 0.3
     },
     {
       "threshold": 0.25,
       "golden_kept": 1.0,
       "far_rejected": 1.0,
-      "adjacent_rejected": 0.6666666666666666
+      "adjacent_rejected": 0.7,
+      "mentioned_rejected": 0.3
     },
     {
       "threshold": 0.26,
       "golden_kept": 1.0,
       "far_rejected": 1.0,
-      "adjacent_rejected": 0.6666666666666666
+      "adjacent_rejected": 0.7,
+      "mentioned_rejected": 0.4
     },
     {
       "threshold": 0.27,
       "golden_kept": 1.0,
       "far_rejected": 1.0,
-      "adjacent_rejected": 0.6666666666666666
+      "adjacent_rejected": 0.7,
+      "mentioned_rejected": 0.4
     },
     {
       "threshold": 0.28,
       "golden_kept": 1.0,
       "far_rejected": 1.0,
-      "adjacent_rejected": 0.6666666666666666
+      "adjacent_rejected": 0.7,
+      "mentioned_rejected": 0.4
     },
     {
       "threshold": 0.29,
       "golden_kept": 1.0,
       "far_rejected": 1.0,
-      "adjacent_rejected": 0.6666666666666666
+      "adjacent_rejected": 0.7,
+      "mentioned_rejected": 0.4
     },
     {
       "threshold": 0.3,
       "golden_kept": 1.0,
       "far_rejected": 1.0,
-      "adjacent_rejected": 0.6666666666666666
+      "adjacent_rejected": 0.7,
+      "mentioned_rejected": 0.4
     },
     {
       "threshold": 0.31,
       "golden_kept": 1.0,
       "far_rejected": 1.0,
-      "adjacent_rejected": 0.6666666666666666
+      "adjacent_rejected": 0.7,
+      "mentioned_rejected": 0.4
     },
     {
       "threshold": 0.32,
       "golden_kept": 1.0,
       "far_rejected": 1.0,
-      "adjacent_rejected": 0.8333333333333334
+      "adjacent_rejected": 0.8,
+      "mentioned_rejected": 0.4
     },
     {
       "threshold": 0.33,
       "golden_kept": 1.0,
       "far_rejected": 1.0,
-      "adjacent_rejected": 0.8333333333333334
+      "adjacent_rejected": 0.8,
+      "mentioned_rejected": 0.4
     },
     {
       "threshold": 0.34,
       "golden_kept": 1.0,
       "far_rejected": 1.0,
-      "adjacent_rejected": 0.8333333333333334
+      "adjacent_rejected": 0.8,
+      "mentioned_rejected": 0.4
     },
     {
       "threshold": 0.35,
       "golden_kept": 1.0,
       "far_rejected": 1.0,
-      "adjacent_rejected": 0.8333333333333334
+      "adjacent_rejected": 0.8,
+      "mentioned_rejected": 0.4
     },
     {
       "threshold": 0.36,
       "golden_kept": 1.0,
       "far_rejected": 1.0,
-      "adjacent_rejected": 1.0
+      "adjacent_rejected": 0.9,
+      "mentioned_rejected": 0.4
     },
     {
       "threshold": 0.37,
       "golden_kept": 1.0,
       "far_rejected": 1.0,
-      "adjacent_rejected": 1.0
+      "adjacent_rejected": 0.9,
+      "mentioned_rejected": 0.4
     },
     {
       "threshold": 0.38,
       "golden_kept": 1.0,
       "far_rejected": 1.0,
-      "adjacent_rejected": 1.0
+      "adjacent_rejected": 0.9,
+      "mentioned_rejected": 0.4
     },
     {
       "threshold": 0.39,
       "golden_kept": 1.0,
       "far_rejected": 1.0,
-      "adjacent_rejected": 1.0
+      "adjacent_rejected": 0.9,
+      "mentioned_rejected": 0.4
     },
     {
       "threshold": 0.4,
       "golden_kept": 1.0,
       "far_rejected": 1.0,
-      "adjacent_rejected": 1.0
+      "adjacent_rejected": 1.0,
+      "mentioned_rejected": 0.5
     },
     {
       "threshold": 0.41,
       "golden_kept": 1.0,
       "far_rejected": 1.0,
-      "adjacent_rejected": 1.0
+      "adjacent_rejected": 1.0,
+      "mentioned_rejected": 0.5
     },
     {
       "threshold": 0.42,
       "golden_kept": 1.0,
       "far_rejected": 1.0,
-      "adjacent_rejected": 1.0
+      "adjacent_rejected": 1.0,
+      "mentioned_rejected": 0.5
     },
     {
       "threshold": 0.43,
       "golden_kept": 1.0,
       "far_rejected": 1.0,
-      "adjacent_rejected": 1.0
+      "adjacent_rejected": 1.0,
+      "mentioned_rejected": 0.5
     },
     {
       "threshold": 0.44,
       "golden_kept": 1.0,
       "far_rejected": 1.0,
-      "adjacent_rejected": 1.0
+      "adjacent_rejected": 1.0,
+      "mentioned_rejected": 0.5
     },
     {
       "threshold": 0.45,
       "golden_kept": 1.0,
       "far_rejected": 1.0,
-      "adjacent_rejected": 1.0
+      "adjacent_rejected": 1.0,
+      "mentioned_rejected": 0.5
     },
     {
       "threshold": 0.46,
       "golden_kept": 1.0,
       "far_rejected": 1.0,
-      "adjacent_rejected": 1.0
+      "adjacent_rejected": 1.0,
+      "mentioned_rejected": 0.5
     },
     {
       "threshold": 0.47,
       "golden_kept": 1.0,
       "far_rejected": 1.0,
-      "adjacent_rejected": 1.0
+      "adjacent_rejected": 1.0,
+      "mentioned_rejected": 0.5
     },
     {
       "threshold": 0.48,
       "golden_kept": 1.0,
       "far_rejected": 1.0,
-      "adjacent_rejected": 1.0
+      "adjacent_rejected": 1.0,
+      "mentioned_rejected": 0.5
     },
     {
       "threshold": 0.49,
       "golden_kept": 1.0,
       "far_rejected": 1.0,
-      "adjacent_rejected": 1.0
+      "adjacent_rejected": 1.0,
+      "mentioned_rejected": 0.5
     },
     {
       "threshold": 0.5,
       "golden_kept": 1.0,
       "far_rejected": 1.0,
-      "adjacent_rejected": 1.0
+      "adjacent_rejected": 1.0,
+      "mentioned_rejected": 0.5
     },
     {
       "threshold": 0.51,
       "golden_kept": 1.0,
       "far_rejected": 1.0,
-      "adjacent_rejected": 1.0
+      "adjacent_rejected": 1.0,
+      "mentioned_rejected": 0.5
     },
     {
       "threshold": 0.52,
       "golden_kept": 1.0,
       "far_rejected": 1.0,
-      "adjacent_rejected": 1.0
+      "adjacent_rejected": 1.0,
+      "mentioned_rejected": 0.5
     },
     {
       "threshold": 0.53,
       "golden_kept": 1.0,
       "far_rejected": 1.0,
-      "adjacent_rejected": 1.0
+      "adjacent_rejected": 1.0,
+      "mentioned_rejected": 0.5
     },
     {
       "threshold": 0.54,
       "golden_kept": 1.0,
       "far_rejected": 1.0,
-      "adjacent_rejected": 1.0
+      "adjacent_rejected": 1.0,
+      "mentioned_rejected": 0.5
     },
     {
       "threshold": 0.55,
       "golden_kept": 1.0,
       "far_rejected": 1.0,
-      "adjacent_rejected": 1.0
+      "adjacent_rejected": 1.0,
+      "mentioned_rejected": 0.5
     },
     {
       "threshold": 0.56,
       "golden_kept": 1.0,
       "far_rejected": 1.0,
-      "adjacent_rejected": 1.0
+      "adjacent_rejected": 1.0,
+      "mentioned_rejected": 0.5
     },
     {
       "threshold": 0.57,
       "golden_kept": 1.0,
       "far_rejected": 1.0,
-      "adjacent_rejected": 1.0
+      "adjacent_rejected": 1.0,
+      "mentioned_rejected": 0.5
     },
     {
       "threshold": 0.58,
       "golden_kept": 1.0,
       "far_rejected": 1.0,
-      "adjacent_rejected": 1.0
+      "adjacent_rejected": 1.0,
+      "mentioned_rejected": 0.5
     },
     {
       "threshold": 0.59,
       "golden_kept": 1.0,
       "far_rejected": 1.0,
-      "adjacent_rejected": 1.0
+      "adjacent_rejected": 1.0,
+      "mentioned_rejected": 0.5
     },
     {
       "threshold": 0.6,
       "golden_kept": 1.0,
       "far_rejected": 1.0,
-      "adjacent_rejected": 1.0
+      "adjacent_rejected": 1.0,
+      "mentioned_rejected": 0.5
     },
     {
       "threshold": 0.61,
       "golden_kept": 1.0,
       "far_rejected": 1.0,
-      "adjacent_rejected": 1.0
+      "adjacent_rejected": 1.0,
+      "mentioned_rejected": 0.5
     },
     {
       "threshold": 0.62,
       "golden_kept": 1.0,
       "far_rejected": 1.0,
-      "adjacent_rejected": 1.0
+      "adjacent_rejected": 1.0,
+      "mentioned_rejected": 0.5
     },
     {
       "threshold": 0.63,
       "golden_kept": 1.0,
       "far_rejected": 1.0,
-      "adjacent_rejected": 1.0
+      "adjacent_rejected": 1.0,
+      "mentioned_rejected": 0.5
     },
     {
       "threshold": 0.64,
       "golden_kept": 1.0,
       "far_rejected": 1.0,
-      "adjacent_rejected": 1.0
+      "adjacent_rejected": 1.0,
+      "mentioned_rejected": 0.5
     },
     {
       "threshold": 0.65,
       "golden_kept": 1.0,
       "far_rejected": 1.0,
-      "adjacent_rejected": 1.0
+      "adjacent_rejected": 1.0,
+      "mentioned_rejected": 0.6
     },
     {
       "threshold": 0.66,
       "golden_kept": 1.0,
       "far_rejected": 1.0,
-      "adjacent_rejected": 1.0
+      "adjacent_rejected": 1.0,
+      "mentioned_rejected": 0.6
     },
     {
       "threshold": 0.67,
       "golden_kept": 1.0,
       "far_rejected": 1.0,
-      "adjacent_rejected": 1.0
+      "adjacent_rejected": 1.0,
+      "mentioned_rejected": 0.6
     },
     {
       "threshold": 0.68,
       "golden_kept": 1.0,
       "far_rejected": 1.0,
-      "adjacent_rejected": 1.0
+      "adjacent_rejected": 1.0,
+      "mentioned_rejected": 0.6
     },
     {
       "threshold": 0.69,
       "golden_kept": 1.0,
       "far_rejected": 1.0,
-      "adjacent_rejected": 1.0
+      "adjacent_rejected": 1.0,
+      "mentioned_rejected": 0.6
     },
     {
       "threshold": 0.7,
       "golden_kept": 1.0,
       "far_rejected": 1.0,
-      "adjacent_rejected": 1.0
+      "adjacent_rejected": 1.0,
+      "mentioned_rejected": 0.6
     },
     {
       "threshold": 0.71,
       "golden_kept": 1.0,
       "far_rejected": 1.0,
-      "adjacent_rejected": 1.0
+      "adjacent_rejected": 1.0,
+      "mentioned_rejected": 0.6
     },
     {
       "threshold": 0.72,
       "golden_kept": 1.0,
       "far_rejected": 1.0,
-      "adjacent_rejected": 1.0
+      "adjacent_rejected": 1.0,
+      "mentioned_rejected": 0.6
     },
     {
       "threshold": 0.73,
       "golden_kept": 1.0,
       "far_rejected": 1.0,
-      "adjacent_rejected": 1.0
+      "adjacent_rejected": 1.0,
+      "mentioned_rejected": 0.6
     },
     {
       "threshold": 0.74,
       "golden_kept": 1.0,
       "far_rejected": 1.0,
-      "adjacent_rejected": 1.0
+      "adjacent_rejected": 1.0,
+      "mentioned_rejected": 0.6
     },
     {
       "threshold": 0.75,
       "golden_kept": 1.0,
       "far_rejected": 1.0,
-      "adjacent_rejected": 1.0
+      "adjacent_rejected": 1.0,
+      "mentioned_rejected": 0.7
     },
     {
       "threshold": 0.76,
       "golden_kept": 1.0,
       "far_rejected": 1.0,
-      "adjacent_rejected": 1.0
+      "adjacent_rejected": 1.0,
+      "mentioned_rejected": 0.7
     },
     {
       "threshold": 0.77,
       "golden_kept": 1.0,
       "far_rejected": 1.0,
-      "adjacent_rejected": 1.0
+      "adjacent_rejected": 1.0,
+      "mentioned_rejected": 0.7
     },
     {
       "threshold": 0.78,
       "golden_kept": 1.0,
       "far_rejected": 1.0,
-      "adjacent_rejected": 1.0
+      "adjacent_rejected": 1.0,
+      "mentioned_rejected": 0.7
     },
     {
       "threshold": 0.79,
       "golden_kept": 1.0,
       "far_rejected": 1.0,
-      "adjacent_rejected": 1.0
+      "adjacent_rejected": 1.0,
+      "mentioned_rejected": 0.7
     },
     {
       "threshold": 0.8,
       "golden_kept": 0.9666666666666667,
       "far_rejected": 1.0,
-      "adjacent_rejected": 1.0
+      "adjacent_rejected": 1.0,
+      "mentioned_rejected": 0.7
     },
     {
       "threshold": 0.81,
       "golden_kept": 0.9666666666666667,
       "far_rejected": 1.0,
-      "adjacent_rejected": 1.0
+      "adjacent_rejected": 1.0,
+      "mentioned_rejected": 0.7
     },
     {
       "threshold": 0.82,
       "golden_kept": 0.9666666666666667,
       "far_rejected": 1.0,
-      "adjacent_rejected": 1.0
+      "adjacent_rejected": 1.0,
+      "mentioned_rejected": 0.7
     },
     {
       "threshold": 0.83,
       "golden_kept": 0.9666666666666667,
       "far_rejected": 1.0,
-      "adjacent_rejected": 1.0
+      "adjacent_rejected": 1.0,
+      "mentioned_rejected": 0.8
     },
     {
       "threshold": 0.84,
       "golden_kept": 0.9666666666666667,
       "far_rejected": 1.0,
-      "adjacent_rejected": 1.0
+      "adjacent_rejected": 1.0,
+      "mentioned_rejected": 0.8
     },
     {
       "threshold": 0.85,
       "golden_kept": 0.9666666666666667,
       "far_rejected": 1.0,
-      "adjacent_rejected": 1.0
+      "adjacent_rejected": 1.0,
+      "mentioned_rejected": 0.8
     },
     {
       "threshold": 0.86,
       "golden_kept": 0.9666666666666667,
       "far_rejected": 1.0,
-      "adjacent_rejected": 1.0
+      "adjacent_rejected": 1.0,
+      "mentioned_rejected": 0.8
     },
     {
       "threshold": 0.87,
       "golden_kept": 0.9666666666666667,
       "far_rejected": 1.0,
-      "adjacent_rejected": 1.0
+      "adjacent_rejected": 1.0,
+      "mentioned_rejected": 0.8
     },
     {
       "threshold": 0.88,
       "golden_kept": 0.9666666666666667,
       "far_rejected": 1.0,
-      "adjacent_rejected": 1.0
+      "adjacent_rejected": 1.0,
+      "mentioned_rejected": 0.8
     },
     {
       "threshold": 0.89,
       "golden_kept": 0.9333333333333333,
       "far_rejected": 1.0,
-      "adjacent_rejected": 1.0
+      "adjacent_rejected": 1.0,
+      "mentioned_rejected": 0.9
     },
     {
       "threshold": 0.9,
       "golden_kept": 0.9333333333333333,
       "far_rejected": 1.0,
-      "adjacent_rejected": 1.0
+      "adjacent_rejected": 1.0,
+      "mentioned_rejected": 0.9
     },
     {
       "threshold": 0.91,
       "golden_kept": 0.8666666666666667,
       "far_rejected": 1.0,
-      "adjacent_rejected": 1.0
+      "adjacent_rejected": 1.0,
+      "mentioned_rejected": 1.0
     },
     {
       "threshold": 0.92,
       "golden_kept": 0.8666666666666667,
       "far_rejected": 1.0,
-      "adjacent_rejected": 1.0
+      "adjacent_rejected": 1.0,
+      "mentioned_rejected": 1.0
     },
     {
       "threshold": 0.93,
       "golden_kept": 0.8666666666666667,
       "far_rejected": 1.0,
-      "adjacent_rejected": 1.0
+      "adjacent_rejected": 1.0,
+      "mentioned_rejected": 1.0
     },
     {
       "threshold": 0.94,
       "golden_kept": 0.8333333333333334,
       "far_rejected": 1.0,
-      "adjacent_rejected": 1.0
+      "adjacent_rejected": 1.0,
+      "mentioned_rejected": 1.0
     },
     {
       "threshold": 0.95,
       "golden_kept": 0.8333333333333334,
       "far_rejected": 1.0,
-      "adjacent_rejected": 1.0
+      "adjacent_rejected": 1.0,
+      "mentioned_rejected": 1.0
     },
     {
       "threshold": 0.96,
       "golden_kept": 0.7666666666666667,
       "far_rejected": 1.0,
-      "adjacent_rejected": 1.0
+      "adjacent_rejected": 1.0,
+      "mentioned_rejected": 1.0
     },
     {
       "threshold": 0.97,
       "golden_kept": 0.7,
       "far_rejected": 1.0,
-      "adjacent_rejected": 1.0
+      "adjacent_rejected": 1.0,
+      "mentioned_rejected": 1.0
     },
     {
       "threshold": 0.98,
       "golden_kept": 0.4666666666666667,
       "far_rejected": 1.0,
-      "adjacent_rejected": 1.0
+      "adjacent_rejected": 1.0,
+      "mentioned_rejected": 1.0
     },
     {
       "threshold": 0.99,
       "golden_kept": 0.43333333333333335,
       "far_rejected": 1.0,
-      "adjacent_rejected": 1.0
+      "adjacent_rejected": 1.0,
+      "mentioned_rejected": 1.0
     },
     {
       "threshold": 1.0,
       "golden_kept": 0.0,
       "far_rejected": 1.0,
-      "adjacent_rejected": 1.0
+      "adjacent_rejected": 1.0,
+      "mentioned_rejected": 1.0
     }
   ],
-  "verdict": "可分：阈值 0.36 下笔记内保留 100.00%、邻近拒绝 100.00%、远域拒绝 100.00%",
-  "best_threshold": 0.36,
+  "verdict": "可分：阈值 0.40 下笔记内保留 100.00%、邻近·完全没提拒绝 100.00%、远域拒绝 100.00%；提了名没解释只拒掉 50.00%（**门槛不负责这组** ⇒ 必须由答案模板兜底）",
+  "best_threshold": 0.4,
   "truncation": [
     {
       "threshold": 0.0,
@@ -3041,6 +3803,7 @@
       },
       "far_rejected": 0.0,
       "adjacent_rejected": 0.0,
+      "mentioned_rejected": 0.0,
       "kept_evidence_ratio": 1.0
     },
     {
@@ -3052,8 +3815,9 @@
         "10": 1.0
       },
       "far_rejected": 0.8666666666666667,
-      "adjacent_rejected": 0.16666666666666666,
-      "kept_evidence_ratio": 0.9699769053117783
+      "adjacent_rejected": 0.3,
+      "mentioned_rejected": 0.0,
+      "kept_evidence_ratio": 0.9700460829493087
     },
     {
       "threshold": 0.02,
@@ -3064,8 +3828,9 @@
         "10": 1.0
       },
       "far_rejected": 1.0,
-      "adjacent_rejected": 0.3333333333333333,
-      "kept_evidence_ratio": 0.9561200923787528
+      "adjacent_rejected": 0.5,
+      "mentioned_rejected": 0.0,
+      "kept_evidence_ratio": 0.956221198156682
     },
     {
       "threshold": 0.03,
@@ -3076,8 +3841,9 @@
         "10": 1.0
       },
       "far_rejected": 1.0,
-      "adjacent_rejected": 0.3333333333333333,
-      "kept_evidence_ratio": 0.9353348729792148
+      "adjacent_rejected": 0.6,
+      "mentioned_rejected": 0.0,
+      "kept_evidence_ratio": 0.9354838709677419
     },
     {
       "threshold": 0.04,
@@ -3088,8 +3854,9 @@
         "10": 1.0
       },
       "far_rejected": 1.0,
-      "adjacent_rejected": 0.3333333333333333,
-      "kept_evidence_ratio": 0.9260969976905312
+      "adjacent_rejected": 0.6,
+      "mentioned_rejected": 0.0,
+      "kept_evidence_ratio": 0.9262672811059908
     },
     {
       "threshold": 0.05,
@@ -3100,8 +3867,9 @@
         "10": 1.0
       },
       "far_rejected": 1.0,
-      "adjacent_rejected": 0.3333333333333333,
-      "kept_evidence_ratio": 0.9191685912240185
+      "adjacent_rejected": 0.6,
+      "mentioned_rejected": 0.0,
+      "kept_evidence_ratio": 0.9193548387096774
     },
     {
       "threshold": 0.06,
@@ -3112,8 +3880,9 @@
         "10": 1.0
       },
       "far_rejected": 1.0,
-      "adjacent_rejected": 0.3333333333333333,
-      "kept_evidence_ratio": 0.9191685912240185
+      "adjacent_rejected": 0.6,
+      "mentioned_rejected": 0.1,
+      "kept_evidence_ratio": 0.9193548387096774
     },
     {
       "threshold": 0.07,
@@ -3124,8 +3893,9 @@
         "10": 1.0
       },
       "far_rejected": 1.0,
-      "adjacent_rejected": 0.3333333333333333,
-      "kept_evidence_ratio": 0.9145496535796767
+      "adjacent_rejected": 0.6,
+      "mentioned_rejected": 0.1,
+      "kept_evidence_ratio": 0.9147465437788018
     },
     {
       "threshold": 0.08,
@@ -3136,8 +3906,9 @@
         "10": 1.0
       },
       "far_rejected": 1.0,
-      "adjacent_rejected": 0.3333333333333333,
-      "kept_evidence_ratio": 0.9053117782909931
+      "adjacent_rejected": 0.6,
+      "mentioned_rejected": 0.1,
+      "kept_evidence_ratio": 0.9055299539170507
     },
     {
       "threshold": 0.09,
@@ -3148,8 +3919,9 @@
         "10": 1.0
       },
       "far_rejected": 1.0,
-      "adjacent_rejected": 0.3333333333333333,
-      "kept_evidence_ratio": 0.9030023094688222
+      "adjacent_rejected": 0.6,
+      "mentioned_rejected": 0.1,
+      "kept_evidence_ratio": 0.9032258064516129
     },
     {
       "threshold": 0.1,
@@ -3160,8 +3932,9 @@
         "10": 1.0
       },
       "far_rejected": 1.0,
-      "adjacent_rejected": 0.5,
-      "kept_evidence_ratio": 0.8937644341801386
+      "adjacent_rejected": 0.6,
+      "mentioned_rejected": 0.2,
+      "kept_evidence_ratio": 0.8940092165898618
     },
     {
       "threshold": 0.11,
@@ -3172,8 +3945,9 @@
         "10": 1.0
       },
       "far_rejected": 1.0,
-      "adjacent_rejected": 0.5,
-      "kept_evidence_ratio": 0.8822170900692841
+      "adjacent_rejected": 0.6,
+      "mentioned_rejected": 0.2,
+      "kept_evidence_ratio": 0.8824884792626728
     },
     {
       "threshold": 0.12,
@@ -3184,8 +3958,9 @@
         "10": 1.0
       },
       "far_rejected": 1.0,
-      "adjacent_rejected": 0.6666666666666666,
-      "kept_evidence_ratio": 0.8799076212471132
+      "adjacent_rejected": 0.6,
+      "mentioned_rejected": 0.3,
+      "kept_evidence_ratio": 0.880184331797235
     },
     {
       "threshold": 0.13,
@@ -3196,8 +3971,9 @@
         "10": 1.0
       },
       "far_rejected": 1.0,
-      "adjacent_rejected": 0.6666666666666666,
-      "kept_evidence_ratio": 0.8752886836027713
+      "adjacent_rejected": 0.6,
+      "mentioned_rejected": 0.3,
+      "kept_evidence_ratio": 0.8755760368663594
     },
     {
       "threshold": 0.14,
@@ -3208,8 +3984,9 @@
         "10": 1.0
       },
       "far_rejected": 1.0,
-      "adjacent_rejected": 0.6666666666666666,
-      "kept_evidence_ratio": 0.8660508083140878
+      "adjacent_rejected": 0.6,
+      "mentioned_rejected": 0.3,
+      "kept_evidence_ratio": 0.8663594470046083
     },
     {
       "threshold": 0.15,
@@ -3220,8 +3997,9 @@
         "10": 1.0
       },
       "far_rejected": 1.0,
-      "adjacent_rejected": 0.6666666666666666,
-      "kept_evidence_ratio": 0.8568129330254042
+      "adjacent_rejected": 0.6,
+      "mentioned_rejected": 0.3,
+      "kept_evidence_ratio": 0.8571428571428571
     },
     {
       "threshold": 0.16,
@@ -3232,8 +4010,9 @@
         "10": 1.0
       },
       "far_rejected": 1.0,
-      "adjacent_rejected": 0.6666666666666666,
-      "kept_evidence_ratio": 0.8521939953810623
+      "adjacent_rejected": 0.6,
+      "mentioned_rejected": 0.3,
+      "kept_evidence_ratio": 0.8525345622119815
     },
     {
       "threshold": 0.17,
@@ -3244,8 +4023,9 @@
         "10": 1.0
       },
       "far_rejected": 1.0,
-      "adjacent_rejected": 0.6666666666666666,
-      "kept_evidence_ratio": 0.8452655889145496
+      "adjacent_rejected": 0.6,
+      "mentioned_rejected": 0.3,
+      "kept_evidence_ratio": 0.8456221198156681
     },
     {
       "threshold": 0.18,
@@ -3256,8 +4036,9 @@
         "10": 1.0
       },
       "far_rejected": 1.0,
-      "adjacent_rejected": 0.6666666666666666,
-      "kept_evidence_ratio": 0.8429561200923787
+      "adjacent_rejected": 0.6,
+      "mentioned_rejected": 0.3,
+      "kept_evidence_ratio": 0.8433179723502304
     },
     {
       "threshold": 0.19,
@@ -3268,8 +4049,9 @@
         "10": 1.0
       },
       "far_rejected": 1.0,
-      "adjacent_rejected": 0.6666666666666666,
-      "kept_evidence_ratio": 0.8429561200923787
+      "adjacent_rejected": 0.6,
+      "mentioned_rejected": 0.3,
+      "kept_evidence_ratio": 0.8433179723502304
     },
     {
       "threshold": 0.2,
@@ -3280,8 +4062,9 @@
         "10": 0.9666666666666667
       },
       "far_rejected": 1.0,
-      "adjacent_rejected": 0.6666666666666666,
-      "kept_evidence_ratio": 0.8406466512702079
+      "adjacent_rejected": 0.7,
+      "mentioned_rejected": 0.3,
+      "kept_evidence_ratio": 0.8410138248847926
     },
     {
       "threshold": 0.21,
@@ -3292,8 +4075,9 @@
         "10": 0.9666666666666667
       },
       "far_rejected": 1.0,
-      "adjacent_rejected": 0.6666666666666666,
-      "kept_evidence_ratio": 0.8383371824480369
+      "adjacent_rejected": 0.7,
+      "mentioned_rejected": 0.3,
+      "kept_evidence_ratio": 0.8387096774193549
     },
     {
       "threshold": 0.22,
@@ -3304,8 +4088,9 @@
         "10": 0.9666666666666667
       },
       "far_rejected": 1.0,
-      "adjacent_rejected": 0.6666666666666666,
-      "kept_evidence_ratio": 0.8314087759815243
+      "adjacent_rejected": 0.7,
+      "mentioned_rejected": 0.3,
+      "kept_evidence_ratio": 0.8317972350230415
     },
     {
       "threshold": 0.23,
@@ -3316,8 +4101,9 @@
         "10": 0.9666666666666667
       },
       "far_rejected": 1.0,
-      "adjacent_rejected": 0.6666666666666666,
-      "kept_evidence_ratio": 0.8314087759815243
+      "adjacent_rejected": 0.7,
+      "mentioned_rejected": 0.3,
+      "kept_evidence_ratio": 0.8317972350230415
     },
     {
       "threshold": 0.24,
@@ -3328,8 +4114,9 @@
         "10": 0.9666666666666667
       },
       "far_rejected": 1.0,
-      "adjacent_rejected": 0.6666666666666666,
-      "kept_evidence_ratio": 0.8314087759815243
+      "adjacent_rejected": 0.7,
+      "mentioned_rejected": 0.3,
+      "kept_evidence_ratio": 0.8317972350230415
     },
     {
       "threshold": 0.25,
@@ -3340,8 +4127,9 @@
         "10": 0.9666666666666667
       },
       "far_rejected": 1.0,
-      "adjacent_rejected": 0.6666666666666666,
-      "kept_evidence_ratio": 0.8314087759815243
+      "adjacent_rejected": 0.7,
+      "mentioned_rejected": 0.3,
+      "kept_evidence_ratio": 0.8317972350230415
     },
     {
       "threshold": 0.26,
@@ -3352,8 +4140,9 @@
         "10": 0.9666666666666667
       },
       "far_rejected": 1.0,
-      "adjacent_rejected": 0.6666666666666666,
-      "kept_evidence_ratio": 0.8314087759815243
+      "adjacent_rejected": 0.7,
+      "mentioned_rejected": 0.4,
+      "kept_evidence_ratio": 0.8317972350230415
     },
     {
       "threshold": 0.27,
@@ -3364,8 +4153,9 @@
         "10": 0.9666666666666667
       },
       "far_rejected": 1.0,
-      "adjacent_rejected": 0.6666666666666666,
-      "kept_evidence_ratio": 0.8290993071593533
+      "adjacent_rejected": 0.7,
+      "mentioned_rejected": 0.4,
+      "kept_evidence_ratio": 0.8294930875576036
     },
     {
       "threshold": 0.28,
@@ -3376,8 +4166,9 @@
         "10": 0.9666666666666667
       },
       "far_rejected": 1.0,
-      "adjacent_rejected": 0.6666666666666666,
-      "kept_evidence_ratio": 0.8267898383371824
+      "adjacent_rejected": 0.7,
+      "mentioned_rejected": 0.4,
+      "kept_evidence_ratio": 0.8271889400921659
     },
     {
       "threshold": 0.29,
@@ -3388,8 +4179,9 @@
         "10": 0.9666666666666667
       },
       "far_rejected": 1.0,
-      "adjacent_rejected": 0.6666666666666666,
-      "kept_evidence_ratio": 0.8244803695150116
+      "adjacent_rejected": 0.7,
+      "mentioned_rejected": 0.4,
+      "kept_evidence_ratio": 0.8248847926267281
     },
     {
       "threshold": 0.3,
@@ -3400,8 +4192,9 @@
         "10": 0.9666666666666667
       },
       "far_rejected": 1.0,
-      "adjacent_rejected": 0.6666666666666666,
-      "kept_evidence_ratio": 0.8198614318706697
+      "adjacent_rejected": 0.7,
+      "mentioned_rejected": 0.4,
+      "kept_evidence_ratio": 0.8202764976958525
     },
     {
       "threshold": 0.31,
@@ -3412,8 +4205,9 @@
         "10": 0.9666666666666667
       },
       "far_rejected": 1.0,
-      "adjacent_rejected": 0.6666666666666666,
-      "kept_evidence_ratio": 0.812933025404157
+      "adjacent_rejected": 0.7,
+      "mentioned_rejected": 0.4,
+      "kept_evidence_ratio": 0.8133640552995391
     },
     {
       "threshold": 0.32,
@@ -3424,8 +4218,9 @@
         "10": 0.9666666666666667
       },
       "far_rejected": 1.0,
-      "adjacent_rejected": 0.8333333333333334,
-      "kept_evidence_ratio": 0.8106235565819861
+      "adjacent_rejected": 0.8,
+      "mentioned_rejected": 0.4,
+      "kept_evidence_ratio": 0.8110599078341014
     },
     {
       "threshold": 0.33,
@@ -3436,8 +4231,9 @@
         "10": 0.9666666666666667
       },
       "far_rejected": 1.0,
-      "adjacent_rejected": 0.8333333333333334,
-      "kept_evidence_ratio": 0.8083140877598153
+      "adjacent_rejected": 0.8,
+      "mentioned_rejected": 0.4,
+      "kept_evidence_ratio": 0.8087557603686636
     },
     {
       "threshold": 0.34,
@@ -3448,8 +4244,9 @@
         "10": 0.9666666666666667
       },
       "far_rejected": 1.0,
-      "adjacent_rejected": 0.8333333333333334,
-      "kept_evidence_ratio": 0.8060046189376443
+      "adjacent_rejected": 0.8,
+      "mentioned_rejected": 0.4,
+      "kept_evidence_ratio": 0.8064516129032258
     },
     {
       "threshold": 0.35,
@@ -3460,8 +4257,9 @@
         "10": 0.9666666666666667
       },
       "far_rejected": 1.0,
-      "adjacent_rejected": 0.8333333333333334,
-      "kept_evidence_ratio": 0.8013856812933026
+      "adjacent_rejected": 0.8,
+      "mentioned_rejected": 0.4,
+      "kept_evidence_ratio": 0.8018433179723502
     },
     {
       "threshold": 0.36,
@@ -3472,8 +4270,9 @@
         "10": 0.9666666666666667
       },
       "far_rejected": 1.0,
-      "adjacent_rejected": 1.0,
-      "kept_evidence_ratio": 0.7967667436489607
+      "adjacent_rejected": 0.9,
+      "mentioned_rejected": 0.4,
+      "kept_evidence_ratio": 0.7972350230414746
     },
     {
       "threshold": 0.37,
@@ -3484,8 +4283,9 @@
         "10": 0.9666666666666667
       },
       "far_rejected": 1.0,
-      "adjacent_rejected": 1.0,
-      "kept_evidence_ratio": 0.7967667436489607
+      "adjacent_rejected": 0.9,
+      "mentioned_rejected": 0.4,
+      "kept_evidence_ratio": 0.7972350230414746
     },
     {
       "threshold": 0.38,
@@ -3496,8 +4296,9 @@
         "10": 0.9666666666666667
       },
       "far_rejected": 1.0,
-      "adjacent_rejected": 1.0,
-      "kept_evidence_ratio": 0.7852193995381063
+      "adjacent_rejected": 0.9,
+      "mentioned_rejected": 0.4,
+      "kept_evidence_ratio": 0.7857142857142857
     },
     {
       "threshold": 0.39,
@@ -3508,8 +4309,9 @@
         "10": 0.9666666666666667
       },
       "far_rejected": 1.0,
-      "adjacent_rejected": 1.0,
-      "kept_evidence_ratio": 0.7806004618937644
+      "adjacent_rejected": 0.9,
+      "mentioned_rejected": 0.4,
+      "kept_evidence_ratio": 0.7811059907834101
     },
     {
       "threshold": 0.4,
@@ -3521,7 +4323,8 @@
       },
       "far_rejected": 1.0,
       "adjacent_rejected": 1.0,
-      "kept_evidence_ratio": 0.7806004618937644
+      "mentioned_rejected": 0.5,
+      "kept_evidence_ratio": 0.7811059907834101
     },
     {
       "threshold": 0.41,
@@ -3533,7 +4336,8 @@
       },
       "far_rejected": 1.0,
       "adjacent_rejected": 1.0,
-      "kept_evidence_ratio": 0.7806004618937644
+      "mentioned_rejected": 0.5,
+      "kept_evidence_ratio": 0.7811059907834101
     },
     {
       "threshold": 0.42,
@@ -3545,7 +4349,8 @@
       },
       "far_rejected": 1.0,
       "adjacent_rejected": 1.0,
-      "kept_evidence_ratio": 0.7806004618937644
+      "mentioned_rejected": 0.5,
+      "kept_evidence_ratio": 0.7811059907834101
     },
     {
       "threshold": 0.43,
@@ -3557,7 +4362,8 @@
       },
       "far_rejected": 1.0,
       "adjacent_rejected": 1.0,
-      "kept_evidence_ratio": 0.7736720554272517
+      "mentioned_rejected": 0.5,
+      "kept_evidence_ratio": 0.7741935483870968
     },
     {
       "threshold": 0.44,
@@ -3569,7 +4375,8 @@
       },
       "far_rejected": 1.0,
       "adjacent_rejected": 1.0,
-      "kept_evidence_ratio": 0.7736720554272517
+      "mentioned_rejected": 0.5,
+      "kept_evidence_ratio": 0.7741935483870968
     },
     {
       "threshold": 0.45,
@@ -3581,7 +4388,8 @@
       },
       "far_rejected": 1.0,
       "adjacent_rejected": 1.0,
-      "kept_evidence_ratio": 0.76905311778291
+      "mentioned_rejected": 0.5,
+      "kept_evidence_ratio": 0.7695852534562212
     },
     {
       "threshold": 0.46,
@@ -3593,7 +4401,8 @@
       },
       "far_rejected": 1.0,
       "adjacent_rejected": 1.0,
-      "kept_evidence_ratio": 0.76905311778291
+      "mentioned_rejected": 0.5,
+      "kept_evidence_ratio": 0.7695852534562212
     },
     {
       "threshold": 0.47,
@@ -3605,7 +4414,8 @@
       },
       "far_rejected": 1.0,
       "adjacent_rejected": 1.0,
-      "kept_evidence_ratio": 0.76905311778291
+      "mentioned_rejected": 0.5,
+      "kept_evidence_ratio": 0.7695852534562212
     },
     {
       "threshold": 0.48,
@@ -3617,7 +4427,8 @@
       },
       "far_rejected": 1.0,
       "adjacent_rejected": 1.0,
-      "kept_evidence_ratio": 0.7575057736720554
+      "mentioned_rejected": 0.5,
+      "kept_evidence_ratio": 0.7580645161290323
     },
     {
       "threshold": 0.49,
@@ -3629,7 +4440,8 @@
       },
       "far_rejected": 1.0,
       "adjacent_rejected": 1.0,
-      "kept_evidence_ratio": 0.7505773672055427
+      "mentioned_rejected": 0.5,
+      "kept_evidence_ratio": 0.7511520737327189
     },
     {
       "threshold": 0.5,
@@ -3641,7 +4453,8 @@
       },
       "far_rejected": 1.0,
       "adjacent_rejected": 1.0,
-      "kept_evidence_ratio": 0.745958429561201
+      "mentioned_rejected": 0.5,
+      "kept_evidence_ratio": 0.7465437788018433
     },
     {
       "threshold": 0.51,
@@ -3653,7 +4466,8 @@
       },
       "far_rejected": 1.0,
       "adjacent_rejected": 1.0,
-      "kept_evidence_ratio": 0.7321016166281755
+      "mentioned_rejected": 0.5,
+      "kept_evidence_ratio": 0.7327188940092166
     },
     {
       "threshold": 0.52,
@@ -3665,7 +4479,8 @@
       },
       "far_rejected": 1.0,
       "adjacent_rejected": 1.0,
-      "kept_evidence_ratio": 0.7297921478060047
+      "mentioned_rejected": 0.5,
+      "kept_evidence_ratio": 0.7304147465437788
     },
     {
       "threshold": 0.53,
@@ -3677,7 +4492,8 @@
       },
       "far_rejected": 1.0,
       "adjacent_rejected": 1.0,
-      "kept_evidence_ratio": 0.7251732101616628
+      "mentioned_rejected": 0.5,
+      "kept_evidence_ratio": 0.7258064516129032
     },
     {
       "threshold": 0.54,
@@ -3689,7 +4505,8 @@
       },
       "far_rejected": 1.0,
       "adjacent_rejected": 1.0,
-      "kept_evidence_ratio": 0.7182448036951501
+      "mentioned_rejected": 0.5,
+      "kept_evidence_ratio": 0.7188940092165899
     },
     {
       "threshold": 0.55,
@@ -3701,7 +4518,8 @@
       },
       "far_rejected": 1.0,
       "adjacent_rejected": 1.0,
-      "kept_evidence_ratio": 0.7113163972286374
+      "mentioned_rejected": 0.5,
+      "kept_evidence_ratio": 0.7119815668202765
     },
     {
       "threshold": 0.56,
@@ -3713,7 +4531,8 @@
       },
       "far_rejected": 1.0,
       "adjacent_rejected": 1.0,
-      "kept_evidence_ratio": 0.7043879907621247
+      "mentioned_rejected": 0.5,
+      "kept_evidence_ratio": 0.7050691244239631
     },
     {
       "threshold": 0.57,
@@ -3725,7 +4544,8 @@
       },
       "far_rejected": 1.0,
       "adjacent_rejected": 1.0,
-      "kept_evidence_ratio": 0.6997690531177829
+      "mentioned_rejected": 0.5,
+      "kept_evidence_ratio": 0.7004608294930875
     },
     {
       "threshold": 0.58,
@@ -3737,7 +4557,8 @@
       },
       "far_rejected": 1.0,
       "adjacent_rejected": 1.0,
-      "kept_evidence_ratio": 0.6951501154734411
+      "mentioned_rejected": 0.5,
+      "kept_evidence_ratio": 0.695852534562212
     },
     {
       "threshold": 0.59,
@@ -3749,7 +4570,8 @@
       },
       "far_rejected": 1.0,
       "adjacent_rejected": 1.0,
-      "kept_evidence_ratio": 0.6928406466512702
+      "mentioned_rejected": 0.5,
+      "kept_evidence_ratio": 0.6935483870967742
     },
     {
       "threshold": 0.6,
@@ -3761,7 +4583,8 @@
       },
       "far_rejected": 1.0,
       "adjacent_rejected": 1.0,
-      "kept_evidence_ratio": 0.6812933025404158
+      "mentioned_rejected": 0.5,
+      "kept_evidence_ratio": 0.6820276497695853
     },
     {
       "threshold": 0.61,
@@ -3773,7 +4596,8 @@
       },
       "far_rejected": 1.0,
       "adjacent_rejected": 1.0,
-      "kept_evidence_ratio": 0.6651270207852193
+      "mentioned_rejected": 0.5,
+      "kept_evidence_ratio": 0.6658986175115207
     },
     {
       "threshold": 0.62,
@@ -3785,7 +4609,8 @@
       },
       "far_rejected": 1.0,
       "adjacent_rejected": 1.0,
-      "kept_evidence_ratio": 0.6628175519630485
+      "mentioned_rejected": 0.5,
+      "kept_evidence_ratio": 0.6612903225806451
     },
     {
       "threshold": 0.63,
@@ -3797,7 +4622,8 @@
       },
       "far_rejected": 1.0,
       "adjacent_rejected": 1.0,
-      "kept_evidence_ratio": 0.6535796766743649
+      "mentioned_rejected": 0.5,
+      "kept_evidence_ratio": 0.652073732718894
     },
     {
       "threshold": 0.64,
@@ -3809,7 +4635,8 @@
       },
       "far_rejected": 1.0,
       "adjacent_rejected": 1.0,
-      "kept_evidence_ratio": 0.651270207852194
+      "mentioned_rejected": 0.5,
+      "kept_evidence_ratio": 0.6497695852534562
     },
     {
       "threshold": 0.65,
@@ -3821,7 +4648,8 @@
       },
       "far_rejected": 1.0,
       "adjacent_rejected": 1.0,
-      "kept_evidence_ratio": 0.6420323325635104
+      "mentioned_rejected": 0.6,
+      "kept_evidence_ratio": 0.6405529953917051
     },
     {
       "threshold": 0.66,
@@ -3833,7 +4661,8 @@
       },
       "far_rejected": 1.0,
       "adjacent_rejected": 1.0,
-      "kept_evidence_ratio": 0.6212471131639723
+      "mentioned_rejected": 0.6,
+      "kept_evidence_ratio": 0.619815668202765
     },
     {
       "threshold": 0.67,
@@ -3845,7 +4674,8 @@
       },
       "far_rejected": 1.0,
       "adjacent_rejected": 1.0,
-      "kept_evidence_ratio": 0.6143187066974596
+      "mentioned_rejected": 0.6,
+      "kept_evidence_ratio": 0.6129032258064516
     },
     {
       "threshold": 0.68,
@@ -3857,7 +4687,8 @@
       },
       "far_rejected": 1.0,
       "adjacent_rejected": 1.0,
-      "kept_evidence_ratio": 0.6120092378752887
+      "mentioned_rejected": 0.6,
+      "kept_evidence_ratio": 0.6105990783410138
     },
     {
       "threshold": 0.69,
@@ -3869,7 +4700,8 @@
       },
       "far_rejected": 1.0,
       "adjacent_rejected": 1.0,
-      "kept_evidence_ratio": 0.6027713625866051
+      "mentioned_rejected": 0.6,
+      "kept_evidence_ratio": 0.6013824884792627
     },
     {
       "threshold": 0.7,
@@ -3881,7 +4713,8 @@
       },
       "far_rejected": 1.0,
       "adjacent_rejected": 1.0,
-      "kept_evidence_ratio": 0.5958429561200924
+      "mentioned_rejected": 0.6,
+      "kept_evidence_ratio": 0.5944700460829493
     },
     {
       "threshold": 0.71,
@@ -3893,7 +4726,8 @@
       },
       "far_rejected": 1.0,
       "adjacent_rejected": 1.0,
-      "kept_evidence_ratio": 0.5842956120092379
+      "mentioned_rejected": 0.6,
+      "kept_evidence_ratio": 0.5829493087557603
     },
     {
       "threshold": 0.72,
@@ -3905,7 +4739,8 @@
       },
       "far_rejected": 1.0,
       "adjacent_rejected": 1.0,
-      "kept_evidence_ratio": 0.5727482678983834
+      "mentioned_rejected": 0.6,
+      "kept_evidence_ratio": 0.5714285714285714
     },
     {
       "threshold": 0.73,
@@ -3917,7 +4752,8 @@
       },
       "far_rejected": 1.0,
       "adjacent_rejected": 1.0,
-      "kept_evidence_ratio": 0.5704387990762124
+      "mentioned_rejected": 0.6,
+      "kept_evidence_ratio": 0.5691244239631337
     },
     {
       "threshold": 0.74,
@@ -3929,7 +4765,8 @@
       },
       "far_rejected": 1.0,
       "adjacent_rejected": 1.0,
-      "kept_evidence_ratio": 0.5612009237875288
+      "mentioned_rejected": 0.6,
+      "kept_evidence_ratio": 0.5599078341013825
     },
     {
       "threshold": 0.75,
@@ -3941,7 +4778,8 @@
       },
       "far_rejected": 1.0,
       "adjacent_rejected": 1.0,
-      "kept_evidence_ratio": 0.5473441108545035
+      "mentioned_rejected": 0.7,
+      "kept_evidence_ratio": 0.5460829493087558
     },
     {
       "threshold": 0.76,
@@ -3953,7 +4791,8 @@
       },
       "far_rejected": 1.0,
       "adjacent_rejected": 1.0,
-      "kept_evidence_ratio": 0.5427251732101617
+      "mentioned_rejected": 0.7,
+      "kept_evidence_ratio": 0.5414746543778802
     },
     {
       "threshold": 0.77,
@@ -3965,7 +4804,8 @@
       },
       "far_rejected": 1.0,
       "adjacent_rejected": 1.0,
-      "kept_evidence_ratio": 0.535796766743649
+      "mentioned_rejected": 0.7,
+      "kept_evidence_ratio": 0.5345622119815668
     },
     {
       "threshold": 0.78,
@@ -3977,7 +4817,8 @@
       },
       "far_rejected": 1.0,
       "adjacent_rejected": 1.0,
-      "kept_evidence_ratio": 0.5288683602771362
+      "mentioned_rejected": 0.7,
+      "kept_evidence_ratio": 0.5276497695852534
     },
     {
       "threshold": 0.79,
@@ -3989,7 +4830,8 @@
       },
       "far_rejected": 1.0,
       "adjacent_rejected": 1.0,
-      "kept_evidence_ratio": 0.5242494226327945
+      "mentioned_rejected": 0.7,
+      "kept_evidence_ratio": 0.5230414746543779
     },
     {
       "threshold": 0.8,
@@ -4001,7 +4843,8 @@
       },
       "far_rejected": 1.0,
       "adjacent_rejected": 1.0,
-      "kept_evidence_ratio": 0.5196304849884527
+      "mentioned_rejected": 0.7,
+      "kept_evidence_ratio": 0.5184331797235023
     },
     {
       "threshold": 0.81,
@@ -4013,7 +4856,8 @@
       },
       "far_rejected": 1.0,
       "adjacent_rejected": 1.0,
-      "kept_evidence_ratio": 0.5080831408775982
+      "mentioned_rejected": 0.7,
+      "kept_evidence_ratio": 0.5069124423963134
     },
     {
       "threshold": 0.82,
@@ -4025,7 +4869,8 @@
       },
       "far_rejected": 1.0,
       "adjacent_rejected": 1.0,
-      "kept_evidence_ratio": 0.4942263279445728
+      "mentioned_rejected": 0.7,
+      "kept_evidence_ratio": 0.4930875576036866
     },
     {
       "threshold": 0.83,
@@ -4037,7 +4882,8 @@
       },
       "far_rejected": 1.0,
       "adjacent_rejected": 1.0,
-      "kept_evidence_ratio": 0.4896073903002309
+      "mentioned_rejected": 0.8,
+      "kept_evidence_ratio": 0.48847926267281105
     },
     {
       "threshold": 0.84,
@@ -4049,7 +4895,8 @@
       },
       "far_rejected": 1.0,
       "adjacent_rejected": 1.0,
-      "kept_evidence_ratio": 0.47575057736720555
+      "mentioned_rejected": 0.8,
+      "kept_evidence_ratio": 0.47465437788018433
     },
     {
       "threshold": 0.85,
@@ -4061,7 +4908,8 @@
       },
       "far_rejected": 1.0,
       "adjacent_rejected": 1.0,
-      "kept_evidence_ratio": 0.45958429561200925
+      "mentioned_rejected": 0.8,
+      "kept_evidence_ratio": 0.45852534562211983
     },
     {
       "threshold": 0.86,
@@ -4073,7 +4921,8 @@
       },
       "far_rejected": 1.0,
       "adjacent_rejected": 1.0,
-      "kept_evidence_ratio": 0.45265588914549654
+      "mentioned_rejected": 0.8,
+      "kept_evidence_ratio": 0.45161290322580644
     },
     {
       "threshold": 0.87,
@@ -4085,7 +4934,8 @@
       },
       "far_rejected": 1.0,
       "adjacent_rejected": 1.0,
-      "kept_evidence_ratio": 0.43187066974595845
+      "mentioned_rejected": 0.8,
+      "kept_evidence_ratio": 0.4308755760368664
     },
     {
       "threshold": 0.88,
@@ -4097,7 +4947,8 @@
       },
       "far_rejected": 1.0,
       "adjacent_rejected": 1.0,
-      "kept_evidence_ratio": 0.40415704387990764
+      "mentioned_rejected": 0.8,
+      "kept_evidence_ratio": 0.4032258064516129
     },
     {
       "threshold": 0.89,
@@ -4109,7 +4960,8 @@
       },
       "far_rejected": 1.0,
       "adjacent_rejected": 1.0,
-      "kept_evidence_ratio": 0.37644341801385683
+      "mentioned_rejected": 0.9,
+      "kept_evidence_ratio": 0.37557603686635943
     },
     {
       "threshold": 0.9,
@@ -4121,7 +4973,8 @@
       },
       "far_rejected": 1.0,
       "adjacent_rejected": 1.0,
-      "kept_evidence_ratio": 0.36027713625866054
+      "mentioned_rejected": 0.9,
+      "kept_evidence_ratio": 0.35944700460829493
     },
     {
       "threshold": 0.91,
@@ -4133,7 +4986,8 @@
       },
       "far_rejected": 1.0,
       "adjacent_rejected": 1.0,
-      "kept_evidence_ratio": 0.3348729792147806
+      "mentioned_rejected": 1.0,
+      "kept_evidence_ratio": 0.33410138248847926
     },
     {
       "threshold": 0.92,
@@ -4145,7 +4999,8 @@
       },
       "far_rejected": 1.0,
       "adjacent_rejected": 1.0,
-      "kept_evidence_ratio": 0.3163972286374134
+      "mentioned_rejected": 1.0,
+      "kept_evidence_ratio": 0.315668202764977
     },
     {
       "threshold": 0.93,
@@ -4157,7 +5012,8 @@
       },
       "far_rejected": 1.0,
       "adjacent_rejected": 1.0,
-      "kept_evidence_ratio": 0.2979214780600462
+      "mentioned_rejected": 1.0,
+      "kept_evidence_ratio": 0.29723502304147464
     },
     {
       "threshold": 0.94,
@@ -4169,7 +5025,8 @@
       },
       "far_rejected": 1.0,
       "adjacent_rejected": 1.0,
-      "kept_evidence_ratio": 0.27251732101616627
+      "mentioned_rejected": 1.0,
+      "kept_evidence_ratio": 0.271889400921659
     },
     {
       "threshold": 0.95,
@@ -4181,7 +5038,8 @@
       },
       "far_rejected": 1.0,
       "adjacent_rejected": 1.0,
-      "kept_evidence_ratio": 0.2540415704387991
+      "mentioned_rejected": 1.0,
+      "kept_evidence_ratio": 0.2534562211981567
     },
     {
       "threshold": 0.96,
@@ -4193,7 +5051,8 @@
       },
       "far_rejected": 1.0,
       "adjacent_rejected": 1.0,
-      "kept_evidence_ratio": 0.21939953810623555
+      "mentioned_rejected": 1.0,
+      "kept_evidence_ratio": 0.21889400921658986
     },
     {
       "threshold": 0.97,
@@ -4205,7 +5064,8 @@
       },
       "far_rejected": 1.0,
       "adjacent_rejected": 1.0,
-      "kept_evidence_ratio": 0.18244803695150116
+      "mentioned_rejected": 1.0,
+      "kept_evidence_ratio": 0.18202764976958524
     },
     {
       "threshold": 0.98,
@@ -4217,7 +5077,8 @@
       },
       "far_rejected": 1.0,
       "adjacent_rejected": 1.0,
-      "kept_evidence_ratio": 0.13394919168591224
+      "mentioned_rejected": 1.0,
+      "kept_evidence_ratio": 0.1336405529953917
     },
     {
       "threshold": 0.99,
@@ -4229,7 +5090,8 @@
       },
       "far_rejected": 1.0,
       "adjacent_rejected": 1.0,
-      "kept_evidence_ratio": 0.06928406466512702
+      "mentioned_rejected": 1.0,
+      "kept_evidence_ratio": 0.06912442396313365
     },
     {
       "threshold": 1.0,
@@ -4241,9 +5103,10 @@
       },
       "far_rejected": 1.0,
       "adjacent_rejected": 1.0,
+      "mentioned_rejected": 1.0,
       "kept_evidence_ratio": 0.0
     }
   ],
-  "recommended_threshold": 0.58,
-  "recommendation": "空档 = [0.354, 0.799]，宽 0.445；取中点 0.58。【门槛机制】笔记内保留 100.00%（全部笔记内题照常作答）、远域拒绝 100.00%、邻近拒绝 100.00%；**证据带不变 ⇒ Recall@K 与基线逐位一致（R@10 = 100%，硬底线未破）**。⚠️ 对照（**不要这么做**）：若改成按同一阈值**逐条截断**证据，R@10 会掉到 90.00% —— 门槛只决定「答不答」，不裁证据。"
+  "recommended_threshold": 0.6,
+  "recommendation": "空档 = [0.392, 0.799]，宽 0.407；取中点 0.60。【门槛机制】笔记内保留 100.00%（全部笔记内题照常作答）、远域拒绝 100.00%、邻近·完全没提拒绝 100.00%；**证据带不变 ⇒ Recall@K 与基线逐位一致（R@10 = 100%，硬底线未破）**。⚠️ 对照（**不要这么做**）：若改成按同一阈值**逐条截断**证据，R@10 会掉到 90.00% —— 门槛只决定「答不答」，不裁证据。📌 分层结论：提了名没解释：区间 [0.053, 0.902]，该阈值下只拒掉 50.00%（**门槛按定义拒不掉它** —— 库里确实有提到该术语的 chunk，证据照样进上下文） ⇒ 这组必须由**答案模板**兜底：证据里只有术语、没有解释时，声明『笔记只提及、未解释』并转联网搜索（R-32d）。"
 }
