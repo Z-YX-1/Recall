@@ -24,6 +24,13 @@ import pytest
 os.environ.setdefault("HF_HUB_OFFLINE", "1")
 # 测试不写 data/logs（避免用例污染运行期目录）
 os.environ.setdefault("RECALL_LOG_TO_FILE", "0")
+# ⭐ **根治**：测试会话**完全不读**开发者的 `.env`（roadmap §七 2026-09-26）。
+# 用例断言的是**代码默认值**，不该随个人 `.env` 变；而 `load_dotenv(override=False)`
+# 只在"进程环境里没有该键"时才让 `.env` 生效 ⇒ 逐个键去顶是**对策不是根治**
+# （已经补过 RECALL_API_KEYS、RECALL_MCP_TOOL_POLICY，又在 R-42 的
+# `RECALL_EVIDENCE_MIN_SCORE=0.60` 上第三次假红）。打开这个开关后，下面几行
+# "直接赋值"仍然保留 —— 它们同时表达"这些用例依赖的默认语义"，且与真实环境行为一致。
+os.environ["RECALL_SKIP_DOTENV"] = "1"
 # 鉴权默认**关闭**（roadmap R-40）。这里刻意用直接赋值而不是 setdefault：
 # `Settings.from_env()` 走 `load_dotenv(override=False)`，只要进程环境里已有该变量，
 # 开发者 `.env` 里的 `RECALL_API_KEYS` 就不会生效 ⇒ 用例结果不受个人配置影响。
@@ -32,6 +39,11 @@ os.environ["RECALL_API_KEYS"] = ""
 # MCP 工具白名单同样默认关闭（roadmap R-39 前置件）：与 key 表同理，用例结果
 # 不应受开发者 `.env` 影响。需要它的用例自行 monkeypatch 打开。
 os.environ["RECALL_MCP_TOOL_POLICY"] = ""
+# 证据门槛（roadmap R-42）**同理，而且更要紧**：2026-09-26 项目工程师拍板把
+# `RECALL_EVIDENCE_MIN_SCORE=0.60` 写进了 `.env`（那是**生产**取值）。而用例断言的是
+# **默认值**（0.0 = 不启用）⇒ 让 `.env` 漏进来就会假红。实测踩到：
+# `test_evidence_threshold_defaults_to_disabled` 读到 0.60 而失败。
+os.environ["RECALL_EVIDENCE_MIN_SCORE"] = "0.0"
 # 测试**不得**继承本机 HTTP 代理（2026-09-25 实测踩到）。
 # Windows 的系统代理设置（本机是 karingService，监听 127.0.0.1:3067）会被
 # httpx 的 `trust_env=True` 读到，于是"连不上某个端口"变成代理返回的 **HTTP 502**；

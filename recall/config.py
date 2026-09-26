@@ -99,6 +99,18 @@ def _read_bool(name: str, *, default: bool) -> bool:
     return default
 
 
+SKIP_DOTENV_ENV = "RECALL_SKIP_DOTENV"
+"""设为真值（``1``/``true``/``yes``/``on``）时 :meth:`Settings.from_env` **完全不读** ``.env``。
+
+用途：**测试与 CI** —— 用例断言的是**代码默认值**，不该随开发者个人 ``.env`` 变。
+2026-09-26 实测踩到：项目工程师拍板把 ``RECALL_EVIDENCE_MIN_SCORE=0.60`` 写进 ``.env``
+（那是**生产**取值）后，``test_evidence_threshold_defaults_to_disabled`` 立刻假红。
+此前是靠"逐个键在 ``tests/conftest.py`` 里直接赋值"顶住的（``RECALL_API_KEYS``、
+``RECALL_MCP_TOOL_POLICY``）—— 那是对策不是根治：**每来一个进 ``.env`` 的键就要补一次**。
+现在测试会话统一打开本开关，``.env`` 对用例彻底失效。
+"""
+
+
 def parse_api_keys(raw: str) -> dict[str, str]:
     """解析 ``RECALL_API_KEYS``（``token:user``，逗号分隔）→ ``{token: user}``。
 
@@ -472,13 +484,16 @@ class Settings:
 
         Args:
             dotenv_path: 显式指定的 ``.env`` 路径；默认读取项目根目录下的 ``.env``。
+                设了 ``RECALL_SKIP_DOTENV=1`` 时**完全不读** ``.env``（只认进程环境变量）——
+                测试与 CI 用：用例断言的是**代码默认值**，不该随开发者个人 ``.env`` 变。
 
         Returns:
             填充完成的 :class:`Settings`。
         """
-        load_dotenv(
-            dotenv_path if dotenv_path is not None else PROJECT_ROOT / ".env", override=False
-        )
+        if not _read_bool(SKIP_DOTENV_ENV, default=False):
+            load_dotenv(
+                dotenv_path if dotenv_path is not None else PROJECT_ROOT / ".env", override=False
+            )
         vault_raw = os.getenv("RECALL_VAULT_PATH", "").strip()
         db_raw = os.getenv("RECALL_REGISTRY_DB", "").strip()
         log_raw = os.getenv("RECALL_LOG_DIR", "").strip()
