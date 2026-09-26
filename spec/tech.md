@@ -458,6 +458,26 @@ httpx 默认 `trust_env=True` 会读到它，**连本机服务也会发给代理
 审计行同时记 `peer`，因此"这个 `client` 是不是转发头来的"永远可追溯。
 ⚠️ `RECALL_TRUSTED_PROXIES` 表达的是**链路可信**，不是业务信任；显式置空即"谁都不信"。
 
+⚠️ **上表能成立的前提：uvicorn 的 `proxy_headers=False`**（2026-09-26 隧道实测补上的关键一条）。
+
+uvicorn 该参数**默认 True**、且默认 `forwarded_allow_ips="127.0.0.1"` ⇒ 它会在**我们的中间件
+之前**就把 `scope["client"]` 按 `X-Forwarded-For` 改写。后果有两条，都在隧道实测里复现过：
+
+1. **可伪造**：从回环发 `X-Forwarded-For: 9.9.9.9`，审计被记成
+   `"client": "9.9.9.9", "peer": "9.9.9.9", "client_source": "peer"` —— 看着像"直连对端"，
+   其实是我们自己的头；而**真实来源 `CF-Connecting-IP` 反而被忽略**（`client_source` 永远是
+   `peer`，上表第一行**根本走不到**）；
+2. 于是 R-39 待办 B 的"只信可信代理"**never fires**，`client_source` 字段名不副实。
+
+⇒ `recall/api.py::uvicorn_kwargs()` 显式传 **`proxy_headers=False`**，把"信任哪个转发头"的决定权
+收回 `resolve_client` 一处（`tests/test_gateway_trust.py` 有用例钉住）。关掉之后的正确行为：
+隧道下对端 = `127.0.0.1`（cloudflared 就在本机）⇒ 落在可信范围 ⇒ 采信 `CF-Connecting-IP`
+⇒ `client_source = cf-connecting-ip`。
+
+📌 **`/mcp` 必须带尾斜杠**：`mcp` 是挂载点（`http_app(path="/")` + `mount("/mcp")`）
+⇒ `/mcp` 会先吃 **307**、`/mcp/` 才直达。本机 DSH 客户端会自动跟随跳转，但**第三方客户端
+（Coze 等）在 POST + 自定义 header 下跟随跳转并不可靠** ⇒ 外部配置一律写 `/mcp/`。
+
 ### 12.3 Qdrant 间歇性 IO 失败：**1.19.1 大幅降低频率但未消除**，2026-09-25 / 更正 2026-09-26
 
 **症状**：全量 `pytest` **每次跑都有 3~4 个用例失败**，**失败用例每次不同、单跑必过**。

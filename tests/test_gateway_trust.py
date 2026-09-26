@@ -23,7 +23,7 @@ import httpx
 import pytest
 from fastapi import FastAPI
 
-from recall.api import IdentityMiddleware, app, close_service, get_service
+from recall.api import IdentityMiddleware, app, close_service, get_service, uvicorn_kwargs
 from recall.audit import CLIENT_SOURCE_PEER, TrustedProxies, resolve_client
 from recall.auth import current_identity
 from recall.config import Settings
@@ -254,3 +254,28 @@ def test_invalid_auth_mode_is_rejected_at_startup() -> None:
             Settings.from_env()
     finally:
         monkeypatch.undo()
+
+
+def test_uvicorn_does_not_rewrite_the_peer_from_forwarded_headers() -> None:
+    """``proxy_headers`` 必须为 **False**，否则本文件的全部信任逻辑都会被抢先改写。
+
+    2026-09-26 做 R-39 实测时发现：uvicorn 该参数**默认 True** 且默认只信任回环来源的
+    ``X-Forwarded-For``，于是**在我们中间件之前**就把 ``scope["client"]`` 改成了头里的值。
+    隧道实测报文：本机发 ``X-Forwarded-For: 9.9.9.9`` ⇒ 审计被记成
+    ``"client": "9.9.9.9", "client_source": "peer"`` —— 既是**可伪造**，又让
+    :func:`~recall.audit.resolve_client` 的"只信可信代理"判断**永远看不到真实对端**。
+
+    关掉它以后，``scope["client"]`` 是真实 TCP 对端，采信与否由我们自己决定。
+    """
+    settings = Settings.from_env()
+
+    assert uvicorn_kwargs(settings)["proxy_headers"] is False
+
+
+def test_uvicorn_kwargs_carry_host_and_port_from_settings() -> None:
+    """顺带钉住：监听地址/端口仍来自配置（改配置即生效，不必手抄命令行）。"""
+    settings = Settings.from_env()
+    kwargs = uvicorn_kwargs(settings)
+
+    assert kwargs["host"] == settings.host
+    assert kwargs["port"] == settings.port

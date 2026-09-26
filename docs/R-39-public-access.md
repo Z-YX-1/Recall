@@ -117,12 +117,20 @@ cloudflared service install     # 计划任务式开机自启
 ### 4.1 走 MCP（推荐：工具即能力）
 
 ```json
-{ "mcpServers": { "recall": { "url": "https://recall.example.com/mcp" } } }
+{ "mcpServers": { "recall": { "url": "https://recall.example.com/mcp/", "headers": { "X-API-Key": "<token>" } } } }
 ```
+
+⚠️ **URL 必须带尾斜杠 `/mcp/`**（2026-09-26 隧道实测）：`mcp` 是 FastMCP 的**挂载点**
+（`http_app(path="/")` + `mount("/mcp")`）⇒ 请求 `/mcp` 会先吃到 Starlette 的 **307 跳转**。
+本机 DSH 的客户端会自动跟随，但**第三方客户端（含 Coze）在 POST + 自定义 header 下跟随跳转
+并不可靠**（有的客户端不会把 header 带到跳转后的请求）⇒ **填带尾斜杠的地址**，省掉这次跳转。
 
 ⚠️ **待核实（官方文档未明确）**：自定义 MCP 的 JSON **能否直接带自定义 header**。
 文档只说"根据页面提示完成第三方授权或填写**连接凭证**"，并有"连接凭证失效 ⇒ 需重新连接"的说法
 ⇒ 凭证可能是**添加后按页面提示填写**，而不是写在 JSON 里。
+📌 **本机实测结论（2026-09-26）**：隧道 + 应用层 key 已跑通 —— 无 key 时
+`POST /mcp/` 返回 **401**，带 `X-API-Key` 返回 **200**（`initialize` 回 `serverInfo`、
+`tools/list` 回 4 个工具），所以**只要 Coze 能把 `X-API-Key` 发出来，4.1a 就成立**。
 
 因此有两条子路径，**必须实测后二选一**：
 

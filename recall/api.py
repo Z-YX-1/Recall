@@ -19,6 +19,7 @@ import uuid
 from collections.abc import AsyncIterator, Mapping, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, replace
+from typing import TypedDict
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
@@ -1035,6 +1036,49 @@ HTTP 404 ``Session not found``，而 MCP 客户端不会据此重新握手 ⇒ �
 app.mount("/mcp", mcp_app)
 
 
+class UvicornKwargs(TypedDict):
+    """``uvicorn.run`` 的关键字参数（独立成类型：既让 mypy 精确检查，也让用例可直接断言）。"""
+
+    host: str
+    port: int
+    log_level: str
+    proxy_headers: bool
+
+
+def uvicorn_kwargs(settings: Settings) -> UvicornKwargs:
+    """构造 :func:`uvicorn.run` 的关键字参数（单独成函数**是为了能被用例钉住**）。
+
+    ⚠️ **`proxy_headers=False` 是必须的，不是可选优化**（2026-09-26 实测发现）：
+
+    uvicorn 的 ``proxy_headers`` **默认 True**，且默认 ``forwarded_allow_ips="127.0.0.1"`` ——
+    也就是说**任何来自回环的请求**，只要带一个 ``X-Forwarded-For``，uvicorn 就会在**我们的
+    中间件之前**把 ``scope["client"]`` 改写成头里的值。后果（隧道实测）：
+
+    - `recall/audit.py::TrustedProxies` / `resolve_client()`（roadmap R-39 待办 B）**完全失效** ——
+      它拿到的"直连对端"已经是**被头改写过的值**，于是 `client_source` 永远报 `peer`，
+      而那个 `peer` 其实来自 `X-Forwarded-For`，**语义是假的**；
+    - **可伪造**：本机任意进程发 `X-Forwarded-For: 9.9.9.9`，审计就被记成 `9.9.9.9`
+      （实测报文：`"client": "9.9.9.9", "peer": "9.9.9.9", "client_source": "peer"`）。
+
+    关掉它之后，``scope["client"]`` 恢复为**真实 TCP 对端**，可信代理判断权回到我们手里：
+    隧道场景下对端是 `127.0.0.1`（cloudflared 就在本机）⇒ 落在 `RECALL_TRUSTED_PROXIES` 内
+    ⇒ 才采信 `CF-Connecting-IP`，`client_source` 变成 `cf-connecting-ip`，审计才真的可追溯。
+
+    Args:
+        settings: 运行配置（监听地址/端口）。
+
+    Returns:
+        传给 ``uvicorn.run`` 的关键字参数。
+    """
+    return {
+        "host": settings.host,
+        "port": settings.port,
+        "log_level": "info",
+        # 见上文：把"信任哪个转发头"的决定权留给我们自己的 TrustedProxies（R-39 待办 B）。
+        "proxy_headers": False,
+    }
+
+
 def main() -> None:
     """``python -m recall.api`` 启动服务：监听地址与端口从配置读（tech.md §12 进程 2）。
 
@@ -1043,13 +1087,7 @@ def main() -> None:
     """
     import uvicorn
 
-    settings = Settings.from_env()
-    uvicorn.run(
-        "recall.api:app",
-        host=settings.host,
-        port=settings.port,
-        log_level="info",
-    )
+    uvicorn.run("recall.api:app", **uvicorn_kwargs(Settings.from_env()))
 
 
 if __name__ == "__main__":
