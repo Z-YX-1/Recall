@@ -58,7 +58,11 @@ frontmatter 读 `owner` / `visibility` / `groups`，并**fail-closed**（缺失 
 - [ ] 确认 `GET /kb/stats` **无 key 返回 401**（别把索引规模和建库参数暴露给公网）
 - [ ] 公网**只放读端点**：`/kb/search`、`/kb/answer`；在**网关层挡住** `/kb/ingest`（写）与 `/kb/stats`
 - [ ] `RECALL_INGEST_RATE_LIMIT` 保持开启（默认 `10/60`）；公网建议**网关再加一道**
-- [ ] 走 MCP 时配 `RECALL_MCP_TOOL_POLICY="coze:kb_search|kb_answer"`（别把写工具摆到对方面前）
+- [ ] 走 MCP 时的工具收窄：⚠️ **本项目身份取"省事档"（Coze 的 token 也映射到 `me`）** ⇒
+      **不要**写 `RECALL_MCP_TOOL_POLICY="me:kb_search"` —— 白名单**按用户**生效且**回环不豁免**，
+      那一行会**连带把本机 DSH 的工具也砍掉**。正确做法是**在 Coze 侧只启用 `kb_search`**
+      （Coze 的 MCP 工具有启用开关）。若将来确实要应用层收窄，得先把 Coze 换成**独立身份**
+      （配合 `visibility: public` 或按 `groups` 授权）
 - [ ] 确认 `data/logs/audit.jsonl` 在写、且**不含密钥**
 - [ ] 想清楚 `/kb/answer` 会**烧 DeepSeek 额度** ⇒ 网关侧配额或干脆不给 Coze 开这个工具
 
@@ -128,7 +132,8 @@ cloudflared service install     # 计划任务式开机自启
 | 4.1b Coze 侧只能填"凭证" | 用 **Cloudflare Access 的 Service Token** 在**网关层**鉴权 | 此时应用层与网关层会**两层鉴权**：要么应用层对 `/mcp` 放行（改动 `PUBLIC_PATHS`），要么让 Coze 同时带两种凭证 |
 
 配合 `RECALL_MCP_TOOL_POLICY` 只暴露 `kb_search`（必要时 + `kb_answer`）：既省上下文，
-也避免把写端点交给对方。
+也避免把写端点交给对方。⚠️ **但本项目身份取"省事档"（Coze 与本机 DSH 同为 `me`）⇒ 应用层收窄会
+一并限制本机 DSH**（白名单按用户生效、回环不豁免）⇒ **工具收窄请在 Coze 侧做**（只启用 `kb_search`）。
 
 ### 4.2 走插件（HTTP API）
 
