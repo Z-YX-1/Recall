@@ -1,0 +1,40 @@
+# Cloudflare Tunnel（named tunnel）配置模板 —— roadmap R-39 路线 A 的**长期**通道
+#
+# 用法（详见 docs/R-39-public-access.md §3.2）：
+#   1) 复制到 %USERPROFILE%\.cloudflared\config.yml
+#   2) 把 <TUNNEL-ID> 换成 `cloudflared tunnel create recall` 输出的 ID
+#   3) 把 <你的域名> 换成实际域名（本项目注册的是 iamzyx.xyz，示例用 recall.<你的域名>）
+#   4) 语法校验：cloudflared tunnel ingress validate
+#   5) 运行：cloudflared tunnel run recall
+#
+# ⚠️ 本文件**不含任何密钥**；`credentials-file` 指向的 json 是密钥，**绝不入库**
+#    （`.gitignore` 已忽略 .cloudflared/ 与 *.json 凭据）。
+#
+# ⚠️ 为什么用**隧道层**挡写端点，而不是只在应用层鉴权：
+#    应用层的 401 只说明"你没有钥匙"；而 `/kb/ingest`（重灌知识库）与 `/kb/stats`
+#    （索引规模与建库参数）**不该对外存在**。挡在 cloudflared 这一层，请求**根本到不了**
+#    Python 进程，也进不了审计噪音。
+#    本机的 watcher 与 DSH **不走隧道**（直连 127.0.0.1:8000）⇒ 不受这条规则影响。
+
+tunnel: recall
+credentials-file: C:\Users\<你>\.cloudflared\<TUNNEL-ID>.json
+
+ingress:
+  # ① 公网挡掉写端点与统计端点 → 直接 403（顺序很重要：具体规则必须在通用规则之前）
+  #
+  # ⚠️ 这里刻意用**前缀**正则而不是锚定的 `^/kb/(ingest|stats)$`：2026-09-26 实测
+  #    `/kb/ingest/`（带尾斜杠）会**绕过**锚定版本、落到应用层（FastAPI 再 307 回 /kb/ingest）。
+  #    虽然后面还有 API key 兜着，但"写端点不该对外存在"这条意图就破了。
+  #    实测（`cloudflared tunnel ingress rule`）：`/kb/ingest`、`/kb/ingest?x=1`、
+  #    `/kb/ingest/`、`/kb/ingestX` 四种变体在前缀正则下**全部 403**；
+  #    而 `/kb/search`、`/kb/answer`、`/mcp/`、`/health` 仍正常转发 ✅
+  - hostname: recall.<你的域名>
+    path: ^/kb/(ingest|stats)
+    service: http_status:403
+
+  # ② 其余路径（/health、/kb/search、/kb/answer、/mcp/）转到本机 API
+  - hostname: recall.<你的域名>
+    service: http://127.0.0.1:8000
+
+  # ③ 兜底规则**必须放在最后**（cloudflared 按顺序匹配，最后一条没有 hostname 才算兜底）
+  - service: http_status:404
