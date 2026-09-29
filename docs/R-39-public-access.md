@@ -154,15 +154,35 @@ cloudflared service install     # 计划任务式开机自启
 
 ## 5. 验收判据
 
+⚠️ **Step 3 起，公网侧的期望值变了**：写端点与统计端点在**隧道层**就被挡掉（`config.example.yml`
+的 ingress 路径规则 → `http_status:403`）⇒ 它们**不再**返回 401/422，而是 **403**，
+且请求**到不了** Python 进程。下表的 2/3/4 已按此更新。
+
 | # | 判据 | 期望 |
 | :--- | :--- | :--- |
 | 1 | 外网 `GET /health` | 200（免鉴权探活） |
-| 2 | 外网 `GET /kb/stats` 无 key / 带 key | **401** / 200 |
-| 3 | 外网 `POST /kb/search` 带 key | 200 且有 evidence |
-| 4 | 外网 `POST /kb/ingest` | **403**（网关挡住） |
-| 5 | 本机 DSH 会话 | **仍正常**（打隧道不应影响本地使用） |
-| 6 | `data/logs/audit.jsonl` | 有对应记录；**不含密钥** |
-| 7 | Coze 侧真实问一句笔记里的内容 | 引用可核对（与本地问同一问题的答案一致） |
+| 2 | 外网 `GET /kb/stats`（带不带 key 都一样） | **403**（隧道层挡；统计端点不该对外存在） |
+| 3 | 外网 `POST /kb/search` 无 key / 带 key | **401** / 200 且有 evidence |
+| 4 | 外网 `POST /kb/ingest`、`/kb/ingest/`（任何 key） | **403**（隧道层挡，含尾斜杠变体） |
+| 5 | 本机 DSH 会话 | **仍正常**（隧道不影响回环；watcher 直连 `127.0.0.1`，也不受 403 影响） |
+| 6 | `data/logs/audit.jsonl` | 有对应记录、`client_source=cf-connecting-ip`、**不含密钥** |
+| 7 | Coze 侧真实问一句笔记里的内容 | 有 `[n]` 引用且**出处可核对** |
+
+📌 **为什么本机不受 403 影响**：watcher 与 DSH 走 `127.0.0.1:8000` **直连**，根本不经过隧道。
+
+---
+
+## 5.1 长期通道（named tunnel）落地形态
+
+配置模板在仓库里：`tools/cloudflared/config.example.yml`（**不含密钥**；凭据 json 由
+`cloudflared tunnel create` 生成，**绝不入库**）。要点：
+
+1. `cloudflared tunnel --config <file> ingress validate` 可**离线**校验语法（`--config` 必须写在
+   子命令**之前**，否则报 `flag provided but not defined: -config`）；
+2. `cloudflared tunnel --config <file> ingress rule <url>` 可**离线预演**某条 URL 命中哪条规则 ——
+   上线前就该用它把"写端点被挡、读端点放行"验一遍；
+3. 实测（2026-09-26，cloudflared **2026.9.3**）**必须用前缀正则**：锚定式
+   `^/kb/(ingest|stats)$` 会被 `/kb/ingest/`（尾斜杠）绕过。
 
 ---
 
