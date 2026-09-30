@@ -559,6 +559,21 @@ created: 2026-09-04
     远端源意味着每轮都要把正文拉一遍才能算 `hash_of`。**一期不改协议**：飞书端按 5 QPS 全量拉
     （个人库几十篇 ≈ 十几秒可接受），**向量化仍由 `content_hash` 幂等跳过**；**二期**若文档规模上千，
     再考虑协议 v2（`list_meta()` 只给版本 + `fetch(doc_id)` 懒取，registry 增 `source_version` 列）。
+
+    ### R-41 风险复查结论（2026-09-30，Context7 二轮，改动了部分子步骤）
+
+    | # | 发现 | 对实现的影响 |
+    | :--- | :--- | :--- |
+    | 1 | 🚨 **导出任务不支持 Markdown**（`export_task/create` 的 `file_type` 只有 `docx/pdf/xlsx/csv`） | **block→Markdown 映射必做**，不能靠导出绕过（R-41b 那条"若支持 md 可省工作"的希望**证伪**） |
+    | 2 | **`blocks` 返回扁平列表 + `children` 引用，不是树**；但 `blocks/{block_id}/children` 有 **`with_descendants=true`** ⇒ 一次返回**前序遍历的整棵子树** | 用根 block 调一次 `children?with_descendants=true` 即可拿到有序整树，**不用自己拼树**；但要以 `parent_id` 重建层级定标题 `#` 级数 |
+    | 3 | **`block_type` 是数字枚举、内容实体是字符串字段**（`page`/`text`/`heading1..9`/`bullet`/`ordered`/`code`/`quote`/`todo`/`callout`/`divider`/`table`/`table_cell`/`grid`/`grid_column`/`image`/`file`/`sheet`/`bitable`/`mindnote`/`iframe`/`board`/`task`/`okr*`/`jira_issue`/`link_preview`/`sub_page_list`/`wiki_catalog`/`reference_synced`/`source_synced`/`ai_template`/`add_ons`/`isv`/`chat_card`/`diagram`/`agenda*`/`undefined` 等 40+ 种） | **按"哪个内容字段非空"判断类型**（抗枚举漂移）；映射不了的 20+ 种（chat_card/diagram/jira_issue/okr*/agenda*/iframe/board/isv/add_ons/sub_page_list…）**显式跳过 + 计数**，不得静默丢 |
+    | 4 | **正文一律用 `blocks`，不用 `raw_content`**（两次查询均未给出 `raw_content` 的长度上限 ⇒ 超长文档可能被截断；且纯文本无结构） | R-41d 取文方式定为 `blocks` 分页 + `with_descendants` |
+    | 5 | 🚨 **旧版文档（wiki 节点 `obj_type=doc`，token `doccn…`）走 `GET /doc/v2/{docToken}/content`**，返回的 `content` 是**一个 JSON 字符串**、需二次解析；新 docx 走 docx-v1；旧 API 有专门错误码 `95053`（"不支持新版 docx"） | R-41d **必须分支处理 doc / docx 两种**；wiki 节点列表里 `obj_type` 只取 `docx`+`doc`，其余（sheet/bitable/mindnote/file/slides）**跳过+计数** |
+    | 6 | **读文档正文需要应用对每个文档有权限**（错误码 `95009 FORBIDDEN`）；wiki 里"快捷方式指向外部文档"可能无权限 | 每文档**错误隔离**（`_record_error`）+ 一次"权限自检"（列出 403 的文档）；见 R-41a 的"把应用加进知识库成员" |
+    | 7 | 🚨 **一期不要引 `lark-oapi`**：SDK 依赖偏重（`requests`+`requests_toolbelt`+`pycryptodome`+`websockets<16`+`httpx<1.0`），而一期只需 5~6 个 HTTP 端点 + token 续期 ⇒ **用现有 httpx 直写**（token 缓存/续期/错误码/log_id/限速自己处理，约 100~150 行）；SDK 的价值在**事件分派/验签/长连接**（R-41g 二期才需要） | R-41e 改为"不引 SDK"；若二期上事件，再评估"引 SDK"或"httpx + `pycryptodome` 自做验签" |
+    | 8 | **一期不做事件增量**：Webhook 需回调地址+验签+**按文件逐个 `files/{token}/subscribe`**（且该接口权限要求 `docs:event:subscribe`）；长连接免回调但"docx 正文编辑事件是否全支持长连接"本次未查到权威结论 | R-41g 明确延期，一期用"定时/手动全量扫描 + `content_hash` 跳过"；二期优先长连接，再核实事件覆盖 |
+    | 9 | **Markdown 生成必须确定性**：同一文档两次转换输出必须逐字节一致，否则 `content_hash` 每次变 ⇒ 每次重灌 | 映射器要配"两次转换结果一致"的确定性测试；复用 `normalize_text` |
+    | 10 | ⚠️ **文档字段名不一致**：示例里文本字段既有 `text_run.content`（单数）又有 `text_runs[].text`（复数） | **写代码前先拉一篇真实文档落盘 sample**，对照真实字段名，不照抄文档示例 |
 - [ ] **R-42** 检索调优 A/B：top_k / rerank / 切分参数用黄金集 + Recall@K 并排对比，数据驱动决策（tech.md §10 触发点）。
     ✅ 预研（2026-09-25，Context7 核实 + 本机核验）：① "同文档多样性约束"候选**有现成服务器能力**——
     qdrant-client 1.19.1 的 `AsyncQdrantClient.query_points_groups(group_by=..., limit=..., group_size=...)`
@@ -732,7 +747,7 @@ created: 2026-09-04
 | 2026-09-30 | R-39 | ✅ **R-39 收尾：长期通道交付 + 启动手册入库** | ① 项目工程师在自己终端跑 `cloudflared tunnel run recall`，**长期实例接管**（连接器 `05c68541`）；我起的**验证实例（PID 12224 / 连接器 `9906fd3c`）已按要求停止**，停后公网 `/health` 复测仍 **200** ⇒ **切换无中断**；② 项目工程师明确**不做开机自启**（保持手工启动四个窗口）；③ 新增 **`spec/runbook.md`**：四个窗口（Qdrant / API / watcher / cloudflared）的启动命令 + **依赖顺序** + 验收三连 + 关闭顺序 + **故障排查表** + 密钥清单与轮换 + 环境事实速查；`tech.md` §11 目录树补该文件、§12 顶部加指向 | 手册把**踩过的坑**固化成硬提醒：Qdrant 必须在 `tools\qdrant` 目录启动（否则开出空库）、watcher 必须**晚于** API（否则启动补同步放弃、需 `--once` 补）、`/mcp/` **尾斜杠**不能省、cloudflared 的 `--config` 要写在**子命令之前**、公网 403 是**预期**而非故障、改 `.env` 必须**重启进程**才生效。⇒ R-39 的**功能与部署全部完成**，只剩手册 §5 第 7 条（Coze 真实问答、引用可核对）由项目工程师确认 |
 | 2026-09-30 | R-39 | 🔴 **收尾复查发现 Qdrant 安全敞口（仓库侧已加固，剩两步需管理员）** | 复查"还有哪些要完善"时实测：① Qdrant 监听 **`0.0.0.0:6333`**（默认 `service.host`）且 **自身未配 API key**；② Windows 防火墙有两条**用户级入站放行**规则（`qdrant` / TCP+UDP / 配置 **Public**）；③ 本机 WLAN 网络配置**恰为 Public** ⇒ `Test-NetConnection 192.168.0.3 -Port 6333` = **True** ⇒ **同网段任意设备都能完整读写/删除向量库**。**仓库侧加固**：`tools/start-qdrant.ps1` 增 `$env:QDRANT__SERVICE__HOST='127.0.0.1'`（子进程继承）；`spec/runbook.md` 新增 **§7 安全加固**（含管理员删规则命令、复核方法、可选第三层），窗口 ① 手动命令补 `set QDRANT__SERVICE__HOST=127.0.0.1`；§六 快照按实况刷新（R-39 已上线、R-42 已生效、待办收敛为 3 项） | 属**新发现的安全问题**（非功能缺陷），按 §二 登记。📌 顺手核对其余暴露面：`8000` 只绑回环 ✓、`cloudflared` 两条防火墙规则是 **Block**（正确）✓。⚠️ **需项目工程师**：① 管理员删那两条规则（真正兜底）；② 重启 Qdrant 使其只绑回环。⚠️ 另一个**踩坑复现**：`edit` 工具会**剥掉 `.ps1` 的 BOM** ⇒ 改完必须补回（本次已补并复验 `ParseFile` 0 错误）|
 | 2026-09-30 | R-39 | 🎉 **R-39 验收通过（项目工程师执行）—— Phase 6 至此全部完成** | 项目工程师在 Coze 侧用**正式域名** `https://recall.iamzyx.xyz/mcp/` 提问笔记内容，**引用可核对**（手册 §5 第 7 条）⇒ R-39 **七条判据全部满足**，状态转"已通过"。关联事实：临时隧道窗口已关闭（实测无 `--url` 进程）⇒ 公网入口**只剩 named tunnel 一条**；长期隧道由项目工程师终端持有（连接器 `05c68541`）| 📌 一并登记**本轮复查的本机暴露面实测**（`Test-NetConnection` 从局域网 IP 测）：`6333`/`6334`（Qdrant HTTP/gRPC，🔴 见上条）、`445`(SMB)、`135`(RPC)、`902`/`912`(VMware authd)、`27036`(Steam 远程同乐)、`5040`/`13688` 均**可达**；而只绑回环的 `8000`(我们的 API)、`3080`(DSH Web)、`11434`(ollama)、`20243`(cloudflared metrics) **不可达** ✓ ⇒ **本项目只有 Qdrant 一处需要处理**；其余为 Windows/第三方软件的常规监听，是否真能从**别的设备**连上还取决于各自的防火墙规则（未逐个核实，需要时再查）|
-| 2026-09-30 | **R-41** | ✅ **平台拍板：飞书** + 预研核实 + 发现一个数据事故级前置缺陷 | 项目工程师批准 **R-41 = 飞书 Connector**（属任务范围变更）。Context7 核实（`/websites/open_feishu_cn_document`、`/larksuite/oapi-sdk-python`）：鉴权 `tenant_access_token` + 官方 Python SDK `lark-oapi`；内容源候选 `wiki/v2/spaces/{id}/nodes`（节点带 `obj_token`/`obj_edit_time`）、`docx/v1/documents/{id}/raw_content` 与 `/blocks`、`drive/v1/folders/{token}/files`；**每应用 5 QPS**（超限 `99991400`）；增量可走 `drive.file.*` Webhook 或 SDK 长连接。细化子步骤 R-41a~R-41g 已写入 §四 | 🔴 **预研中查出 R-41c（必做前置）**：`ingest.py::_reconcile_deleted` 遍历**注册表全部文档**、把未在本次 run 出现的记录当"源侧已删"删除 ⇒ **纯飞书 run 会删光 65 篇 Obsidian 笔记**（数据事故级）。已登记为 R-41c，并要求用例断言"飞书 run 不删 Obsidian 文档"。📌 另**回答了原步骤注释提出的协议张力**：一期**不改协议**（飞书按 5 QPS 全量拉文、向量化仍由 `content_hash` 跳过），二期再议 `list_meta()`+`fetch()` 懒取 |
+| 2026-09-30 | **R-41** | ✅ **风险复查（Context7 二轮）—— 查出 10 个会改变实现的问题** | 在"平台拍板"基础上再核查技术细节，发现：① **导出任务不支持 Markdown**（`file_type` 仅 `docx/pdf/xlsx/csv`）⇒ block→Markdown 映射**必做、逃不掉**（推翻了"若导出支持 md 可省工作"的设想）；② `blocks` 是扁平列表+`children` 引用，但 `blocks/{id}/children?with_descendants=true` 能**一次返回前序遍历整树** ⇒ 免自己拼树；③ `block_type` 数字枚举 vs 内容实体字符串字段 ⇒ **按非空字段判型**，40+ 种里 20+ 种（chat_card/diagram/jira_issue/okr*/agenda*/iframe/board/isv/sub_page_list…）**显式跳过+计数**；④ 正文用 `blocks` 不用 `raw_content`（长度上限未在文档明示，有截断风险）；⑤ **旧版 `doc` 走 `doc/v2/content`（content 是 JSON 字符串需二次解析）、新版 `docx` 走 docx-v1**，必须分支；⑥ 每文档需权限（`95009`），要错误隔离；⑦ **一期不引 `lark-oapi`**（依赖偏重：requests/pycryptodome/websockets），httpx 直写 5~6 个端点即可；⑧ **一期不做事件增量**（Webhook 要逐个 `files/subscribe` 且权限 `docs:event:subscribe`；长连接对 docx 正文事件的支持本次未查到权威结论）；⑨ Markdown 生成必须**确定性**（否则 `content_hash` 每次变⇒每次重灌）；⑩ 文档字段名不一致（`text_run.content` vs `text_runs[].text`）⇒ **先落盘 sample 再写码** | 结论写入 §四 R-41 复查表；R-41b/R-41d/R-41e 据此调整（取文=blocks、判型=字段、依赖=httpx、增量=延期）。**一期实现范围收敛为**：R-41c 账本隔离 → R-41d 飞书 connector（docx+doc 分支、block→md、跳过+计数、限速、确定性）→ R-41f 幂等验收；R-41g 事件增量留待二期 |
 | 2026-09-30 | R-39 | ✅ **Qdrant 安全加固收口（项目工程师实测）+ 残留集合清理 + 重复启动 panic 定位** | ① **加固两层齐备并实测**：`Get-NetTCPConnection -LocalPort 6333,6334 -State Listen` ⇒ 两个都 **`127.0.0.1`**；`Get-NetFirewallRule -DisplayName 'qdrant'` ⇒ 两条都 **`Block`**（**显式拒绝**，比"删除规则"更硬 ⇒ 原先给的"删规则"这一步**无需再做**，已更正 runbook §7）；`Test-NetConnection 192.168.0.3:6333` ⇒ **`False`**（此前 `True`）；`healthz` / 本机 `/kb/search` / 公网 `/health` 全部正常。② **清理**：`recall-test-52a1d6563e14`+`recall-test-d852b3e8a673`（各 753MB，pytest 残留）经 API 删除、磁盘目录亦随之释放 ⇒ **14.15 → 15.62GB**。③ **诊断重复启动 panic**：项目工程师贴出的 `Panic … Wal error: Can't init WAL: Kind(WouldBlock)`（22:24:44）经时间线比对（健康实例 PID 10304 起于 22:20:37 且仍在跑）判定为**第二个实例**抢不到 storage 锁而退出，**非数据损坏**；`Config file not found` / `Filesystem type check is not supported` 属正常噪音 | 📌 **据此给 runbook 补了三条硬提醒**：① `start-qdrant.ps1` 是**分离+隐藏**启动 ⇒ 命令行立刻返回、**没有日志窗口**（那不是启动失败；想看得用 `-Visible` 或手动 `qdrant.exe`）；② **同一 storage 只能有一个 Qdrant 进程**，重复启动必 panic，先 `Get-Process qdrant` 确认；③ 手册里的 `<本机token>` 是**占位符**，真值在 `.env` 的 `RECALL_API_KEYS`（否则 curl 拿到 401、看着像"没输出"）。⚠️ **登记一个工具缺口**：`clean_qdrant_orphans.py` 只删"Qdrant 不认得"的目录，而 `recall-test-*` 集合 Qdrant **仍然认得** ⇒ 本次 1.5GB 是**手工**清的；已在 §六 列为可选改进项（加"先经 API 删测试集合"的模式）|
 
 ---
@@ -821,14 +836,13 @@ created: 2026-09-04
   本机 D 盘从 7.76GB 清到 14.84GB）；④ 保持 D 盘余量充裕
 - **验收实测**（2026-09-24，项目工程师执行）：摄取 65 篇 0 失败；`/health` ok（972 点 / 65 篇）；检索 **Recall@1=0.767 / @3=0.933 / @5=0.933 / @10=1.000 / MRR=0.860**（与基线逐位一致）；Ragas **引用一致性 1.000 / faithfulness 0.858 / answer_relevancy 0.758**；DSH 问答带 `[n]` 引用通过
 - **验收实测**（2026-09-25，项目工程师执行）：**R-45 15/15 全绿**（`python tools\verify_r45.py`）
-- **本文件版本**：v0.31.0（2026-09-30 **R-41 平台拍板 = 飞书**（项目工程师批准，属任务范围变更），
-  细化子步骤 **R-41a~R-41g** 已写入 §四；Context7 已核实飞书开放平台与官方 Python SDK `lark-oapi`
-  的鉴权/内容 API/5 QPS 限流/增量触发方式。🔴 **预研中查出一个数据事故级前置缺陷（R-41c）**：
-  `ingest.py::_reconcile_deleted` 按**注册表全部文档**对账 ⇒ 跑一次纯飞书 run 会删光 65 篇 Obsidian 笔记，
-  必须先修（按 `source_type` 收窄对账范围）。**Phase 0~6 仍为全部完成，所有安全项已关闭**。
-  **待你**：① 飞书侧建企业自建应用 + 开只读权限 + 告知内容源（wiki 空间 / 云空间文件夹），我即可开工；
-  ② 可选：R-40 最小验收、重跑 `promptfoo`、`clean_qdrant_orphans.py` 加"删测试集合"模式、
-  Qdrant 索引失败降级为告警；③ 实现细节背书（老账）**）
+- **本文件版本**：v0.32.0（2026-09-30 **R-41 风险复查（Context7 二轮）**：查出 10 个会改变实现的
+  问题/隐患 —— ① 导出**不支持 Markdown** ⇒ block→Markdown 必做；② 用 `children?with_descendants=true`
+  一次拿整树；③ 按"内容字段非空"判块类型、20+ 种未映射块显式跳过+计数；④ 正文用 `blocks` 不用
+  `raw_content`（长度上限不明）；⑤ 旧版 `doc` 与新版 `docx` 要分支处理；⑥ 每文档权限错误隔离；
+  ⑦ 一期**不引 SDK**（httpx 直写，SDK 留给二期的长连接/验签）；⑧ 一期不做事件增量；⑨ Markdown
+  生成必须确定性（否则 hash 每次变⇒每次重灌）；⑩ 字段名不一致需先落盘 sample。详见 §四 R-41 复查表。
+  **待你**：R-41a（建飞书应用 + 定内容源），我即可从 R-41c 开工。**）
 
 ---
 
