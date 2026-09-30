@@ -68,6 +68,13 @@ DEFAULT_OWNER = "me"
 DEFAULT_VISIBILITY = "private"
 """可见性默认值（frontmatter 未写 ``visibility`` 时）。"""
 
+_SUPPORTED_SOURCES: tuple[str, ...] = (SOURCE_TYPE,)
+"""本管道当前能构造的来源类型（新来源在 :func:`_build_connector` 里注册后加到这里）。
+
+⚠️ 一次 run **只处理一个来源**：这样"源侧已删除"的对账范围天然正确（roadmap R-41c）。
+要同时维护多个来源，就分多次 run（各自的 ``--source``）。
+"""
+
 
 def _frontmatter_str(frontmatter: Mapping[str, Any], key: str, *, doc_id: str, default: str) -> str:
     """从 frontmatter 取一个非空字符串字段，缺失或类型不对时回落到 ``default``。
@@ -231,6 +238,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--chunker", default=CHUNKER_NAME, help="切分器版本号")
     parser.add_argument(
+        "--source",
+        default=SOURCE_TYPE,
+        help=(
+            f"摄取来源类型（默认 {SOURCE_TYPE}；可用值见 _SUPPORTED_SOURCES）。"
+            "⚠️ 「源侧已删除」的对账**只在本来源内进行** —— 否则跑单一来源会把"
+            "其它来源的文档全部误删（roadmap R-41c）"
+        ),
+    )
+    parser.add_argument(
         "--vault", default=None, help="Obsidian vault 路径（覆盖 RECALL_VAULT_PATH）"
     )
     parser.add_argument(
@@ -280,7 +296,9 @@ async def run_ingest(args: argparse.Namespace) -> IngestReport:
         batch_size=args.batch_size,
         device=args.device,
     )
-    connector: Connector = _build_connector(SOURCE_TYPE, vault, _parse_skip_dirs(args.skip_dirs))
+    connector: Connector = _build_connector(
+        args.source, vault, _parse_skip_dirs(args.skip_dirs)
+    )
 
     started = time.perf_counter()
     try:
@@ -312,17 +330,21 @@ async def run_ingest(args: argparse.Namespace) -> IngestReport:
         # 错误隔离：失败文档记 error 状态，并排除在"已删除"对账之外，避免误删旧块
         failed_ids: set[str] = set()
         for source_error in _drain_errors(connector):
-            error_doc_id = (
-                source_error.doc_id or f"vault-{slugify(source_error.source_uri) or 'root'}"
+            error_doc_id = source_error.doc_id or (
+                f"{connector.source_type}-{slugify(source_error.source_uri) or 'root'}"
             )
             failed_ids.add(error_doc_id)
             await registry.record_error(
-                error_doc_id, SOURCE_TYPE, source_error.source_uri, source_error.message
+                error_doc_id, connector.source_type, source_error.source_uri, source_error.message
             )
             report.failed.append(f"{source_error.source_uri}: {source_error.message}")
 
         report.deleted_docs = await _reconcile_deleted(
-            registry=registry, store=store, collection=collection, seen=seen | failed_ids
+            registry=registry,
+            store=store,
+            collection=collection,
+            seen=seen | failed_ids,
+            source_types=frozenset({connector.source_type}),
         )
     finally:
         await store.close()
@@ -335,6 +357,7 @@ async def run_ingest(args: argparse.Namespace) -> IngestReport:
             "mode": report.mode,
             "model": str(model_ref),
             "chunker": args.chunker,
+            "source": connector.source_type,
             "scanned": report.scanned,
             "skipped": report.skipped,
             "indexed_docs": report.indexed_docs,
@@ -508,11 +531,34 @@ async def _record_doc(
 
 
 async def _reconcile_deleted(
-    *, registry: Registry, store: QdrantStore, collection: str, seen: set[str]
+    *,
+    registry: Registry,
+    store: QdrantStore,
+    collection: str,
+    seen: set[str],
+    source_types: frozenset[str],
 ) -> int:
-    """源侧已删除的文档：删其全部 point + 删注册表行。"""
+    """源侧已删除的文档：删其全部 point + 删注册表行。
+
+    ⚠️ **只对账 ``source_types`` 里的来源**（roadmap **R-41c**）：一个 run 只能枚举到
+    **它自己那个来源**的文档，若对 ``registry.list_all()`` 全量对账，跑单一来源
+    （如刚接入的飞书）会把**其它来源**（Obsidian）的文档全部判定为"源侧已删"而删光
+    —— 这是数据事故级的缺陷，2026-09-30 复查时发现。
+
+    Args:
+        registry: 文档注册表（账本）。
+        store: 向量库适配层。
+        collection: 目标 collection。
+        seen: 本次 run **枚举到**（含失败）的 doc_id 集合。
+        source_types: 本次 run 处理过的来源类型；其它来源的记录一律不动。
+
+    Returns:
+        实际删除的文档数。
+    """
     deleted = 0
     for record in await registry.list_all():
+        if record.source_type not in source_types:
+            continue  # 别的来源，本次 run 没有资格判定它的生死
         if record.doc_id in seen:
             continue
         removed = await store.delete_document(collection, record.doc_id)
@@ -522,6 +568,7 @@ async def _reconcile_deleted(
             "ingest.doc_removed",
             extra={
                 "doc_id": record.doc_id,
+                "source_type": record.source_type,
                 "source_uri": record.source_uri,
                 "points_deleted": removed,
             },
@@ -530,10 +577,11 @@ async def _reconcile_deleted(
 
 
 def _build_connector(source_type: str, vault: Path, skip_dirs: tuple[str, ...] | None) -> Connector:
-    """按来源类型构造 Connector（v1 只有 Obsidian，新来源在此注册）。"""
+    """按来源类型构造 Connector（新来源在此注册，见 roadmap R-41）。"""
     if source_type == SOURCE_TYPE:
         return ObsidianConnector(vault, skip_dirs=skip_dirs)
-    raise SystemExit(f"未支持的 source_type: {source_type}")
+    supported = "、".join(sorted(_SUPPORTED_SOURCES))
+    raise SystemExit(f"未支持的 source_type: {source_type!r}（当前支持：{supported}）")
 
 
 def _parse_skip_dirs(raw: str | None) -> tuple[str, ...] | None:

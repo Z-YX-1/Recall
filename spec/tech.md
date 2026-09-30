@@ -42,7 +42,7 @@ created: 2026-09-04
 | 检索 | **混合（dense+sparse）+ RRF + Rerank 精排** | 2026 生产基线三件套 |
 | 切分 | **两级级联**：① 按 `#/##` 标题层级主切；② 节超 **MAX=800 token** 时递归切分（`\n\n→\n→句号→空格` 优先级）兜底，overlap ≈ 100 字符 | 子块继承 `heading_path` + `sub_index`；导航类小节（<100 token）不合并不重切 |
 | 文档注册表 | **SQLite 单文件**（doc_id/hash/chunk_ids/indexed_at） | 增量跳过 + 孤儿清理的账本；权限 S3 阶段的 user/group 表也放这里 |
-| 摄取 | Connector 接口（v1 = Obsidian 文件系统；预留飞书/语雀/网页） | 幂等 upsert + 断点续传；重灌 = 同一管道参数化（collection/model/chunker/force） |
+| 摄取 | Connector 接口（v1 = Obsidian 文件系统；飞书见 roadmap R-41） | 幂等 upsert + 断点续传；重灌 = 同一管道参数化（collection/model/chunker/force）；**来源用 `--source` 选（一次 run 一个来源）**，见 §5.0 |
 | 接入 | **REST + MCP 双口**（FastMCP 挂进 FastAPI，同端口） | MCP：DSH/Coze；REST：客服/业务系统 |
 | 组装 | **瘦核心共享**（kb_search 止步于证据） + **胖端点**（kb_answer 内部走完检索→组装→生成） | 组装规范独立成 skill，交给 agent 消费 |
 | 权限 | 单用户 + **四阶段扩展路线**（见 §7） | 字段与接口第一天就位，将来加代码不加重构 |
@@ -190,8 +190,24 @@ chunk 不许高分"，会连带拒掉真正的解释型 chunk）。⇒ `/kb/sear
 | 文档级 hash 跳过 | 未改文档整篇跳过 | 重跑时 `content_hash` 未变 **且权限三元组未变**（`content_hash` 只覆盖正文，权限改动靠额外比对才不会被跳过，见 §3.4） |
 | chunk id 内容寻址 | 已改文档重灌时未变块 id 不变 → upsert 原地覆盖 | 块文本未变（标题切分让编辑局部化） |
 | 孤儿清理 | 删除 doc 名下不在新 id 集合的旧块 | 重灌完成后按 doc_id 扫 |
+| **源侧删除对账（按来源隔离）** | 删掉"源里已经没有"的文档（点 + 账本行） | 每个 run 结束对账一次，**范围仅限本次 `--source` 处理的来源**（见下） |
 
 重灌脚本 = 同一管道参数化：`ingest.py --rebuild --collection recall__bge-m3@v2__md --model bge-m3@v2 --chunker md-heading-v1`；幂等、可断点续传、可重复执行。
+
+### 5.0 多来源与「源侧删除」对账范围（roadmap R-41c，2026-09-30）
+
+**一次 run 只处理一个来源**，由 `--source` 指定（默认 `obsidian`；未知值**大声失败**而非静默跳过）。
+
+⚠️ **对账必须按来源收窄**，这是数据事故级的约束：`ingest.py::_reconcile_deleted` 会遍历注册表、
+把**未在本次 run 枚举到**的文档判定为"源侧已删"并删除（点 + 账本行）。而一个 run 只枚举得到
+**它自己那个来源**的文档 ⇒ 若全量对账，跑一次 `--source feishu` 会把 Obsidian 的全部笔记删光。
+
+| 规则 | 说明 |
+| :--- | :--- |
+| 对账范围 | `record.source_type ∈ {本次 run 的来源}`，其它来源的记录**一律不动** |
+| 多来源 | **分多次 run**（各自 `--source`），而不是一次 run 混跑多个来源 |
+| 失败文档 | 记 `error` 并**排除在对账之外**（解析失败 ≠ 源已删除，旧块必须留着） |
+| 用例 | `tests/test_ingest.py`：① 其它来源的记录不得被删；② 同来源内的删除**仍要**生效（防"顺手关掉对账"）；③ 未知来源必须报错 |
 
 ### 5.1 常驻增量同步 `python -m recall.watchdog`（roadmap R-38，2026-09-25）
 

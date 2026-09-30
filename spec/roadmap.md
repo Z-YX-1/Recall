@@ -747,6 +747,7 @@ created: 2026-09-04
 | 2026-09-30 | R-39 | ✅ **R-39 收尾：长期通道交付 + 启动手册入库** | ① 项目工程师在自己终端跑 `cloudflared tunnel run recall`，**长期实例接管**（连接器 `05c68541`）；我起的**验证实例（PID 12224 / 连接器 `9906fd3c`）已按要求停止**，停后公网 `/health` 复测仍 **200** ⇒ **切换无中断**；② 项目工程师明确**不做开机自启**（保持手工启动四个窗口）；③ 新增 **`spec/runbook.md`**：四个窗口（Qdrant / API / watcher / cloudflared）的启动命令 + **依赖顺序** + 验收三连 + 关闭顺序 + **故障排查表** + 密钥清单与轮换 + 环境事实速查；`tech.md` §11 目录树补该文件、§12 顶部加指向 | 手册把**踩过的坑**固化成硬提醒：Qdrant 必须在 `tools\qdrant` 目录启动（否则开出空库）、watcher 必须**晚于** API（否则启动补同步放弃、需 `--once` 补）、`/mcp/` **尾斜杠**不能省、cloudflared 的 `--config` 要写在**子命令之前**、公网 403 是**预期**而非故障、改 `.env` 必须**重启进程**才生效。⇒ R-39 的**功能与部署全部完成**，只剩手册 §5 第 7 条（Coze 真实问答、引用可核对）由项目工程师确认 |
 | 2026-09-30 | R-39 | 🔴 **收尾复查发现 Qdrant 安全敞口（仓库侧已加固，剩两步需管理员）** | 复查"还有哪些要完善"时实测：① Qdrant 监听 **`0.0.0.0:6333`**（默认 `service.host`）且 **自身未配 API key**；② Windows 防火墙有两条**用户级入站放行**规则（`qdrant` / TCP+UDP / 配置 **Public**）；③ 本机 WLAN 网络配置**恰为 Public** ⇒ `Test-NetConnection 192.168.0.3 -Port 6333` = **True** ⇒ **同网段任意设备都能完整读写/删除向量库**。**仓库侧加固**：`tools/start-qdrant.ps1` 增 `$env:QDRANT__SERVICE__HOST='127.0.0.1'`（子进程继承）；`spec/runbook.md` 新增 **§7 安全加固**（含管理员删规则命令、复核方法、可选第三层），窗口 ① 手动命令补 `set QDRANT__SERVICE__HOST=127.0.0.1`；§六 快照按实况刷新（R-39 已上线、R-42 已生效、待办收敛为 3 项） | 属**新发现的安全问题**（非功能缺陷），按 §二 登记。📌 顺手核对其余暴露面：`8000` 只绑回环 ✓、`cloudflared` 两条防火墙规则是 **Block**（正确）✓。⚠️ **需项目工程师**：① 管理员删那两条规则（真正兜底）；② 重启 Qdrant 使其只绑回环。⚠️ 另一个**踩坑复现**：`edit` 工具会**剥掉 `.ps1` 的 BOM** ⇒ 改完必须补回（本次已补并复验 `ParseFile` 0 错误）|
 | 2026-09-30 | R-39 | 🎉 **R-39 验收通过（项目工程师执行）—— Phase 6 至此全部完成** | 项目工程师在 Coze 侧用**正式域名** `https://recall.iamzyx.xyz/mcp/` 提问笔记内容，**引用可核对**（手册 §5 第 7 条）⇒ R-39 **七条判据全部满足**，状态转"已通过"。关联事实：临时隧道窗口已关闭（实测无 `--url` 进程）⇒ 公网入口**只剩 named tunnel 一条**；长期隧道由项目工程师终端持有（连接器 `05c68541`）| 📌 一并登记**本轮复查的本机暴露面实测**（`Test-NetConnection` 从局域网 IP 测）：`6333`/`6334`（Qdrant HTTP/gRPC，🔴 见上条）、`445`(SMB)、`135`(RPC)、`902`/`912`(VMware authd)、`27036`(Steam 远程同乐)、`5040`/`13688` 均**可达**；而只绑回环的 `8000`(我们的 API)、`3080`(DSH Web)、`11434`(ollama)、`20243`(cloudflared metrics) **不可达** ✓ ⇒ **本项目只有 Qdrant 一处需要处理**；其余为 Windows/第三方软件的常规监听，是否真能从**别的设备**连上还取决于各自的防火墙规则（未逐个核实，需要时再查）|
+| 2026-09-30 | **R-41c** | ✅ **多来源账本隔离（数据事故级缺陷修复）** | `ingest.py`：① `_reconcile_deleted` 新增 `source_types: frozenset[str]`，**只对账本次 run 处理的来源**（`record.source_type not in source_types ⇒ skip`），docstring 写明"跑单一来源会把其它来源全删"的事故场景；② 新增 CLI `--source`（默认 `obsidian`，未知值 `SystemExit` **大声失败**，不静默跳过）；③ 新增 `_SUPPORTED_SOURCES` 常量登记可构造来源；④ 来源级错误的 `source_type` 与兜底 doc_id 前缀改为 `connector.source_type`（原先硬编码 `SOURCE_TYPE` 与 `vault-` 前缀）；⑤ `ingest.finished` 日志补 `source`。`recall/connectors/base.py` docstring 同步（"只实现协议、不改管道"的**两处例外**）。`tech.md` 新增 **§5.0**（对账范围规则表）、§2 摄取行补 `--source`、幂等表补"源侧删除对账（按来源隔离）"一行 | 🧪 **三条用例**（`tests/test_ingest.py`）：① 跑 Obsidian run **不得**删除 `source_type=feishu` 的账本记录；② 同来源内源侧删除**仍要**生效（防"顺手关掉对账"）；③ 未知来源必须报错。**并验证了用例有效性**：临时去掉过滤行后 ① 立刻失败（`其它来源的文档被误删了（R-41c 回归）`），恢复后通过 ⇒ **该用例真能抓到这个缺陷**（不是空测）。**gates**：ruff 零告警、mypy strict 零错误、**全量 `pytest` 308 passed**（本轮 Qdrant 未再抖动）。⚠️ **过程自记**：我自己的 `edit` 漏了 `_SUPPORTED_SOURCES` docstring 的结束三引号，一度把 `ingest.py` 弄成语法损坏（ruff 482 错、mypy `Invalid character '，'`）—— 已立即修复并复跑全绿 |
 | 2026-09-30 | **R-41** | ✅ **风险复查（Context7 二轮）—— 查出 10 个会改变实现的问题** | 在"平台拍板"基础上再核查技术细节，发现：① **导出任务不支持 Markdown**（`file_type` 仅 `docx/pdf/xlsx/csv`）⇒ block→Markdown 映射**必做、逃不掉**（推翻了"若导出支持 md 可省工作"的设想）；② `blocks` 是扁平列表+`children` 引用，但 `blocks/{id}/children?with_descendants=true` 能**一次返回前序遍历整树** ⇒ 免自己拼树；③ `block_type` 数字枚举 vs 内容实体字符串字段 ⇒ **按非空字段判型**，40+ 种里 20+ 种（chat_card/diagram/jira_issue/okr*/agenda*/iframe/board/isv/sub_page_list…）**显式跳过+计数**；④ 正文用 `blocks` 不用 `raw_content`（长度上限未在文档明示，有截断风险）；⑤ **旧版 `doc` 走 `doc/v2/content`（content 是 JSON 字符串需二次解析）、新版 `docx` 走 docx-v1**，必须分支；⑥ 每文档需权限（`95009`），要错误隔离；⑦ **一期不引 `lark-oapi`**（依赖偏重：requests/pycryptodome/websockets），httpx 直写 5~6 个端点即可；⑧ **一期不做事件增量**（Webhook 要逐个 `files/subscribe` 且权限 `docs:event:subscribe`；长连接对 docx 正文事件的支持本次未查到权威结论）；⑨ Markdown 生成必须**确定性**（否则 `content_hash` 每次变⇒每次重灌）；⑩ 文档字段名不一致（`text_run.content` vs `text_runs[].text`）⇒ **先落盘 sample 再写码** | 结论写入 §四 R-41 复查表；R-41b/R-41d/R-41e 据此调整（取文=blocks、判型=字段、依赖=httpx、增量=延期）。**一期实现范围收敛为**：R-41c 账本隔离 → R-41d 飞书 connector（docx+doc 分支、block→md、跳过+计数、限速、确定性）→ R-41f 幂等验收；R-41g 事件增量留待二期 |
 | 2026-09-30 | R-39 | ✅ **Qdrant 安全加固收口（项目工程师实测）+ 残留集合清理 + 重复启动 panic 定位** | ① **加固两层齐备并实测**：`Get-NetTCPConnection -LocalPort 6333,6334 -State Listen` ⇒ 两个都 **`127.0.0.1`**；`Get-NetFirewallRule -DisplayName 'qdrant'` ⇒ 两条都 **`Block`**（**显式拒绝**，比"删除规则"更硬 ⇒ 原先给的"删规则"这一步**无需再做**，已更正 runbook §7）；`Test-NetConnection 192.168.0.3:6333` ⇒ **`False`**（此前 `True`）；`healthz` / 本机 `/kb/search` / 公网 `/health` 全部正常。② **清理**：`recall-test-52a1d6563e14`+`recall-test-d852b3e8a673`（各 753MB，pytest 残留）经 API 删除、磁盘目录亦随之释放 ⇒ **14.15 → 15.62GB**。③ **诊断重复启动 panic**：项目工程师贴出的 `Panic … Wal error: Can't init WAL: Kind(WouldBlock)`（22:24:44）经时间线比对（健康实例 PID 10304 起于 22:20:37 且仍在跑）判定为**第二个实例**抢不到 storage 锁而退出，**非数据损坏**；`Config file not found` / `Filesystem type check is not supported` 属正常噪音 | 📌 **据此给 runbook 补了三条硬提醒**：① `start-qdrant.ps1` 是**分离+隐藏**启动 ⇒ 命令行立刻返回、**没有日志窗口**（那不是启动失败；想看得用 `-Visible` 或手动 `qdrant.exe`）；② **同一 storage 只能有一个 Qdrant 进程**，重复启动必 panic，先 `Get-Process qdrant` 确认；③ 手册里的 `<本机token>` 是**占位符**，真值在 `.env` 的 `RECALL_API_KEYS`（否则 curl 拿到 401、看着像"没输出"）。⚠️ **登记一个工具缺口**：`clean_qdrant_orphans.py` 只删"Qdrant 不认得"的目录，而 `recall-test-*` 集合 Qdrant **仍然认得** ⇒ 本次 1.5GB 是**手工**清的；已在 §六 列为可选改进项（加"先经 API 删测试集合"的模式）|
 
@@ -756,15 +757,15 @@ created: 2026-09-04
 
 - **当前阶段**：🎉 **Phase 0~6 全部完成** —— 首版交付 + R-38 / R-39 / R-42 / R-47 / R-48 全部落地并验收；
   **仅剩 R-40 真实验收（你说"下次再说"）与 R-41 新 Connector（待你选平台）**
-- **当前步骤**：✅ **Qdrant 安全加固已完成（2026-09-30 项目工程师实测确认）** —— 两层防护齐备：
-  绑定层 `6333`/`6334` 均为 **`127.0.0.1`**；网络层防火墙那两条 `qdrant` 规则已是 **`Block`（显式拒绝）**；
-  外部可达性 `Test-NetConnection 192.168.0.3:6333` 由 `True` → **`False`**；服务与公网入口均正常
-  （`healthz` 通过、本机 `/kb/search` 200、`https://recall.iamzyx.xyz/health` 200）。
-  顺手清理：**删除两个 pytest 残留测试集合**（各 753MB，`recall-test-*`）⇒ 磁盘 **14.15 → 15.62GB**，
-  同时消除"残留集合损坏会拖垮 Qdrant 启动"的隐患。⚠️ 过程中还诊断了一次
-  **重复启动 panic**（`Wal error: Can't init WAL: Kind(WouldBlock)`）：那是**第二个**实例抢不到
-  storage 锁而退出，**第一个（健康实例）不受影响** —— 已把识别方法与脚本"分离+隐藏启动"的特性写进
-  `spec/runbook.md`（窗口 ① 与 §4 排查表）
+- **当前步骤**：**R-41c 完成（2026-09-30）** —— 🔴 **多来源账本隔离**（数据事故级缺陷修复）：
+  `ingest.py::_reconcile_deleted` 现按 `source_types` **收窄对账范围**（否则跑一次 `--source feishu`
+  会删光 65 篇 Obsidian 笔记）；新增 `--source`（未知值**大声失败**）+ `_SUPPORTED_SOURCES`；
+  来源级错误的 `source_type`/doc_id 前缀不再硬编码 obsidian。`tech.md` 新增 **§5.0**。
+  用例三条并在**临时去掉修复后验证过用例确实会失败**。gates：**全量 `pytest` 308 passed**、
+  ruff 零告警、mypy strict 零错误。
+  ⇒ **下一步 R-41d（飞书 Connector）等你 R-41a 的凭据**：企业自建应用 `app_id`/`app_secret`
+  ＋ 内容源（知识库空间或云空间文件夹）＋ **一篇有代表性的文档**（含多级标题/列表/代码/表格/图片，
+  我先拉它落盘 sample 确认真实字段名，见 §四 复查表第 ⑩ 条）
 - **已通过项**：R-01、R-02b、R-03b、R-04、R-05、R-06、R-07~R-17、R-18、R-19、R-19b、R-20~R-23c、R-24、R-25、R-26、R-27、R-27c~R-27i、R-28、R-28b、R-29、R-29b、R-30、R-31、R-32、R-32b、R-32c、R-33、R-34、R-35、R-36、R-37、**R-38**、**R-39**、R-43、R-43b、R-43c、R-44、R-45
 - **已实施、人工验收部分待你确认**：**R-47**（「提了名没解释」四处模板；Coze 侧引用格式已跑通，
   胖端点那半由 `tools/verify_r47.py` 覆盖 —— 第 7 题曾因**判据词表过窄误报**，已放宽）、
@@ -836,13 +837,14 @@ created: 2026-09-04
   本机 D 盘从 7.76GB 清到 14.84GB）；④ 保持 D 盘余量充裕
 - **验收实测**（2026-09-24，项目工程师执行）：摄取 65 篇 0 失败；`/health` ok（972 点 / 65 篇）；检索 **Recall@1=0.767 / @3=0.933 / @5=0.933 / @10=1.000 / MRR=0.860**（与基线逐位一致）；Ragas **引用一致性 1.000 / faithfulness 0.858 / answer_relevancy 0.758**；DSH 问答带 `[n]` 引用通过
 - **验收实测**（2026-09-25，项目工程师执行）：**R-45 15/15 全绿**（`python tools\verify_r45.py`）
-- **本文件版本**：v0.32.0（2026-09-30 **R-41 风险复查（Context7 二轮）**：查出 10 个会改变实现的
-  问题/隐患 —— ① 导出**不支持 Markdown** ⇒ block→Markdown 必做；② 用 `children?with_descendants=true`
-  一次拿整树；③ 按"内容字段非空"判块类型、20+ 种未映射块显式跳过+计数；④ 正文用 `blocks` 不用
-  `raw_content`（长度上限不明）；⑤ 旧版 `doc` 与新版 `docx` 要分支处理；⑥ 每文档权限错误隔离；
-  ⑦ 一期**不引 SDK**（httpx 直写，SDK 留给二期的长连接/验签）；⑧ 一期不做事件增量；⑨ Markdown
-  生成必须确定性（否则 hash 每次变⇒每次重灌）；⑩ 字段名不一致需先落盘 sample。详见 §四 R-41 复查表。
-  **待你**：R-41a（建飞书应用 + 定内容源），我即可从 R-41c 开工。**）
+- **本文件版本**：v0.33.0（2026-09-30 ✅ **R-41c 完成：多来源账本隔离**（修掉"跑单一来源会删光其它来源
+  文档"的数据事故级缺陷）—— `--source` 开关 + 按来源收窄的删除对账 + 3 条用例（并**验证过用例在去掉
+  修复后确实会失败**）；`tech.md` 新增 §5.0。**gates 全绿：全量 `pytest` 308 passed**、ruff/mypy 零错误。
+  **R-41 进度：R-41b 预研（Context7 二轮 10 项发现）与 R-41c 已完成；R-41a 待项目工程师给飞书凭据，
+  R-41d 随后开工。**
+  **待你**：① 飞书自建应用 `app_id`/`app_secret` + 内容源 + 一篇代表性文档（我先落盘 sample）；
+  ② 可选：R-40 最小验收、重跑 `promptfoo`、`clean_qdrant_orphans.py` 加"删测试集合"模式、
+  Qdrant 索引失败降级为告警；③ 实现细节背书（老账）**）
 
 ---
 

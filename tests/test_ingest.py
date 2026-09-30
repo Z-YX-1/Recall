@@ -6,9 +6,12 @@
 
 from __future__ import annotations
 
+import pytest
 from qdrant_client import models
 
 from ingest import run_ingest
+from recall.models import DocRecord
+from recall.registry import Registry
 from tests.helpers import IngestEnv, ingest_args, write_note
 
 
@@ -155,3 +158,80 @@ async def test_broken_document_keeps_previously_indexed_chunks(ingest_env: Inges
     assert len(report.failed) == 1
     assert report.deleted_docs == 0  # 解析失败 ≠ 源已删除，旧块必须留着
     assert await ingest_env.store.count_points(ingest_env.collection, "甲") == 1
+
+
+# ---------------------------------------------------------------------------------------
+# 多来源账本隔离（roadmap R-41c，2026-09-30）
+# ---------------------------------------------------------------------------------------
+
+
+def _foreign_record() -> DocRecord:
+    """构造一条"另一个来源"的账本记录（无需真有那个 Connector）。"""
+    return DocRecord(
+        doc_id="feishu-foreign-token",
+        source_type="feishu",
+        source_uri="https://example.feishu.cn/docx/foreign",
+        title="另一来源的文档",
+        content_hash="0" * 64,
+        updated_at="2026-09-30T00:00:00+08:00",
+        indexed_at="2026-09-30T00:00:00+08:00",
+        chunk_count=3,
+    )
+
+
+async def test_run_does_not_delete_documents_of_other_sources(ingest_env: IngestEnv) -> None:
+    """🔴 R-41c 回归守门：跑单一来源的 run **不得**删除其它来源的文档。
+
+    背景（2026-09-30 复查发现的数据事故级缺陷）：``_reconcile_deleted`` 原先对
+    ``registry.list_all()`` **全量**对账，凡未在本次 run 枚举到的 ``doc_id`` 一律当
+    "源侧已删"删掉（点 + 账本行）。一旦接入第二个来源（飞书），跑一次
+    ``--source feishu`` 就会把 Obsidian 的 65 篇笔记**全部删除**。
+    修法：对账范围按 ``source_type`` 收窄。
+
+    本用例往账本里塞一条"另一个来源"的记录，再跑一次 Obsidian 摄取，断言它完好无损。
+    """
+    registry = Registry(ingest_env.registry_db)
+    await registry.initialize()
+    await registry.upsert(_foreign_record())
+
+    write_note(ingest_env.vault, "甲.md", "# 甲\n\n正文\n")
+    report = await run_ingest(ingest_args(ingest_env))
+
+    assert report.indexed_docs == 1
+    assert report.deleted_docs == 0, "其它来源的文档被误删了（R-41c 回归）"
+    assert await registry.get("feishu-foreign-token") is not None
+    assert await registry.count() == 2  # 甲 + 那条外来记录
+
+
+async def test_reconcile_still_removes_deleted_docs_of_the_same_source(
+    ingest_env: IngestEnv,
+) -> None:
+    """同一来源内，源侧已删的文档**仍要**清理。
+
+    这条是上一条的对照组：防止"修 R-41c 时顺手把对账整个关掉"（那会留下永不过期的幽灵文档）。
+    """
+    registry = Registry(ingest_env.registry_db)
+    await registry.initialize()
+    await registry.upsert(_foreign_record())
+
+    write_note(ingest_env.vault, "甲.md", "# 甲\n\n正文\n")
+    write_note(ingest_env.vault, "乙.md", "# 乙\n\n正文\n")
+    await run_ingest(ingest_args(ingest_env))
+
+    (ingest_env.vault / "乙.md").unlink()
+    report = await run_ingest(ingest_args(ingest_env))
+
+    assert report.scanned == 1
+    assert report.deleted_docs == 1  # 只删同来源的"乙"，不碰外来记录
+    assert await registry.get("乙") is None
+    assert await registry.get("feishu-foreign-token") is not None
+    assert await ingest_env.store.count_points(ingest_env.collection, "乙") == 0
+    assert await ingest_env.store.count_points(ingest_env.collection, "甲") == 1
+
+
+async def test_unknown_source_fails_loudly(ingest_env: IngestEnv) -> None:
+    """未知来源必须**大声失败**：静默跳过会让人以为"这一来源已经跑过了"。"""
+    write_note(ingest_env.vault, "甲.md", "# 甲\n\n正文\n")
+
+    with pytest.raises(SystemExit, match="未支持的 source_type"):
+        await run_ingest(ingest_args(ingest_env, extra=["--source", "no-such-source"]))
