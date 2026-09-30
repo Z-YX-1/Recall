@@ -694,6 +694,7 @@ created: 2026-09-04
 | 2026-09-26 | R-39 | ✅ **4.1a 实测成立：Coze 能带自定义 header，无需域名即可鉴权** | 项目工程师在 Coze 侧**把自定义 MCP 绑定到 Agent 并提问**后（⚠️ 只"添加到我的 MCP"**不会触发连接**，必须绑定 Agent 并使用 —— 官方文档亦如此写），审计出现**字节侧机房来源**的真实调用链：`19:08:39 client=221.194.168.0`（initialize）→ `19:08:45 ListToolsRequest` → `19:16:50 client=49.7.49.0 → ListToolsRequest → 19:16:56 CallToolRequest → kb_search.done → 200`。**关键结论：`user=me` 且 `200`** ⇒ Coze **确实送出了 `X-API-Key`**（MCP JSON 的 `headers` 生效）⇒ **应用层鉴权即可，4.1b（网关 Service Token）降为备选**，域名不再是"能不能跑通"的前置，只剩"地址稳不稳定"的作用 | 解掉 R-39 最大未知项。⚠️ **遗留两点**：① Coze 的回答**没有 `[n]` 引用** —— 属**分工问题不是故障**：`kb_search` 是瘦端点（只交证据），"编号 + 引用"由**调用方**组装；DSH 靠 `recall-assembly` skill，而 **Coze 读不到那个 skill** ⇒ 需在 Coze 的 Agent 提示词里补引用规则（备选：改用 `kb_answer` 胖端点拿确定性引用，代价是烧 DeepSeek 额度）。② `DELETE /mcp/` 返回 **405**（stateless 无会话可删）—— 客户端普遍容忍，暂不处理，登记备查 |
 | 2026-09-26 | R-39 | **域名确定（阿里云注册）+ Coze 引用格式已跑通** | ① 项目工程师在 Coze 的 Agent 提示词里补入引用规范后，**`[n]` 引用与末尾出处已正常** ⇒ R-39 的**功能部分全通**；② 注册域名 **`iamzyx.xyz`**（**阿里云**），子域名定为 **`recall.iamzyx.xyz`**；③ 本机 DNS 核验：SOA = `dns31.hichina.com`、NS = `dns31/dns32.hichina.com`（阿里云默认）、无 A 记录 ⇒ **域名状态正常（未被 ServerHold，实名无误）** | 下一步 = **Step 3**：阿里云控制台改 NS 交给 Cloudflare（Free）→ 等 CF 显示 **Active** → `cloudflared tunnel login` 授权 → `create` / `route dns` / 写 `config.yml`（模板 `tools/cloudflared/config.example.yml` 已就绪且已离线校验）→ 外部七条验收 → 更新 Coze 的 MCP URL → **最后**才关临时隧道。⚠️ **只改 NS，不要做域名转出**（转出要 5~7 天且无必要）；NA 改 NS 后阿里云的解析记录不再生效（当前为空，无影响） |
 | 2026-09-30 | R-39 | ✅ **Step 3 执行：named tunnel 上线，九条探针全绿（写端点已在隧道层挡死）** | ① NS 切换**独立复核通过**：两个公共解析器（阿里云 223.5.5.5 / Google 8.8.8.8）都返回 `zita/paul.ns.cloudflare.com`，且 **SOA 已由 `paul.ns.cloudflare.com` 应答** ⇒ Cloudflare 确为权威；② `cloudflared tunnel login` 得到 **ARGO TUNNEL TOKEN** 格式的 `cert.pem`（566B），`tunnel list` 认证通过（**注**：凭据是浏览器下载后手工放到 `~/.cloudflared/`，非 cloudflared 自动落盘）；③ `tunnel create recall` ⇒ **Tunnel ID `83a05aa9-0966-4c88-9f9d-9e918b07bf60`**，凭据 `~/.cloudflared/<ID>.json`；④ `tunnel route dns recall recall.iamzyx.xyz` 自动建 CNAME（Cloudflare 代理 ⇒ 对外解析为 anycast IP，**不是** CNAME，故查 A 记录验证）；⑤ `config.yml` 写到 `~/.cloudflared/`（模板已入库 `tools/cloudflared/config.example.yml`），`ingress validate` **OK**。**外部九条探针**（`https://recall.iamzyx.xyz`）：`/health` **200**、`/kb/stats` 无 key **403** / 带 key **403**、`/kb/search` 无 key **401** / 带 key **200**（含 evidence）、`/kb/ingest` 带 key **403**、`/mcp/` initialize 带 key **200** / 无 key **401**、`tools/list` **200 + 4 工具** | 🔑 **最关键的一条**：审计里公网流量的 `peer=127.0.0.1` + `client=203.168.26.138` + **`client_source=cf-connecting-ip`** ⇒ R-39 待办 B（审计来源可追溯）+ 本次修的 `proxy_headers=False` **在真实公网链路上同时成立**；本机直连 `/kb/stats` 仍 **200** ⇒ 隧道层的 403 **只作用于公网**、watcher/DSH 不受影响。📌 剩余三件收尾：① 长期运行交给**项目工程师的终端**（我起的实例仅用于本轮验证，会在你启动后停掉）；② Coze 的 MCP URL 换成 `https://recall.iamzyx.xyz/mcp/` 并复验引用；③ **确认无误后**才关临时隧道。（可选）④ 四件套开机自启 |
+| 2026-09-30 | R-39 | ✅ **R-39 收尾：长期通道交付 + 启动手册入库** | ① 项目工程师在自己终端跑 `cloudflared tunnel run recall`，**长期实例接管**（连接器 `05c68541`）；我起的**验证实例（PID 12224 / 连接器 `9906fd3c`）已按要求停止**，停后公网 `/health` 复测仍 **200** ⇒ **切换无中断**；② 项目工程师明确**不做开机自启**（保持手工启动四个窗口）；③ 新增 **`spec/runbook.md`**：四个窗口（Qdrant / API / watcher / cloudflared）的启动命令 + **依赖顺序** + 验收三连 + 关闭顺序 + **故障排查表** + 密钥清单与轮换 + 环境事实速查；`tech.md` §11 目录树补该文件、§12 顶部加指向 | 手册把**踩过的坑**固化成硬提醒：Qdrant 必须在 `tools\qdrant` 目录启动（否则开出空库）、watcher 必须**晚于** API（否则启动补同步放弃、需 `--once` 补）、`/mcp/` **尾斜杠**不能省、cloudflared 的 `--config` 要写在**子命令之前**、公网 403 是**预期**而非故障、改 `.env` 必须**重启进程**才生效。⇒ R-39 的**功能与部署全部完成**，只剩手册 §5 第 7 条（Coze 真实问答、引用可核对）由项目工程师确认 |
 
 ---
 
@@ -775,13 +776,14 @@ created: 2026-09-04
   本机 D 盘从 7.76GB 清到 14.84GB）；④ 保持 D 盘余量充裕
 - **验收实测**（2026-09-24，项目工程师执行）：摄取 65 篇 0 失败；`/health` ok（972 点 / 65 篇）；检索 **Recall@1=0.767 / @3=0.933 / @5=0.933 / @10=1.000 / MRR=0.860**（与基线逐位一致）；Ragas **引用一致性 1.000 / faithfulness 0.858 / answer_relevancy 0.758**；DSH 问答带 `[n]` 引用通过
 - **验收实测**（2026-09-25，项目工程师执行）：**R-45 15/15 全绿**（`python tools\verify_r45.py`）
-- **本文件版本**：v0.28.0（2026-09-26 **R-48 实施**：组装触发策略 =「**默认先查 + 未查必披露**」，
-  四处同步（MCP instructions / `kb_search` 描述 / skill / `ASSEMBLY.md`）+ 5 项一致性用例；
-  根因是"skill 描述与工具描述都是条件式 ⇒ 模型读成限制条件 ⇒ 技术问题常常不查库直接联网"，
-  即 **R-47 的上游缺口**。**当前待项目工程师：① 重启 `recall.api`（一次生效三件：0.60 / R-47 提示词 /
-  R-48 工具描述）→ 跑 `tools\verify_r47.py` 与 `tools\verify_phase6.py --probe-vault`；
-  ② 人工验 R-48（不提"我的笔记"问技术问题）与 R-47 后半段（10 道 mentioned 题问 DSH）；
-  ③ R-39 路线 + R-41 平台 + 实现细节背书 + （可选）Qdrant 缓解方案**）
+- **本文件版本**：v0.29.0（2026-09-30 ✅ **R-39 公网接入完成**：路线 A（Cloudflare Tunnel named tunnel）
+  上线并九条探针全绿，写端点在**隧道层**挡死（403），Coze 经 `https://recall.iamzyx.xyz/mcp/` 可问答且
+  带 `[n]` 引用；新增 **`spec/runbook.md`** 作为"四个窗口怎么起"的操作手册（**不做开机自启**，手工启动）。
+  另修掉一个实测抓到的真缺陷：uvicorn `proxy_headers` 默认 True 会抢先改写 `scope["client"]`，
+  令审计可被 `X-Forwarded-For` 伪造、`TrustedProxies` 失效（已改 `proxy_headers=False`）。
+  **当前待项目工程师：① 在 Coze 里确认引用可核对（手册 §5 第 7 条）⇒ R-39 即可标"已通过"；
+  ② 关闭临时隧道窗口（Coze 切到正式域名并验过之后）；③ R-41 平台选择 + 实现细节背书 +
+  （可选）Qdrant 缓解方案；④ R-40 真实验收（此前"下次再说"）**）
 
 ---
 

@@ -383,6 +383,9 @@ tools: kb_search / kb_answer / kb_ingest / kb_stats
 ```
 project/Recall/
 ├─ spec/tech.md                # 本文档（技术栈决策记录）
+├─ spec/roadmap.md             # 开发路线图与问题/变更日志（含"只增不改"铁律）
+├─ spec/code_standards.md      # 代码与工程规范
+├─ spec/runbook.md             # **启动与运维手册**：四个窗口的启动命令/顺序/验收/排查（R-39 收尾产物）
 ├─ ingest.py                   # 摄取 CLI：--update / --rebuild --collection --model
 ├─ recall/                     # 包名 recall
 │  ├─ connectors/              # base.py(Connector) + obsidian.py（预留 feishu/web）
@@ -406,6 +409,8 @@ project/Recall/
 ```
 
 ## 12. Windows 运行拓扑与环境
+
+> 📖 **每个进程的具体启动命令、顺序、验收与排查，见 `spec/runbook.md`**（开机后照它起四个窗口）。
 
 ```powershell
 # 环境
