@@ -695,52 +695,44 @@ created: 2026-09-04
 | 2026-09-26 | R-39 | **域名确定（阿里云注册）+ Coze 引用格式已跑通** | ① 项目工程师在 Coze 的 Agent 提示词里补入引用规范后，**`[n]` 引用与末尾出处已正常** ⇒ R-39 的**功能部分全通**；② 注册域名 **`iamzyx.xyz`**（**阿里云**），子域名定为 **`recall.iamzyx.xyz`**；③ 本机 DNS 核验：SOA = `dns31.hichina.com`、NS = `dns31/dns32.hichina.com`（阿里云默认）、无 A 记录 ⇒ **域名状态正常（未被 ServerHold，实名无误）** | 下一步 = **Step 3**：阿里云控制台改 NS 交给 Cloudflare（Free）→ 等 CF 显示 **Active** → `cloudflared tunnel login` 授权 → `create` / `route dns` / 写 `config.yml`（模板 `tools/cloudflared/config.example.yml` 已就绪且已离线校验）→ 外部七条验收 → 更新 Coze 的 MCP URL → **最后**才关临时隧道。⚠️ **只改 NS，不要做域名转出**（转出要 5~7 天且无必要）；NA 改 NS 后阿里云的解析记录不再生效（当前为空，无影响） |
 | 2026-09-30 | R-39 | ✅ **Step 3 执行：named tunnel 上线，九条探针全绿（写端点已在隧道层挡死）** | ① NS 切换**独立复核通过**：两个公共解析器（阿里云 223.5.5.5 / Google 8.8.8.8）都返回 `zita/paul.ns.cloudflare.com`，且 **SOA 已由 `paul.ns.cloudflare.com` 应答** ⇒ Cloudflare 确为权威；② `cloudflared tunnel login` 得到 **ARGO TUNNEL TOKEN** 格式的 `cert.pem`（566B），`tunnel list` 认证通过（**注**：凭据是浏览器下载后手工放到 `~/.cloudflared/`，非 cloudflared 自动落盘）；③ `tunnel create recall` ⇒ **Tunnel ID `83a05aa9-0966-4c88-9f9d-9e918b07bf60`**，凭据 `~/.cloudflared/<ID>.json`；④ `tunnel route dns recall recall.iamzyx.xyz` 自动建 CNAME（Cloudflare 代理 ⇒ 对外解析为 anycast IP，**不是** CNAME，故查 A 记录验证）；⑤ `config.yml` 写到 `~/.cloudflared/`（模板已入库 `tools/cloudflared/config.example.yml`），`ingress validate` **OK**。**外部九条探针**（`https://recall.iamzyx.xyz`）：`/health` **200**、`/kb/stats` 无 key **403** / 带 key **403**、`/kb/search` 无 key **401** / 带 key **200**（含 evidence）、`/kb/ingest` 带 key **403**、`/mcp/` initialize 带 key **200** / 无 key **401**、`tools/list` **200 + 4 工具** | 🔑 **最关键的一条**：审计里公网流量的 `peer=127.0.0.1` + `client=203.168.26.138` + **`client_source=cf-connecting-ip`** ⇒ R-39 待办 B（审计来源可追溯）+ 本次修的 `proxy_headers=False` **在真实公网链路上同时成立**；本机直连 `/kb/stats` 仍 **200** ⇒ 隧道层的 403 **只作用于公网**、watcher/DSH 不受影响。📌 剩余三件收尾：① 长期运行交给**项目工程师的终端**（我起的实例仅用于本轮验证，会在你启动后停掉）；② Coze 的 MCP URL 换成 `https://recall.iamzyx.xyz/mcp/` 并复验引用；③ **确认无误后**才关临时隧道。（可选）④ 四件套开机自启 |
 | 2026-09-30 | R-39 | ✅ **R-39 收尾：长期通道交付 + 启动手册入库** | ① 项目工程师在自己终端跑 `cloudflared tunnel run recall`，**长期实例接管**（连接器 `05c68541`）；我起的**验证实例（PID 12224 / 连接器 `9906fd3c`）已按要求停止**，停后公网 `/health` 复测仍 **200** ⇒ **切换无中断**；② 项目工程师明确**不做开机自启**（保持手工启动四个窗口）；③ 新增 **`spec/runbook.md`**：四个窗口（Qdrant / API / watcher / cloudflared）的启动命令 + **依赖顺序** + 验收三连 + 关闭顺序 + **故障排查表** + 密钥清单与轮换 + 环境事实速查；`tech.md` §11 目录树补该文件、§12 顶部加指向 | 手册把**踩过的坑**固化成硬提醒：Qdrant 必须在 `tools\qdrant` 目录启动（否则开出空库）、watcher 必须**晚于** API（否则启动补同步放弃、需 `--once` 补）、`/mcp/` **尾斜杠**不能省、cloudflared 的 `--config` 要写在**子命令之前**、公网 403 是**预期**而非故障、改 `.env` 必须**重启进程**才生效。⇒ R-39 的**功能与部署全部完成**，只剩手册 §5 第 7 条（Coze 真实问答、引用可核对）由项目工程师确认 |
+| 2026-09-30 | R-39 | 🔴 **收尾复查发现 Qdrant 安全敞口（仓库侧已加固，剩两步需管理员）** | 复查"还有哪些要完善"时实测：① Qdrant 监听 **`0.0.0.0:6333`**（默认 `service.host`）且 **自身未配 API key**；② Windows 防火墙有两条**用户级入站放行**规则（`qdrant` / TCP+UDP / 配置 **Public**）；③ 本机 WLAN 网络配置**恰为 Public** ⇒ `Test-NetConnection 192.168.0.3 -Port 6333` = **True** ⇒ **同网段任意设备都能完整读写/删除向量库**。**仓库侧加固**：`tools/start-qdrant.ps1` 增 `$env:QDRANT__SERVICE__HOST='127.0.0.1'`（子进程继承）；`spec/runbook.md` 新增 **§7 安全加固**（含管理员删规则命令、复核方法、可选第三层），窗口 ① 手动命令补 `set QDRANT__SERVICE__HOST=127.0.0.1`；§六 快照按实况刷新（R-39 已上线、R-42 已生效、待办收敛为 3 项） | 属**新发现的安全问题**（非功能缺陷），按 §二 登记。📌 顺手核对其余暴露面：`8000` 只绑回环 ✓、`cloudflared` 两条防火墙规则是 **Block**（正确）✓。⚠️ **需项目工程师**：① 管理员删那两条规则（真正兜底）；② 重启 Qdrant 使其只绑回环。⚠️ 另一个**踩坑复现**：`edit` 工具会**剥掉 `.ps1` 的 BOM** ⇒ 改完必须补回（本次已补并复验 `ParseFile` 0 错误）|
 
 ---
 
 ## 六、 当前进度快照（每步完成/受阻后更新）
 
-- **当前阶段**：✅ **Phase 0~5 全部完成（首版交付验收达成）+ R-43c / R-45 已闭环**；
-  **Phase 6：R-38 已真实验收（16/16）、R-42 已实现且取值定案（0.60 待重启生效）、
-  R-47 已实施待真实验收、R-40 待验收（项目工程师已说"下次再说"）；R-39 / R-41 待你定方向**
-- **当前步骤**：**R-48 实施完成（2026-09-26）** —— 「**默认先查 + 未查必披露**」四处同步
-  （`FastMCP(instructions=)`、`kb_search` 工具描述、`skill/recall-assembly.md`、`ASSEMBLY.md`；
-  已同步到 `$DSH_HOME/skills/`，**9688 字节**），新增 `tests/test_trigger_policy.py`（5 项）。
-  紧接其前的 **R-47**（「提了名没解释」四处模板）与 **R-42 取 0.60**（已写入 `.env`）均已落地。
-  ⇒ **待你：重启 `recall.api`（一次生效：0.60 + R-47 提示词 + R-48 工具描述）**，
-  随后跑 `python tools\verify_r47.py` 与 `python tools\verify_phase6.py --probe-vault`，
-  再用**不提"我的笔记"的措辞**在 DSH 里问一个技术问题验 R-48（应看到它**先查库**；
-  万一没查，答案里必须带"没有查你的知识库"那句披露）
+- **当前阶段**：✅ **Phase 0~5 全部完成（首版交付验收达成）+ Phase 6 全部落地**：
+  R-38 真实验收 **16/16**、R-42 门槛 **0.60 已生效**、R-47 / R-48 已实施并跑通（Coze 侧引用已验），
+  **R-39 公网接入已上线**（`https://recall.iamzyx.xyz/mcp/`；写端点在**隧道层**挡死 403）；
+  **只剩 R-40 真实验收（你说"下次再说"）与 R-41（待选平台）**
+- **当前步骤**：**R-39 收尾完成（2026-09-30）** —— 长期隧道交回项目工程师的终端接管、启动手册
+  `spec/runbook.md` 入库；复查时**发现并加固了一处安全敞口**（Qdrant 绑 `0.0.0.0` + 防火墙放行 qdrant.exe）。
+  ⇒ **待你三个动作**：① 在 Coze 里用**新域名**问一句笔记内容、确认引用可核对（手册 §5 第 7 条）
+  ⇒ 过了 R-39 即可标"已通过"；② 用**管理员**终端删掉防火墙里 qdrant 的两条放行规则
+  （命令见 `spec/runbook.md` §7）；③ 重启一次 Qdrant 让它**只绑回环**
+  （`tools\start-qdrant.ps1` 已内置 `QDRANT__SERVICE__HOST=127.0.0.1`）
 - **已通过项**：R-01、R-02b、R-03b、R-04、R-05、R-06、R-07~R-17、R-18、R-19、R-19b、R-20~R-23c、R-24、R-25、R-26、R-27、R-27c~R-27i、R-28、R-28b、R-29、R-29b、R-30、R-31、R-32、R-32b、R-32c、R-33、R-34、R-35、R-36、R-37、**R-38**、R-43、R-43b、R-43c、R-44、R-45
 - **待验收项**：**R-40**（权限 S2）—— 实现与 gates 均已完成；⚠️ **未配 `RECALL_API_KEYS` 时
   强制路径根本没被触发**（脚本走的是"未配置⇒不鉴权"的 S1 分支）。**项目工程师 2026-09-26 答复
   「R-40 真验下次再说」** ⇒ 保持待验收，不阻塞其它项。要真验：配一份 key 表再跑
   `tools\verify_phase6.py --api-key <token>`，那时 401/200 与"配置-运行态一致性"检查才会真跑
 - **待拍板项**：**已清空** —— 2026-09-26 项目工程师决定：
-  ① **R-42 取 `0.60`**，已写入 `.env`（**重启 API 后生效**）；
-  ② **R-47 批准**，已实施完毕（四处模板 + 用例 + 验收脚本），状态转「待真实验收」；
-  ③ **R-40 真实验收下次再说**
+  ① **R-42 取 `0.60`**，已写入 `.env`（**已重启生效**，`verify_phase6.py` 的 R-42 一节显示 0.6）；
+  ② **R-47 批准**，已实施完毕（四处模板 + 用例 + 验收脚本），**Coze 侧引用已跑通**；
+  ③ **R-40 真实验收下次再说**；④ **R-48 批准**，已实施完毕
 - **未通过项**：R-02（官方源网络超时，已走 R-02b）、R-03（Docker 未运行，已走 R-03b）
 - **待请示事项**（以下为**非阻塞**的后续选择）：
-  - **需你拍板（2026-09-26 收敛后只剩 4 项）**：
-    1. **重启 API 一次**（一步生效三件事）：`python -m recall.api` ⇒ ① `RECALL_EVIDENCE_MIN_SCORE=0.60`
-       生效；② R-47 新提示词生效；③ **R-48 的 `kb_search` 新工具描述生效**（MCP 描述在进程启动时注册）。
-       随后跑 `python tools\verify_r47.py` 与
-       `python tools\verify_phase6.py --probe-vault`（期望 **16/16**，且 R-42 一节显示"门槛 0.60 + 空证据"）。
-    2. **两个只能人工验的动作**（不可替代）：
-       ① **R-48**：用**不提"我的笔记"**的措辞问一个技术问题 ⇒ 应看到它**先查库**；万一没查，
-       答案里必须带"这条没有查你的知识库"那句披露；
-       ② **R-47 的后半段**：把 `tools\verify_r47.py` 打印的 10 道 `mentioned` 题各问一遍，
-       答案须**同时**出现"笔记只提及 / 未解释"与**联网补充**内容。
-       顺带完成那条老判据——问一句笔记里的内容确认能命中。
-    3. **R-39 公网接入 —— ✅ 路线已定（2026-09-26）**：项目工程师选定 **路线 A（Cloudflare Tunnel）**
-       ＋ **Coze 身份取「省事档」：token 映射 `me`**（可见全部 65 篇，含私有）。**剩余只差"域名"**：
-       域名注册主体怎么定、要不要备案 —— 已出**域名与合规指引**（见 §七 该条），
-       买好域名 + 把 NS 交给 Cloudflare 后，即可执行 Step 2~5（快速隧道冒烟 → named tunnel →
-       Coze 接入 → 7 条验收）。手册 `docs/R-39-public-access.md`（§8 三项待办均已实现 ⇒ **无需立项**）。
-       ⚠️ 硬约束：**不能为公网另起实例**（单份模型 ≈4.5GB 显存）。⚠️ 待实测风险：
-       **Coze（国内）→ Cloudflare 边缘（境外）** 的延迟/丢包，先用临时隧道压测再上 named tunnel。
-    4. **R-41 新 Connector**：做哪个平台（飞书 / 语雀 / 网页）？按 §二属**任务范围变更**，须你批准后开工。
+  - **需你拍板（2026-09-30 收敛后只剩 3 项）**：
+    1. **R-39 最后一条验收**：在 Coze 里用**新域名**（Coze 的 MCP URL 应为
+       `https://recall.iamzyx.xyz/mcp/`）问一句笔记内容，确认**引用可核对**（手册 §5 第 7 条）。
+       ⇒ 过了这一条，R-39 即可标"已通过"。
+    2. 🔴 **Qdrant 安全加固（建议尽快）**：实测 Qdrant 绑 `0.0.0.0:6333` 且**自身无 API key**，
+       防火墙里又有两条 **Public 配置下的 qdrant.exe 入站放行**规则，本机 WLAN 当前正是 Public
+       ⇒ **同网段任何设备都能完整读写/删除向量库**。仓库侧已加固（`tools\start-qdrant.ps1` 内置
+       `QDRANT__SERVICE__HOST=127.0.0.1`），**还需你两步**：① 用**管理员**终端
+       `Get-NetFirewallRule -DisplayName 'qdrant' | Remove-NetFirewallRule`（真正的兜底）；
+       ② 重启一次 Qdrant 让它只绑回环。命令与复核方法见 `spec/runbook.md` **§7**。
+    3. **R-41 新 Connector**：做哪个平台（飞书 / 语雀 / 网页）？按 §二属**任务范围变更**，须你批准后开工。
   - **需你批准（技术债缓解，可选）**：把 Qdrant"建 payload 索引失败"从**致命**降为**告警并继续**
     （`tech.md` §12.3）—— 索引是**查询性能**优化，不是检索正确性前提；代价是过滤检索可能变慢。
   - **需你背书（老账，仍未结）**：R-14b / R-16b / R-21 / R-23b / R-23c / R-27c~R-27i / R-29b / R-32c /

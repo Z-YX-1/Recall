@@ -29,6 +29,13 @@ if ($running) {
     exit 0
 }
 
+# ⚠️ 只绑回环（安全，2026-09-30 实测补上）：
+# Qdrant 默认 service.host = 0.0.0.0 且**本身没有 API key**，等于把整库（可读可删）交给同网段；
+# 本机 WLAN 恰是 Public 配置、防火墙又有一条 qdrant.exe 入站放行规则 ⇒ 实测 192.168.0.3:6333 可连。
+# 这里用官方支持的环境变量覆盖（等价于 config/config.yaml 里的 service.host），
+# 子进程会继承本进程环境。真正兜底还应在防火墙里删掉那条放行规则（见 spec/runbook.md §7）。
+$env:QDRANT__SERVICE__HOST = '127.0.0.1'
+
 $options = @{ FilePath = $qdrantExe; WorkingDirectory = $qdrantDir }
 if (-not $Visible) { $options.WindowStyle = 'Hidden' }
 Start-Process @options

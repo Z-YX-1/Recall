@@ -25,9 +25,13 @@ Qdrant  →  recall.api  →  （recall.watchdog、cloudflared 可并行）
 
 ```bat
 cd /d D:\Project\Recall\tools\qdrant
+set QDRANT__SERVICE__HOST=127.0.0.1
 qdrant.exe
 ```
 
+- ⚠️ **必须加 `set QDRANT__SERVICE__HOST=127.0.0.1`**：Qdrant 默认绑 `0.0.0.0` 且**它自己没有 API key**
+  ⇒ 等于把整库（可读、可删、可写）交给同网段。⚠️ **手动启动的老方式（不带这行）会让它重新暴露**，
+  详见 §7。
 - ⚠️ **必须在这个目录下启动**：`storage\` / `snapshots\` 是按**工作目录**找的。换个目录启动会开出一个
   **空库**（磁盘上的真实数据还在，但 `/kb/stats` 会显示 0 点，看着像"数据丢了"）。
 - 验收（另开一个终端）：
@@ -36,7 +40,7 @@ qdrant.exe
   curl.exe -s http://127.0.0.1:6333/
   ```
   期望：`healthz check passed`；版本 `"version":"1.19.1"`（**不能是 1.19.0**）。
-- 也可以用脚本（隐藏窗口 + 轮询健康检查，通过才报成功）：
+- **推荐用脚本**（自动设好上面的环境变量 + 隐藏窗口 + 轮询健康检查，通过才报成功）：
   ```bat
   cd /d D:\Project\Recall
   powershell -NoProfile -ExecutionPolicy Bypass -File tools\start-qdrant.ps1
@@ -199,3 +203,38 @@ curl.exe -s -o NUL -w "%{http_code}\n" https://recall.iamzyx.xyz/health
 | 隧道配置 | `%USERPROFILE%\.cloudflared\config.yml`（模板：`tools/cloudflared/config.example.yml`） |
 | 日志 | `data\logs\api.log`、`watchdog.log`、`audit.jsonl`（审计，含 `peer`/`client_source`） |
 | 磁盘 | D 盘需留余量；全量 `pytest` 每次泄漏 0.7~1.4GB，定期 `python tools\clean_qdrant_orphans.py` |
+
+---
+
+## 7. 安全加固：Qdrant 必须只绑回环（2026-09-30 实测发现）
+
+**问题**：Qdrant 默认 `service.host = 0.0.0.0`，而它**自身没有任何鉴权**。同时本机 Windows 防火墙里
+存在两条**用户级放行规则**（`TCP Query User{…}qdrant.exe` / `UDP Query User{…}qdrant.exe`，
+配置 = **Public**），而本机 WLAN 当前恰好就是 **Public** ⇒ 实测 `192.168.0.3:6333` **可连**。
+⇒ **同网段（同一个 Wi-Fi / 局域网）的任何设备都能完整读写、甚至删除你的向量库。**
+
+**两层修复（都要做，互为兜底）**：
+
+1. **让 Qdrant 只绑回环**（仓库侧已做，`.ps1` 已内置；手动启动要自己加）：
+   ```bat
+   set QDRANT__SERVICE__HOST=127.0.0.1
+   ```
+   或直接用 `tools\start-qdrant.ps1`（它已经设好）。改完**重启 Qdrant**，再用
+   `Get-NetTCPConnection -LocalPort 6333 -State Listen` 应看到 `LocalAddress = 127.0.0.1`。
+2. **删掉防火墙里那两条放行规则**（需要**管理员**终端；这条是真正的兜底，因为它不依赖 Qdrant 的启动参数）：
+   ```powershell
+   # 以管理员身份打开 PowerShell，然后：
+   Get-NetFirewallRule -DisplayName 'qdrant' | Remove-NetFirewallRule
+   # 复核（应无输出）：
+   Get-NetFirewallRule -DisplayName 'qdrant'
+   ```
+   ℹ️ 本机**其它端口的暴露面核对**（2026-09-30 实测）：`8000` 只绑 `127.0.0.1` ✓；
+   `cloudflared` 的两条防火墙规则是 **Block**（入站被拦，正确，隧道本来只需出站）✓。
+
+⚠️ **删规则之前**：本机 API 走的是 `127.0.0.1:6333`（回环不受 Windows 防火墙入站规则约束），
+所以删掉后**服务照常**。删完可以跑一次
+`curl.exe -s -H "X-API-Key: <token>" -H "Content-Type: application/json" -d "{\"query\":\"混合检索\",\"top_k\":1}" http://127.0.0.1:8000/kb/search`
+确认检索链路没受影响。
+
+**可选的第三层**（需改代码，未实施）：给 Qdrant 配 `service.api_key`，并在 `recall.store.QdrantStore`
+里带 `api_key` 建客户端。收益是"即使误绑 0.0.0.0 也要有钥匙"，代价是配置与代码各改一处 + 用例。
