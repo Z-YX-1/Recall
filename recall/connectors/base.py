@@ -3,7 +3,7 @@
 新增来源（飞书 / 语雀 / 网页）只需实现 :class:`Connector` 协议，**管道其余部分不必改** ——
 唯一的例外是两件**必须**做的接线（见 tech.md §5.0 与 roadmap R-41c）：
 
-1. 在 ``ingest.py::_build_connector`` 与 ``_SUPPORTED_SOURCES`` 里注册来源类型（用 ``--source`` 选）；
+1. 在 ``ingest.py::_build_connector`` 与 ``_SUPPORTED_SOURCES`` 注册来源（用 ``--source`` 选）；
 2. 「源侧已删除」的对账**按来源收窄**：一个 run 只枚举得到一个来源的文档，若全量对账会把
    其它来源的文档全部误删（这是 2026-09-30 复查发现的数据事故级缺陷，已在管道里修掉）。
 
