@@ -46,6 +46,19 @@ qdrant.exe
   powershell -NoProfile -ExecutionPolicy Bypass -File tools\start-qdrant.ps1
   ```
   加 `-Visible` 可看到它的日志窗口。⚠️ `.ps1` 必须保持 **UTF-8 with BOM**（否则 PowerShell 5.1 按 ANSI 读、语法报错）。
+- ⚠️ **脚本是"分离 + 隐藏"启动**：它用 `Start-Process` 另起一个进程，然后自己轮询健康检查就**退出**了
+  ⇒ 所以**命令提示符会立刻还给你**（这**不是**没启动成功！），同时**你没有 Qdrant 的日志窗口**。
+  - 想**看日志**：`-Visible`（有窗口）或干脆手动 `qdrant.exe`（那种方式会**占住**窗口、不还提示符）。
+  - 想**确认它到底在不在跑**（推荐养成习惯，见 §7 的启动竞争）：
+    ```bat
+    Get-Process qdrant
+    Get-NetTCPConnection -LocalPort 6333 -State Listen
+    curl.exe -s http://127.0.0.1:6333/healthz
+    ```
+- 🔴 **同一时刻只能有一个 Qdrant 进程**（一个 storage 目录只能被一个进程打开）。重复启动的**典型报错**是
+  启动 panic：`Wal error: Can't init WAL: Kind(WouldBlock)` —— 见 §4 排查表末行。
+- ℹ️ 启动时那几条 `Config file not found: config/config` / `config/development`、
+  `Filesystem type check is not supported on this platform` 都是**正常噪音**，可忽略。
 
 ### 窗口 ②　Recall API（REST + `/mcp`）
 
@@ -170,6 +183,9 @@ curl.exe -s -o NUL -w "%{http_code}\n" https://recall.iamzyx.xyz/health
 | 端口 6333 / 8000 被占用 | 已经有一个实例在跑 | `Get-NetTCPConnection -LocalPort 8000 -State Listen`；**别起两份**（双份模型会 OOM/崩溃） |
 | 改了 `.env` 但没生效 | 配置只在**进程启动时**读取 | 重启对应进程；`verify_phase6.py` 的"配置-运行态一致性"检查能查出这种假绿 |
 | 跑全量 `pytest` 崩溃 | API 占着显存（模型 ≈4GB） | 先停 `recall.api` 再跑测试 |
+| **Qdrant 启动即 panic**：`Failed to load local shard … Wal error: Can't init WAL: Kind(WouldBlock)` | **已经有一个 Qdrant 在用这个 storage 目录**（WAL 文件被占用）—— 不是数据损坏 | 先查：`Get-Process qdrant` / `Get-NetTCPConnection -LocalPort 6333 -State Listen`。**若已有一个健康的在跑，直接关掉你刚开的那个窗口即可**（panic 的是"第二个"，第一个没受影响）；确认没有在跑再启动 |
+| 启动时 `Config file not found: config/config`、`Filesystem type check is not supported` | Qdrant 找不到**可选**的配置文件、Windows 不支持文件系统类型检查 | **正常噪音**，忽略 |
+| 手动 curl 检索返回空/异常 | `-H "X-API-Key: <本机token>"` 里的 **`<本机token>` 是占位符**，忘了替换 | 真值在 `.env` 的 `RECALL_API_KEYS`（第一个 token）；没带对 key 会返回 **401** 而不是空 |
 
 ---
 
@@ -221,20 +237,34 @@ curl.exe -s -o NUL -w "%{http_code}\n" https://recall.iamzyx.xyz/health
    ```
    或直接用 `tools\start-qdrant.ps1`（它已经设好）。改完**重启 Qdrant**，再用
    `Get-NetTCPConnection -LocalPort 6333 -State Listen` 应看到 `LocalAddress = 127.0.0.1`。
-2. **删掉防火墙里那两条放行规则**（需要**管理员**终端；这条是真正的兜底，因为它不依赖 Qdrant 的启动参数）：
+2. **确认防火墙里那两条规则是 `Block`**（需要**管理员**终端）。⚠️ **2026-09-30 实测：本机这两条规则
+   已经是 `Block`（显式拒绝）—— 那就已经到位，无需删除、也无需改动**（拒绝规则优先于一切放行）：
    ```powershell
-   # 以管理员身份打开 PowerShell，然后：
-   Get-NetFirewallRule -DisplayName 'qdrant' | Remove-NetFirewallRule
-   # 复核（应无输出）：
-   Get-NetFirewallRule -DisplayName 'qdrant'
+   # 查看当前状态（以管理员身份打开 PowerShell）
+   Get-NetFirewallRule -DisplayName 'qdrant' | Select-Object DisplayName,Profile,Action,Enabled | Format-Table -AutoSize
    ```
+   - 若显示 **`Block`** ⇒ ✅ 完成（**这就是本机现在的情况**，两个独立防护层都关上了）；
+   - 若显示 **`Allow`** ⇒ 改成阻止或删掉：
+     ```powershell
+     Get-NetFirewallRule -DisplayName 'qdrant' | Set-NetFirewallRule -Action Block
+     # 或者直接删：Get-NetFirewallRule -DisplayName 'qdrant' | Remove-NetFirewallRule
+     ```
    ℹ️ 本机**其它端口的暴露面核对**（2026-09-30 实测）：`8000` 只绑 `127.0.0.1` ✓；
    `cloudflared` 的两条防火墙规则是 **Block**（入站被拦，正确，隧道本来只需出站）✓。
 
-⚠️ **删规则之前**：本机 API 走的是 `127.0.0.1:6333`（回环不受 Windows 防火墙入站规则约束），
-所以删掉后**服务照常**。删完可以跑一次
+⚠️ **改防火墙不会影响你自己的服务**：本机 API 走的是 `127.0.0.1:6333`，而**回环不受 Windows 防火墙入站规则约束**，
+所以不管是 Block 还是删除，**服务照常**。改完可以跑一次
 `curl.exe -s -H "X-API-Key: <token>" -H "Content-Type: application/json" -d "{\"query\":\"混合检索\",\"top_k\":1}" http://127.0.0.1:8000/kb/search`
-确认检索链路没受影响。
+确认检索链路没受影响（`<token>` 换成 `.env` 里 `RECALL_API_KEYS` 的第一个真值）。
+
+### 7.1 本机的最终状态（2026-09-30 项目工程师实测确认）
+
+| 层 | 状态 | 证据 |
+| :--- | :--- | :--- |
+| 绑定层 | ✅ 已修 | `Get-NetTCPConnection -LocalPort 6333,6334 -State Listen` ⇒ 两个都是 **`127.0.0.1`** |
+| 网络层 | ✅ 已到位 | `Get-NetFirewallRule -DisplayName 'qdrant'` ⇒ 两条都是 **`Block`** |
+| 外部可达性 | ✅ 已关闭 | `Test-NetConnection -ComputerName 192.168.0.3 -Port 6333 -InformationLevel Quiet` ⇒ **`False`**（此前是 `True`） |
+| 服务健康 | ✅ 正常 | `curl.exe -s http://127.0.0.1:6333/healthz` ⇒ `healthz check passed`；`/kb/search` 200 |
 
 **可选的第三层**（需改代码，未实施）：给 Qdrant 配 `service.api_key`，并在 `recall.store.QdrantStore`
 里带 `api_key` 建客户端。收益是"即使误绑 0.0.0.0 也要有钥匙"，代价是配置与代码各改一处 + 用例。
