@@ -521,9 +521,44 @@ created: 2026-09-04
     **重开 DSH 会话**后问答应正常（这是唯一不可替代的端到端判据）；
     ④ `python tools\verify_r45.py --api-key <你的token>` 应 15/15 全绿；
     ⑤ 查看 `data/logs/audit.jsonl` 应有一行行 JSON 记录，且**不含 token**。
-- [ ] **R-41** 新 Connector：飞书 / 语雀 / 网页（按 Connector 协议新增，不改管道其余部分）。
-    📌 待开工前核实：飞书/语雀开放接口的鉴权与配额；`Connector` 协议的 `list()` 是**全量枚举（含 text）**，
-    对远端源意味着每轮全量拉取才算得出 `hash_of`——增量能力可能需要在协议上开口子（与"不改管道其余部分"的承诺冲突，需立项时定）。
+- [ ] **R-41** 新 Connector：**平台已定 = 飞书**（项目工程师 2026-09-30 批准，属任务范围变更）。
+    按 Connector 协议新增，不改管道其余部分 —— **但有一处必改**：见 R-41c 的账本隔离缺陷。
+    📌 预研已核实（2026-09-30，Context7：`/websites/open_feishu_cn_document` + `/larksuite/oapi-sdk-python`）：
+    - **鉴权**：企业自建应用 `app_id`/`app_secret` → `tenant_access_token`；官方 Python SDK `lark-oapi`
+      （`lark.Client.builder().app_id(..).app_secret(..).build()`，SDK 自动管理 token 与续期）。
+    - **内容 API**：`GET /open-apis/wiki/v2/spaces/{space_id}/nodes`（知识库节点树，`page_size ≤ 50`，
+      节点带 `obj_token`/`obj_type`/`title`/`obj_edit_time`，`space_id=my_library` 可查个人库）；
+      `GET /open-apis/docx/v1/documents/{id}/raw_content`（纯文本，权限 `docx:document:readonly`）；
+      `GET /open-apis/docx/v1/documents/{id}/blocks`（结构化块，`page_size ≤ 500`，`document_revision_id=-1`）；
+      `GET /open-apis/drive/v1/folders/{folder_token}/files`（云空间文件夹）。
+      ⚠️ **频率限制：每应用 5 QPS**（超限 400 + code `99991400`）。
+    - **增量触发器**：`drive.file.*` 事件可 Webhook（需回调地址 + `verification token`/`encrypt key` 验签）
+      或 SDK 的**长连接**（无需公网回调）—— 我们 R-39 已具备公网域名，两条路都可行。
+    - **子步骤**（细化）：
+      - **R-41a 飞书侧准备（项目工程师做）**：建企业自建应用 → 开只读权限
+        （`wiki:wiki:readonly`、`docx:document:readonly`、`drive:drive:readonly`）→ 发布/管理员审批
+        → 取 `app_id`/`app_secret`；**并确定要接入的内容源**（知识库空间 / 云空间文件夹）。
+      - **R-41b 预研核实（动手前）**：① 导出任务能否直接产出 **Markdown**（若可以，块映射工作量大幅下降）；
+        ② `block_type` → Markdown 映射表（标题/列表/代码/引用/待办/表格）；③ 长连接 vs Webhook 选型；
+        ④ 分页与 5 QPS 下的拉取耗时估算。
+      - **R-41c 🔴 多来源账本隔离（必做前置）**：现状 `ingest.py::_reconcile_deleted` 遍历
+        **注册表全部文档**，凡未在本次 run 出现的即"源侧已删"⇒ **跑一次纯飞书 run 会删光 65 篇 Obsidian 笔记**。
+        改法：按 `source_type` 收窄对账范围（`DocumentRecord` 已含 `source_type`）+ `_build_connector`
+        支持多来源注册 + `--source` 开关；**用例必须断言"飞书 run 不删 Obsidian 文档"**。
+      - **R-41d Connector 实现**：`recall/connectors/feishu.py`（`source_type="feishu"`）—— token 缓存、
+        wiki 节点递归、docx 取文、**块 → Markdown**（关键：我们的 chunker 是 `md-heading-v1`，
+        只拿 `raw_content` 没有结构 ⇒ 检索质量会显著下降）、限速（复用 `recall/ratelimit.py`）、
+        错误隔离（`BaseConnector._record_error`）、图片/附件**跳过并计数**。
+      - **R-41e 配置与依赖**：`lark-oapi` 入 `pyproject.toml`；`.env` 增 `FEISHU_APP_ID`/`FEISHU_APP_SECRET`/
+        `FEISHU_SPACE_ID`；`Settings` 增字段且**未配置即禁用**（fail-closed）；密钥绝不入库/日志。
+      - **R-41f 幂等与验收**：`doc_id = "feishu-<obj_token>"`（标题改了 id 不变）；
+        `source_uri` 用飞书链接（可点击溯源）；重跑 **0 变化**；检索命中；引用可追溯到飞书文档；
+        gates 全绿 + 文档回写。
+      - **R-41g 增量触发（二期，可选）**：长连接或 Webhook → 触发一次增量 run，与 R-38 watcher 并列。
+    📌 **一个已识别的协议张力（原步骤注释提出，现给出结论）**：`Connector.list()` 是**全量枚举（含 text）**，
+    远端源意味着每轮都要把正文拉一遍才能算 `hash_of`。**一期不改协议**：飞书端按 5 QPS 全量拉
+    （个人库几十篇 ≈ 十几秒可接受），**向量化仍由 `content_hash` 幂等跳过**；**二期**若文档规模上千，
+    再考虑协议 v2（`list_meta()` 只给版本 + `fetch(doc_id)` 懒取，registry 增 `source_version` 列）。
 - [ ] **R-42** 检索调优 A/B：top_k / rerank / 切分参数用黄金集 + Recall@K 并排对比，数据驱动决策（tech.md §10 触发点）。
     ✅ 预研（2026-09-25，Context7 核实 + 本机核验）：① "同文档多样性约束"候选**有现成服务器能力**——
     qdrant-client 1.19.1 的 `AsyncQdrantClient.query_points_groups(group_by=..., limit=..., group_size=...)`
@@ -697,6 +732,7 @@ created: 2026-09-04
 | 2026-09-30 | R-39 | ✅ **R-39 收尾：长期通道交付 + 启动手册入库** | ① 项目工程师在自己终端跑 `cloudflared tunnel run recall`，**长期实例接管**（连接器 `05c68541`）；我起的**验证实例（PID 12224 / 连接器 `9906fd3c`）已按要求停止**，停后公网 `/health` 复测仍 **200** ⇒ **切换无中断**；② 项目工程师明确**不做开机自启**（保持手工启动四个窗口）；③ 新增 **`spec/runbook.md`**：四个窗口（Qdrant / API / watcher / cloudflared）的启动命令 + **依赖顺序** + 验收三连 + 关闭顺序 + **故障排查表** + 密钥清单与轮换 + 环境事实速查；`tech.md` §11 目录树补该文件、§12 顶部加指向 | 手册把**踩过的坑**固化成硬提醒：Qdrant 必须在 `tools\qdrant` 目录启动（否则开出空库）、watcher 必须**晚于** API（否则启动补同步放弃、需 `--once` 补）、`/mcp/` **尾斜杠**不能省、cloudflared 的 `--config` 要写在**子命令之前**、公网 403 是**预期**而非故障、改 `.env` 必须**重启进程**才生效。⇒ R-39 的**功能与部署全部完成**，只剩手册 §5 第 7 条（Coze 真实问答、引用可核对）由项目工程师确认 |
 | 2026-09-30 | R-39 | 🔴 **收尾复查发现 Qdrant 安全敞口（仓库侧已加固，剩两步需管理员）** | 复查"还有哪些要完善"时实测：① Qdrant 监听 **`0.0.0.0:6333`**（默认 `service.host`）且 **自身未配 API key**；② Windows 防火墙有两条**用户级入站放行**规则（`qdrant` / TCP+UDP / 配置 **Public**）；③ 本机 WLAN 网络配置**恰为 Public** ⇒ `Test-NetConnection 192.168.0.3 -Port 6333` = **True** ⇒ **同网段任意设备都能完整读写/删除向量库**。**仓库侧加固**：`tools/start-qdrant.ps1` 增 `$env:QDRANT__SERVICE__HOST='127.0.0.1'`（子进程继承）；`spec/runbook.md` 新增 **§7 安全加固**（含管理员删规则命令、复核方法、可选第三层），窗口 ① 手动命令补 `set QDRANT__SERVICE__HOST=127.0.0.1`；§六 快照按实况刷新（R-39 已上线、R-42 已生效、待办收敛为 3 项） | 属**新发现的安全问题**（非功能缺陷），按 §二 登记。📌 顺手核对其余暴露面：`8000` 只绑回环 ✓、`cloudflared` 两条防火墙规则是 **Block**（正确）✓。⚠️ **需项目工程师**：① 管理员删那两条规则（真正兜底）；② 重启 Qdrant 使其只绑回环。⚠️ 另一个**踩坑复现**：`edit` 工具会**剥掉 `.ps1` 的 BOM** ⇒ 改完必须补回（本次已补并复验 `ParseFile` 0 错误）|
 | 2026-09-30 | R-39 | 🎉 **R-39 验收通过（项目工程师执行）—— Phase 6 至此全部完成** | 项目工程师在 Coze 侧用**正式域名** `https://recall.iamzyx.xyz/mcp/` 提问笔记内容，**引用可核对**（手册 §5 第 7 条）⇒ R-39 **七条判据全部满足**，状态转"已通过"。关联事实：临时隧道窗口已关闭（实测无 `--url` 进程）⇒ 公网入口**只剩 named tunnel 一条**；长期隧道由项目工程师终端持有（连接器 `05c68541`）| 📌 一并登记**本轮复查的本机暴露面实测**（`Test-NetConnection` 从局域网 IP 测）：`6333`/`6334`（Qdrant HTTP/gRPC，🔴 见上条）、`445`(SMB)、`135`(RPC)、`902`/`912`(VMware authd)、`27036`(Steam 远程同乐)、`5040`/`13688` 均**可达**；而只绑回环的 `8000`(我们的 API)、`3080`(DSH Web)、`11434`(ollama)、`20243`(cloudflared metrics) **不可达** ✓ ⇒ **本项目只有 Qdrant 一处需要处理**；其余为 Windows/第三方软件的常规监听，是否真能从**别的设备**连上还取决于各自的防火墙规则（未逐个核实，需要时再查）|
+| 2026-09-30 | **R-41** | ✅ **平台拍板：飞书** + 预研核实 + 发现一个数据事故级前置缺陷 | 项目工程师批准 **R-41 = 飞书 Connector**（属任务范围变更）。Context7 核实（`/websites/open_feishu_cn_document`、`/larksuite/oapi-sdk-python`）：鉴权 `tenant_access_token` + 官方 Python SDK `lark-oapi`；内容源候选 `wiki/v2/spaces/{id}/nodes`（节点带 `obj_token`/`obj_edit_time`）、`docx/v1/documents/{id}/raw_content` 与 `/blocks`、`drive/v1/folders/{token}/files`；**每应用 5 QPS**（超限 `99991400`）；增量可走 `drive.file.*` Webhook 或 SDK 长连接。细化子步骤 R-41a~R-41g 已写入 §四 | 🔴 **预研中查出 R-41c（必做前置）**：`ingest.py::_reconcile_deleted` 遍历**注册表全部文档**、把未在本次 run 出现的记录当"源侧已删"删除 ⇒ **纯飞书 run 会删光 65 篇 Obsidian 笔记**（数据事故级）。已登记为 R-41c，并要求用例断言"飞书 run 不删 Obsidian 文档"。📌 另**回答了原步骤注释提出的协议张力**：一期**不改协议**（飞书按 5 QPS 全量拉文、向量化仍由 `content_hash` 跳过），二期再议 `list_meta()`+`fetch()` 懒取 |
 | 2026-09-30 | R-39 | ✅ **Qdrant 安全加固收口（项目工程师实测）+ 残留集合清理 + 重复启动 panic 定位** | ① **加固两层齐备并实测**：`Get-NetTCPConnection -LocalPort 6333,6334 -State Listen` ⇒ 两个都 **`127.0.0.1`**；`Get-NetFirewallRule -DisplayName 'qdrant'` ⇒ 两条都 **`Block`**（**显式拒绝**，比"删除规则"更硬 ⇒ 原先给的"删规则"这一步**无需再做**，已更正 runbook §7）；`Test-NetConnection 192.168.0.3:6333` ⇒ **`False`**（此前 `True`）；`healthz` / 本机 `/kb/search` / 公网 `/health` 全部正常。② **清理**：`recall-test-52a1d6563e14`+`recall-test-d852b3e8a673`（各 753MB，pytest 残留）经 API 删除、磁盘目录亦随之释放 ⇒ **14.15 → 15.62GB**。③ **诊断重复启动 panic**：项目工程师贴出的 `Panic … Wal error: Can't init WAL: Kind(WouldBlock)`（22:24:44）经时间线比对（健康实例 PID 10304 起于 22:20:37 且仍在跑）判定为**第二个实例**抢不到 storage 锁而退出，**非数据损坏**；`Config file not found` / `Filesystem type check is not supported` 属正常噪音 | 📌 **据此给 runbook 补了三条硬提醒**：① `start-qdrant.ps1` 是**分离+隐藏**启动 ⇒ 命令行立刻返回、**没有日志窗口**（那不是启动失败；想看得用 `-Visible` 或手动 `qdrant.exe`）；② **同一 storage 只能有一个 Qdrant 进程**，重复启动必 panic，先 `Get-Process qdrant` 确认；③ 手册里的 `<本机token>` 是**占位符**，真值在 `.env` 的 `RECALL_API_KEYS`（否则 curl 拿到 401、看着像"没输出"）。⚠️ **登记一个工具缺口**：`clean_qdrant_orphans.py` 只删"Qdrant 不认得"的目录，而 `recall-test-*` 集合 Qdrant **仍然认得** ⇒ 本次 1.5GB 是**手工**清的；已在 §六 列为可选改进项（加"先经 API 删测试集合"的模式）|
 
 ---
@@ -730,7 +766,14 @@ created: 2026-09-04
 - **未通过项**：R-02（官方源网络超时，已走 R-02b）、R-03（Docker 未运行，已走 R-03b）
 - **待请示事项**（以下为**非阻塞**的后续选择）：
   - **需你拍板（2026-09-30 收敛后只剩 1 项 + 3 个可选）**：
-    1. **R-41 新 Connector**：做哪个平台（飞书 / 语雀 / 网页）？按 §二属**任务范围变更**，须你批准后开工。
+    1. **R-41 新 Connector —— ✅ 平台已定：飞书（2026-09-30 项目工程师批准）**。细化步骤已写入 §四
+       （**R-41a 飞书侧准备 → R-41b 预研核实 → R-41c 多来源账本隔离 → R-41d Connector 实现 →
+       R-41e 配置与依赖 → R-41f 幂等与验收 → R-41g 增量触发（二期）**）。
+       🔴 **现已查明一个必须先修的前置缺陷（R-41c）**：`ingest.py::_reconcile_deleted` 对账范围是
+       **注册表全部文档**，跑一次纯飞书 run 会把 65 篇 Obsidian 笔记**全部当成"源侧已删"删掉**。
+       ⇒ **待你两项**：① 在飞书建**企业自建应用**并开只读权限、把 `app_id`/`app_secret` 给我；
+       ② 告诉我要接入**哪个内容源**（知识库空间 wiki / 云空间文件夹 drive）—— 若选 wiki，
+       把那个知识库的链接或 `space_id` 给我即可。
     - ✅ ~~R-39 最后一条验收~~ → **已完成（2026-09-30）**：Coze 用正式域名提问、引用可核对 ⇒ R-39 **已通过**。
     - ✅ ~~Qdrant 安全加固~~ → **已完成（2026-09-30）**：绑定层 `127.0.0.1` + 网络层防火墙 `Block`，
       实测同网段已**不可达**；详见 `spec/runbook.md` **§7.1**。
@@ -778,12 +821,14 @@ created: 2026-09-04
   本机 D 盘从 7.76GB 清到 14.84GB）；④ 保持 D 盘余量充裕
 - **验收实测**（2026-09-24，项目工程师执行）：摄取 65 篇 0 失败；`/health` ok（972 点 / 65 篇）；检索 **Recall@1=0.767 / @3=0.933 / @5=0.933 / @10=1.000 / MRR=0.860**（与基线逐位一致）；Ragas **引用一致性 1.000 / faithfulness 0.858 / answer_relevancy 0.758**；DSH 问答带 `[n]` 引用通过
 - **验收实测**（2026-09-25，项目工程师执行）：**R-45 15/15 全绿**（`python tools\verify_r45.py`）
-- **本文件版本**：v0.30.1（2026-09-30 ✅ **Qdrant 安全加固收口 + 残留清理 + panic 定位**：绑定层
-  `127.0.0.1`、网络层防火墙 `Block`、同网段实测不可达；清掉两个 753MB 的 pytest 残留集合
-  （14.15 → 15.62GB）；把"重复启动 panic = 第二个实例抢不到 storage 锁"与"脚本是分离隐藏启动、
-  没有日志窗口"写进 `spec/runbook.md`。**Phase 0~6 全部完成且所有安全项已关闭**。
-  **待你**：① R-41 选平台（唯一待拍板项）；② 可选：R-40 最小验收、重跑 `promptfoo`、
-  `clean_qdrant_orphans.py` 加"删测试集合"模式、Qdrant 索引失败降级为告警；③ 实现细节背书（老账）**）
+- **本文件版本**：v0.31.0（2026-09-30 **R-41 平台拍板 = 飞书**（项目工程师批准，属任务范围变更），
+  细化子步骤 **R-41a~R-41g** 已写入 §四；Context7 已核实飞书开放平台与官方 Python SDK `lark-oapi`
+  的鉴权/内容 API/5 QPS 限流/增量触发方式。🔴 **预研中查出一个数据事故级前置缺陷（R-41c）**：
+  `ingest.py::_reconcile_deleted` 按**注册表全部文档**对账 ⇒ 跑一次纯飞书 run 会删光 65 篇 Obsidian 笔记，
+  必须先修（按 `source_type` 收窄对账范围）。**Phase 0~6 仍为全部完成，所有安全项已关闭**。
+  **待你**：① 飞书侧建企业自建应用 + 开只读权限 + 告知内容源（wiki 空间 / 云空间文件夹），我即可开工；
+  ② 可选：R-40 最小验收、重跑 `promptfoo`、`clean_qdrant_orphans.py` 加"删测试集合"模式、
+  Qdrant 索引失败降级为告警；③ 实现细节背书（老账）**）
 
 ---
 
