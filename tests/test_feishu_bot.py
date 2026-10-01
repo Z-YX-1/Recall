@@ -15,7 +15,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import threading
+from collections.abc import Callable
 
 import httpx
 import pytest
@@ -32,6 +34,7 @@ from recall.feishu_bot import (
     HttpReplySender,
     IncomingMessage,
     TenantTokenCache,
+    attach_connection_hooks,
     build_card,
     extract_message,
     main,
@@ -495,6 +498,34 @@ def test_sdk_surface_matches_our_wiring() -> None:
     assert "event_handler" in params
     assert "log_level" in params
     assert "auto_reconnect" in params
+
+
+def test_connection_hooks_are_attached_and_are_visible_in_the_log(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """掉线必须**看得见**。
+
+    2026-10-02 实测事故：本机出网瞬时不可达（`getaddrinfo failed`）让长连接断了 **1 分 48 秒**，
+    而**这期间飞书事件不落地 —— 用户消息直接丢**；当时项目工程师正发消息，表现就是"机器人不回复"。
+    SDK 自己会重连，但它的 `[Lark]` 日志不是我们的结构化事件、不好 grep ⇒ 接上钩子。
+    """
+
+    class FakeClient:
+        def __init__(self) -> None:
+            self.on_reconnecting: Callable[[], None] | None = None
+            self.on_reconnected: Callable[[], None] | None = None
+
+    client = attach_connection_hooks(FakeClient())
+    assert client.on_reconnecting is not None
+    assert client.on_reconnected is not None
+
+    # ⚠️ 必须用 INFO：恢复那条是 INFO 级，用 WARNING 会把它过滤掉（实测踩过）
+    with caplog.at_level(logging.INFO, logger="recall.feishu_bot"):
+        client.on_reconnecting()
+        client.on_reconnected()
+
+    assert "feishu_bot.reconnecting" in caplog.text
+    assert "feishu_bot.reconnected" in caplog.text
 
 
 def test_main_fails_closed_without_feishu_credentials(monkeypatch: pytest.MonkeyPatch) -> None:

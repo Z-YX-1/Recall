@@ -523,12 +523,52 @@ def build_ws_client(settings: Settings, bot: FeishuBot) -> Any:
         .register_p2_im_message_receive_v1(_on_message)
         .build()
     )
-    return lark.ws.Client(
+    client = lark.ws.Client(
         settings.feishu_app_id or "",
         settings.feishu_app_secret or "",
         event_handler=handler,
         log_level=lark.LogLevel.INFO,
     )
+    return attach_connection_hooks(client)
+
+
+def attach_connection_hooks(client: Any) -> Any:
+    """把 SDK 的重连生命周期钩子接进**我们自己的结构化日志**。
+
+    **为什么必须接**（2026-10-02 实测事故）：本机出网会**瞬时不可达**。实测一次
+    ``Failed to resolve 'open.feishu.cn' ([Errno 11001] getaddrinfo failed)`` 让长连接断了
+    **1 分 48 秒**（00:55:05 → 00:56:53），而**这期间飞书的事件不会落地 —— 用户发的消息直接丢**。
+    项目工程师当时正发消息，表现就是"机器人不回复"。
+
+    SDK 自己会重连（``ReconnectCount=-1`` 无限重连），但它的日志只有 ``[Lark]`` 前缀那些行；
+    没有我们自己的事件 ⇒ **"掉线了"这件事在 `feishu_bot.log` 里不显眼、也没法 grep**。
+    接上这两个钩子后，掉线 = ``feishu_bot.reconnecting``（WARNING）、
+    恢复 = ``feishu_bot.reconnected``（INFO）。
+
+    钩子是 SDK 的**实例属性**（不是构造参数），故在构造之后赋值。
+
+    Args:
+        client: 已构造的 ``lark.ws.Client``（或测试用的假件）。
+
+    Returns:
+        同一个 client（便于链式返回）。
+    """
+    client.on_reconnecting = _log_reconnecting
+    client.on_reconnected = _log_reconnected
+    return client
+
+
+def _log_reconnecting() -> None:
+    """长连接断开、正在重连。"""
+    logger.warning(
+        "feishu_bot.reconnecting",
+        extra={"hint": "长连接已断，正在重连；**此期间飞书事件不会推达，用户消息会丢**"},
+    )
+
+
+def _log_reconnected() -> None:
+    """长连接已重新建立。"""
+    logger.info("feishu_bot.reconnected")
 
 
 def main(argv: Sequence[str] | None = None) -> int:
