@@ -617,11 +617,18 @@ created: 2026-09-04
       **可用范围必须包含本人**（否则私聊搜不到机器人）；创建版本并发布。
       ⛔ **原 R-41 那套 `wiki:*` / `docx:document:readonly` / `drive:*` 权限已不需要开。**
     - **子步骤**：
-      - **R-49a 依赖接入**：`pyproject.toml` 增 `lark-oapi`；`websockets` 固定 `15.0.1`；
-        **刷新 editable 元数据**（`pip install -e ".[dev,eval]"` —— 现存 `pip check` 报
-        `recall` 元数据仍写 `openai<2` 而实装 3.3.0，属 09-22 装完后改过 pyproject 未重装）；
-        **重生成 `requirements.lock`**（并清理两处既存瑕疵：`httpx2` 与 `httpx` 并存、
-        `packaging @ file:///home/conda/...` 的 Linux 直链）。
+      - **R-49a 依赖接入**（✅ 2026-10-01 完成）：`pyproject.toml` 增 `lark-oapi>=1.7,<2`
+        + 显式 `websockets>=15.0.1,<16`（把传递约束写成显式声明，保确定性）；
+        **刷新 editable 元数据**（`pip install -e ".[dev,eval]"`，修掉 `pip check` 报的
+        "元数据仍写 `openai<2` 而实装 3.3.0" —— 属 09-22 装完后改过 pyproject 未重装）；
+        **重生成 `requirements.lock`**（192 → 194 行，只动 3 项：`+lark-oapi==1.7.3`、
+        `+pycryptodome==3.23.0`、`websockets 16.1.1 → 15.0.1`）。
+        📌 **更正（同日取证）**：先前登记为"两处既存瑕疵"的 `httpx2` 与
+        `packaging @ file:///home/conda/...` **都不是瑕疵**：① `httpx2` 是 **`openai 3.x`
+        与 `langsmith` 的正式依赖**（`openai: httpx2<3,>=2.7.0`），与 `httpx 0.28.1` 是
+        **两个不同发行包**、合法并存；② `packaging` 是 **conda 装的**
+        （`packaging-26.3-pyhc364b38_0`），`pip freeze` 对 conda 包本就按 `@ file:///...` 记录。
+        ⇒ **lock 一处都不用清理。**
       - **R-49b `recall/lark_md.py`**：标准文本 → `lark_md` **安全转义**适配层（含超长截断），
         配确定性用例。
       - **R-49c `recall/feishu_bot.py`**：长连接 `lark.ws.Client` + 事件 handler（先 ACK 后异步）
@@ -820,7 +827,10 @@ created: 2026-09-04
   仍剩 R-40 真实验收（你说"下次再说"）
 - **当前步骤**：**R-49 开工（2026-10-01）** —— 飞书**交互入口**（原 R-41 改向）。
   已完成二轮技术核查（长连接选型、依赖求解、WSS 握手本机实测、`lark_md` 转义隐患、卡片回复形态），
-  结论写入 §四 R-49。**正在做 R-49a（依赖接入）**。
+  结论写入 §四 R-49。**R-49a（依赖接入）已实施**：`lark-oapi 1.7.3` + `pycryptodome` 装好、
+  `websockets` 锁到 **15.0.1**、`pip check` **由红转绿**、`requirements.lock` 重生成（194 行）。
+  ⚠️ **全量 pytest 待补跑** —— 必须先停 `recall.api`（PID 4796），否则 GPU 争用会让测试进程
+  **硬崩溃**（`0xC0000005` 访问违例，非干净的 OOM，见 §七 2026-10-01 第三条）。**接着做 R-49b**。
   ⛔ **旧卡点作废**：原"待开飞书 `wiki:*`/`docx:*`/`drive:*` 只读权限 + 把应用加进知识库成员"的前提
   （"飞书里放着我的笔记"）**不成立** ⇒ 那些权限**不再需要开**；飞书侧只剩 5 项
   （`im:message` + `im:message:send_as_bot` + 机器人能力 + 事件订阅长连接 + 可用范围 + 发布版本）。
@@ -1050,3 +1060,6 @@ created: 2026-09-04
 | 2026-09-26 | — | ⚠️ **更正：Qdrant 1.19.1 只是"大幅降低频率"，并未消除该故障** | 2026-09-25 那条"✅ 已解决：升级 1.19.1 ⇒ 故障消失，根因确认"**下得太满**，现更正：今天（09-26）三次全量跑里 **2 次各出现 1 项**同签名失败 —— `test_store.py::test_ensure_collection_rejects_mixed_embedding_version`（`index:visibility`）与 `test_ingest.py::test_broken_document_keeps_previously_indexed_chunks`（`index:updated_at_ts`），报文仍是 `500 + Not recovered from previous error: IO Error: 拒绝访问 (os error 5)`。**单跑该用例即通过**；再用独立探针复现（新建 collection + 依次建 `doc_id`/`groups`/`updated_at_ts`/`visibility` 四个索引）**全部成功** ⇒ 判定为**瞬时、可自愈**，且**当前运行态健康** | 频次对比：1.19.0 时代是"每跑必炸 3~4 项"，1.19.1 之后是"偶发 1 项" ⇒ 升级**仍然值得**，但**根因未完全确认**。已排除：磁盘余量、杀毒（实时防护 **Disabled**、无篡改保护）、文件系统（NTFS）、多实例（只有 1 个 `qdrant.exe`）。📌 剩下两个未验证方向：① Qdrant 仍存在的 segment/CoW 竞态（该 500 会让**整个运行期**进入"不回退"状态，重试无用）；② **在 Qdrant 运行时用 `tools/clean_qdrant_orphans.py` 删目录**（今天做过）可能留下失效句柄。**候选缓解（未实施，需批准）**：把"建 payload 索引失败"从**致命**降为**告警并继续**（索引是性能优化、不是正确性前提），另加运行期自愈提示 |
 | 2026-10-01 | **R-41→R-49** | 🚨 **改向登记：飞书由「内容源」改为「交互入口」** | 项目工程师指出真实需求是「**通过飞书使用我的 RAG**」，而原 R-41 假设「飞书里放着我的笔记」——**该前提不成立**（飞书里一篇笔记都没有）。处置：① §四 R-41 加**改向横幅**（原定义**存历史、不删**）；② 飞书方向正式定义为 **R-49**（长连接机器人 + 消息卡片，子步骤 a~e 已写入 §四）；③ `R-41d(2/2)` / `R-41e` / `R-41f` / `R-41g` **不再实施**；④ `recall/connectors/feishu_blocks.py` + `tests/test_feishu_blocks.py`（13 项）**归档停用**（文件与用例保留，登记为「前提不成立而停用」）；⑤ **R-41c 保留**（多来源账本隔离是通用正确性修复，与飞书角色无关）；⑥ `.env` 的 `FEISHU_APP_ID`/`FEISHU_APP_SECRET` **继续使用**（机器人要用），`FEISHU_SPACE_ID` 作废。`tech.md` §2/§11 同步 | ⚠️ **这是一次任务范围反向变更**（原定「新增内容源」变成「新增客户端」）：方向搞反导致 `feishu_blocks.py` 整块工作失去用途。教训——**批准「平台」之前必须先确认该平台的「角色」（源 or 入口）**；我在 R-41b 只确认了「平台 = 飞书」就往下推了 |
 | 2026-10-01 | R-49 | **技术细节二轮核查（Context7 + 本机实测）—— 6 项会改变实现的事实** | ① **长连接 vs Webhook 定型为长连接**：官方称其「降低接入成本、免公网、内置鉴权、事件明文」⇒ **不走 R-39 隧道**；② ✅ **本机实测**：`POST /callback/ws/endpoint` → `code=0`，`wss://msg-frontier.feishu.cn/ws/v2` **握手成功**（随后主动关闭、无残留），默认 opener 与强制直连**两条都通** ⇒ **传输层无结构性阻塞**；③ ⚠️ **文档与实测不符**：SDK 文档称从 `data.endpoint.URL` 取地址，实测是 **`data.URL`（扁平）**（照文档写会拿到**空 URL**）；④ `ClientConfig` 为**服务端下发**：`PingInterval=90` / `ReconnectInterval=90` / `ReconnectNonce=25` / **`ReconnectCount=-1`（无限重连）** ⇒ 超时按 90s 量级设计，且**重放幂等是硬要求**；⑤ **依赖求解**：`websockets` 被 lark-oapi 约束 `<16,>=11`，逐查 6 个依赖方（lark-oapi `<16` / **fastmcp `>=15.0.1`** / mcp `>=15.0.1` / langgraph-sdk `<17,>=14` / langsmith `>=15.0` / uvicorn[standard] `>=13.0`）⇒ **`15.0.1` 是唯一解**；全仓库零 websocket 代码 ⇒ 降级对自有代码**无行为影响**；⑥ 🚨 **`lark_md` 是 markdown 子集且需 HTML 转义**（`*` / `[` / `<` / `#` ⇒ 实体），且列表与代码块**仅飞书 7.6+ 生效** ⇒ 答案正文**不可裸灌**，须有转义适配层 | ⚠️ **纠正我上一轮的两处表述**：① 我曾把 `websockets` 归属为「uvicorn[standard] 传递引入」，实测 `Required-by: **fastmcp**, langgraph-sdk, langsmith`（**fastmcp 正是我们的 MCP 服务端**）；② 我曾以「风险极低」的**定性猜测**作结，实际应给出的是**约束求解**（15.0.1 是唯一解）。另新发现两个**独立于本步骤**的环境问题并登记待办：`pip check` 因 **editable 元数据陈旧**（元数据写 `openai<2`、实装 3.3.0，09-22 装完后改过 pyproject 未重装）而失败；`requirements.lock` 是**全环境冻结**（192 包含 dev+eval extras）且带两处瑕疵（`httpx2` 与 `httpx` 并存、`packaging @ file:///home/conda/...` 的 Linux 直链）⇒ 由 R-49a 一并处置 |
+| 2026-10-01 | R-49a | ⚠️ **更正：我登记的「两处 lock 瑕疵」两处都不是瑕疵** | R-49a 完成后取证：① `httpx2` **不是历史遗留**，而是 **`openai 3.x` 与 `langsmith` 的正式依赖**（`openai: httpx2<3,>=2.7.0`、`langsmith: httpx2<3,>=2`），与 `httpx 0.28.1` 是**两个不同发行包**、合法并存；② `packaging` 是 **conda 装的**（`conda-meta/packaging-26.3-pyhc364b38_0.json`），`pip freeze` 对 conda 管理的包本就按 `@ file:///home/conda/...` 记录 ⇒ 两行都是**正确表示**，**lock 一处都不用清理**。据此把 §四 R-49a 的"清理两处瑕疵"更正为"不动"，并把该子步骤标为 ✅ 完成 | ⚠️ **教训**：我在**没有反查依赖方**的情况下，把"没见过的包名 / 没见过的路径"直接判成"瑕疵"。正确顺序是**先查 `Required-by` 与 `conda-meta` 归属，再下结论** —— 这与本轮 `websockets` 归属判断出错属**同一类错误**（凭印象归因）。另记两个环境事实：conda 只提供 Python 运行时与 pip / setuptools / wheel / **packaging**，其余 190+ 包全是 pip 装的 |
+| 2026-10-01 | R-49a | ✅ **依赖接入完成** | ① `pyproject.toml` 增 `lark-oapi>=1.7,<2` + 显式 `websockets>=15.0.1,<16`（附注释写明"15.0.1 是六方约束唯一解"，把传递约束升为显式声明以保确定性）；② `pip install -e ".[dev,eval]"` 实测**只装 4 项**（`lark-oapi-1.7.3` / `pycryptodome-3.23.0` / `recall-0.1.0`（元数据刷新）/ `websockets-15.0.1`），无其它连带变更；③ **`pip check` 由红转绿**（`No broken requirements found`）—— 陈旧的 `openai<2` 元数据已随重装刷新；④ `requirements.lock` 重生成：**192 → 194 行，diff 只有 3 项**（`+lark-oapi==1.7.3`、`+pycryptodome==3.23.0`、`websockets 16.1.1→15.0.1`），**编码与行尾逐字节保持**（无 BOM + CRLF，用 `[System.IO.File]::WriteAllLines` + `UTF8Encoding($false)` 复现，**未用 `>` / `Out-File`** —— 本机 shell 是 **PowerShell 5.1**，二者都会写 BOM）；⑤ 导入验证通过：`websockets 15.0.1` 从**新路径**加载、`fastmcp 2.14.7` 正常、`lark_oapi` 正常、`websockets.speedups` 正常 | ⚠️ **安装期踩到一个真实残留**：卸载 websockets 16.1.1 时 pip 报 `Failed to remove contents in a temporary directory '...\site-packages\~ebsockets'`，残留一个旧的 `speedups.cp311-win_amd64.pyd`（11KB，属性 `Archive` 非只读但**被拒删**）。**已确认为无害**：`~ebsockets` 不是合法包名、永不被 import，实测导入全部指向新路径；两个 python 进程（API 4796 / watcher 17232）均未持有该文件（疑为 Defender 或索引器短暂持有）⇒ 登记为**待其占用者释放后清理的垃圾**，不影响功能。另核实：降级前已确认 **API 未加载 websockets**（`Get-Process -Module` 命中 0）才动手，避免"装到一半半残" |
+| 2026-10-01 | R-49a | ⏸ **闸门状态：全量 pytest 被 GPU 争用阻塞（提交时诚实登记，不假装全绿）** | 本步骤**未改任何 Python 源码**，改动仅 `pyproject.toml` / `requirements.lock` / 已安装包集合。已完成的验证：**ruff 全绿**、**mypy strict 26 文件零错误**、**`pip check` 由红转绿**、导入验证（`websockets 15.0.1` 从新路径加载 / `fastmcp 2.14.7` / `lark_oapi` / `websockets.speedups` 均正常）、**纯单测子集 172 passed**（12 个文件：models / chunker / registry / assemble / connectors / config / ratelimit / eval_scores / answer_template / trigger_policy / feishu_blocks / watchdog）。**全量 pytest 待补跑**：GPU 仅剩 ~296 MiB 空闲（API 常驻模型 + 桌面程序），试跑 `test_gateway_trust + test_mcp + test_mcp_policy` 时**前 16 项通过后进程硬崩溃** | 🔴 **新发现（比预期严重）**：显存不足时**不是干净的 CUDA OOM**，而是 **`0xC0000005` 访问违例**，崩溃点在 `transformers/core_model_loading.py::_materialize_copy` ⇒ **跑 GPU 用例前必须先停 `recall.api`**，否则只会拿到"进程直接死掉"这种无信息量的失败。**伴生**：崩溃使 `conftest` 的 `finally` 未执行，留下孤儿 collection `recall-test-1698b3d45196`，已用 Qdrant API 删除（**未**动磁盘目录，避开本表 2026-09-26 记的"运行时删目录可能留失效句柄"风险）⇒ **全量跑崩后必须查一次孤儿**。📌 待项目工程师停 `recall.api`（PID 4796）后补跑全量并登记结果 |

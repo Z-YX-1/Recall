@@ -18,6 +18,15 @@ dependencies = [
     "python-dotenv>=1.0.0,<2",
     "numpy>=1.26.0,<3",
     "watchdog>=6.0.0,<7",
+    # R-49c：飞书长连接机器人。**必须用 SDK**——长连接（端点发现 + 帧重组 + ping/pong +
+    # 指数退避重连 + 内置鉴权）是 ``lark-oapi`` 内提供的能力，手写 WS 协议不现实。
+    # 详见 spec/tech.md §18 决策 19。
+    "lark-oapi>=1.7,<2",
+    # R-49a：显式钉住 websockets 的上下界。``lark-oapi`` 要 ``<16``，而 **fastmcp 要 ``>=15.0.1``**
+    # （另有 mcp / langgraph-sdk / langsmith / uvicorn 四方约束）⇒ **15.0.1 是唯一解**。
+    # 我们自身不直接 import websockets，这条是"把传递约束写成显式声明"以保证确定性
+    # （code_standards §0.2）；缺了它，将来一次 ``pip install`` 就可能把上界顶开。
+    "websockets>=15.0.1,<16",
 ]
 
 [project.optional-dependencies]
