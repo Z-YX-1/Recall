@@ -404,7 +404,7 @@ project/Recall/
 ├─ spec/runbook.md             # **启动与运维手册**：四个窗口的启动命令/顺序/验收/排查（R-39 收尾产物）
 ├─ ingest.py                   # 摄取 CLI：--update / --rebuild --collection --model
 ├─ recall/                     # 包名 recall
-│  ├─ connectors/              # base.py(Connector) + obsidian.py（预留 feishu/web）
+│  ├─ connectors/              # base.py(Connector) + obsidian.py + feishu_blocks.py(块→Markdown，R-41d)
 │  ├─ chunker.py               # 两级级联切分（标题主切 + 递归兜底）
 │  ├─ embedder.py              # BGEM3FlagModel: dense+sparse（GPU, fp16, batch 16~32, 版本从 spec 注入）
 │  ├─ registry.py              # SQLite 文档注册表
