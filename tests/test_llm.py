@@ -237,6 +237,8 @@ def test_from_settings_reads_deepseek_config() -> None:
         deepseek_api_key="secret",
         deepseek_base_url="https://api.deepseek.com",
         deepseek_model="deepseek-chat",
+        feishu_app_id=None,
+        feishu_app_secret=None,
         host="127.0.0.1",
         port=8000,
         collection=None,

@@ -639,9 +639,21 @@ created: 2026-09-04
         （不吞掉后文）。用例 **50 项** + **5 项 doctest**：含 **@所有人被中和**
         （`<at id=all></at>` 是安全项）、引用中括号不再构成链接、截断不切坏实体、
         **引用一条不丢**、确定性。
-      - **R-49c `recall/feishu_bot.py`**：长连接 `lark.ws.Client` + 事件 handler（先 ACK 后异步）
-        + `event_id` **幂等去重** + 出站限流（复用 `recall/ratelimit.py::SlidingWindowLimiter`）
-        + 调 `/kb/answer`（**回环带 `X-API-Key`**）+ 卡片渲染 + reply；API 不可用时优雅降级。
+      - **R-49c `recall/feishu_bot.py` + `Settings.feishu_*`**（✅ 2026-10-01 完成）：
+        `extract_message`（兼容 SDK 的 `header`+`event` 与扁平两种包法；`message.content`
+        是 **JSON 字符串**也认；**剥掉群聊 @ 占位符** `@_user_N`）、`EventDeduper`（按
+        `event_id` 的**有界**去重）、`TenantTokenCache`（`threading.Lock`；HTTP 取 token
+        刻意放在锁**外**，避免"持锁跨 await"）、`HttpAnswerSource`（调本机 `/kb/answer`，
+        回环带 `X-API-Key`）、`HttpReplySender`（**必查 `code != 0`** —— 飞书是
+        "HTTP 200 + 业务码"，不查就会**静默不回复**）、`FeishuBot`（`handle_event` 只做
+        "解析→去重→投递线程池"即返回 = **ACK**；`process` 才 `await`）、`build_ws_client`
+        （**延迟导入 SDK**）、`main`（凭证未配齐 **fail-closed**，退出码 2）。
+        `Settings` 增 `feishu_app_id` / `feishu_app_secret` 与 `feishu_enabled` 属性。
+        用例 **32 项**，**全部免 GPU / Qdrant / 真飞书**（HTTP 走 `httpx.MockTransport`，
+        回答来源与回复发送器都注入假件）⇒ 本项目在"跑 GPU 用例必先停 API"的约束下，
+        它是第二个能全程验证的步骤。
+        🎯 **核心契约用例刻意不靠计时**：用一个"卡住回答"的假件，证明 `handle_event`
+        在回答完成**之前**就已返回（先 ACK、后异步）；若实现改成同步等待，该用例立刻失败。
       - **R-49d 配置与编排**：`Settings.feishu_app_id` / `feishu_app_secret`（**未配置即
         fail-closed 禁用**，仿 `RECALL_MCP_*` 既有做法）；`.env` 删除 `FEISHU_SPACE_ID` 注释行；
         `spec/runbook.md` 增**第 5 窗口**与启动顺序（Qdrant → API → watcher/cloudflared →
@@ -839,8 +851,10 @@ created: 2026-09-04
   `websockets` 锁到 **15.0.1**、`pip check` **由红转绿**、`requirements.lock` 重生成（194 行）。
   ⚠️ **R-49a 的全量 pytest 待补跑** —— 必须先停 `recall.api`（PID 4796），否则 GPU 争用会让
   测试进程**硬崩溃**（`0xC0000005` 访问违例，非干净的 OOM，见 §七 2026-10-01 第三条）。
-  **R-49b（`recall/lark_md.py`）已完成**：转义适配层 + **50 用例 + 5 doctest 全绿**
-  （纯函数、零 GPU 依赖 ⇒ 是全项目唯一能在 API 运行时验完的一步）。**接着做 R-49c**。
+  **R-49b（`recall/lark_md.py`）已完成**：转义适配层 + **50 用例 + 5 doctest 全绿**。
+  **R-49c（`recall/feishu_bot.py` + `Settings.feishu_*`）已完成**：长连接编排器 + **32 用例全绿**
+  （免 GPU/Qdrant/真飞书）。⇒ 只剩 **R-49d**（runbook 第 5 窗口 / `.env` 清理）与
+  **R-49e**（`tools/verify_r49.py` + 端到端验收，**需要你先把飞书侧 5 项配置做完**）。
   ⛔ **旧卡点作废**：原"待开飞书 `wiki:*`/`docx:*`/`drive:*` 只读权限 + 把应用加进知识库成员"的前提
   （"飞书里放着我的笔记"）**不成立** ⇒ 那些权限**不再需要开**；飞书侧只剩 5 项
   （`im:message` + `im:message:send_as_bot` + 机器人能力 + 事件订阅长连接 + 可用范围 + 发布版本）。
@@ -922,12 +936,14 @@ created: 2026-09-04
   本机 D 盘从 7.76GB 清到 14.84GB）；④ 保持 D 盘余量充裕
 - **验收实测**（2026-09-24，项目工程师执行）：摄取 65 篇 0 失败；`/health` ok（972 点 / 65 篇）；检索 **Recall@1=0.767 / @3=0.933 / @5=0.933 / @10=1.000 / MRR=0.860**（与基线逐位一致）；Ragas **引用一致性 1.000 / faithfulness 0.858 / answer_relevancy 0.758**；DSH 问答带 `[n]` 引用通过
 - **验收实测**（2026-09-25，项目工程师执行）：**R-45 15/15 全绿**（`python tools\verify_r45.py`）
-- **本文件版本**：v0.35.0（2026-10-01 ⛔ **R-41 改向：飞书由「内容源」改为「交互入口」，新定义 = R-49**
-  （长连接机器人 + 消息卡片）。技术细节二轮核查：长连接选型、`websockets==15.0.1` 唯一解、
-  **WSS 握手本机实测通过**、`data.URL` 与文档不符、`lark_md` 需 HTML 转义、90s 保活 + 无限重连
-  ⇒ 重放幂等必做。存量 `feishu_blocks.py` + 13 用例 **归档停用**；**R-41c 保留**。
-  **待你**：① 飞书侧 5 项配置（§四 R-49）；② 停一次 API 让我补跑全量 gates；
-  ③ 可选：R-40 最小验收、重跑 `promptfoo`、Qdrant 索引失败降级为告警；④ 实现细节背书（老账）**）
+- **本文件版本**：v0.36.0（2026-10-01 ✅ **R-49a / b / c 完成**：依赖接入（`websockets==15.0.1`
+  六方约束唯一解）+ `recall/lark_md.py` 转义层（50 用例 + 5 doctest）+ `recall/feishu_bot.py`
+  长连接入口（32 用例，**全部免 GPU**）。存量 `feishu_blocks.py` + 13 用例 **归档停用**；
+  **R-41c 保留**。⇒ **只剩 R-49d（runbook 第 5 窗口 + `.env` 清理）与 R-49e
+  （`tools/verify_r49.py` + 端到端验收）**。
+  **待你**：① 飞书侧 5 项配置（§四 R-49）—— 它是 R-49e 端到端验收的**前提**；
+  ② 停一次 API 让我补跑 R-49a 的全量 gates；③ 可选：R-40 最小验收、重跑 `promptfoo`、
+  Qdrant 索引失败降级为告警；④ 实现细节背书（老账））
 
 ---
 
@@ -1074,3 +1090,4 @@ created: 2026-09-04
 | 2026-10-01 | R-49a | ✅ **依赖接入完成** | ① `pyproject.toml` 增 `lark-oapi>=1.7,<2` + 显式 `websockets>=15.0.1,<16`（附注释写明"15.0.1 是六方约束唯一解"，把传递约束升为显式声明以保确定性）；② `pip install -e ".[dev,eval]"` 实测**只装 4 项**（`lark-oapi-1.7.3` / `pycryptodome-3.23.0` / `recall-0.1.0`（元数据刷新）/ `websockets-15.0.1`），无其它连带变更；③ **`pip check` 由红转绿**（`No broken requirements found`）—— 陈旧的 `openai<2` 元数据已随重装刷新；④ `requirements.lock` 重生成：**192 → 194 行，diff 只有 3 项**（`+lark-oapi==1.7.3`、`+pycryptodome==3.23.0`、`websockets 16.1.1→15.0.1`），**编码与行尾逐字节保持**（无 BOM + CRLF，用 `[System.IO.File]::WriteAllLines` + `UTF8Encoding($false)` 复现，**未用 `>` / `Out-File`** —— 本机 shell 是 **PowerShell 5.1**，二者都会写 BOM）；⑤ 导入验证通过：`websockets 15.0.1` 从**新路径**加载、`fastmcp 2.14.7` 正常、`lark_oapi` 正常、`websockets.speedups` 正常 | ⚠️ **安装期踩到一个真实残留**：卸载 websockets 16.1.1 时 pip 报 `Failed to remove contents in a temporary directory '...\site-packages\~ebsockets'`，残留一个旧的 `speedups.cp311-win_amd64.pyd`（11KB，属性 `Archive` 非只读但**被拒删**）。**已确认为无害**：`~ebsockets` 不是合法包名、永不被 import，实测导入全部指向新路径；两个 python 进程（API 4796 / watcher 17232）均未持有该文件（疑为 Defender 或索引器短暂持有）⇒ 登记为**待其占用者释放后清理的垃圾**，不影响功能。另核实：降级前已确认 **API 未加载 websockets**（`Get-Process -Module` 命中 0）才动手，避免"装到一半半残" |
 | 2026-10-01 | R-49a | ⏸ **闸门状态：全量 pytest 被 GPU 争用阻塞（提交时诚实登记，不假装全绿）** | 本步骤**未改任何 Python 源码**，改动仅 `pyproject.toml` / `requirements.lock` / 已安装包集合。已完成的验证：**ruff 全绿**、**mypy strict 26 文件零错误**、**`pip check` 由红转绿**、导入验证（`websockets 15.0.1` 从新路径加载 / `fastmcp 2.14.7` / `lark_oapi` / `websockets.speedups` 均正常）、**纯单测子集 172 passed**（12 个文件：models / chunker / registry / assemble / connectors / config / ratelimit / eval_scores / answer_template / trigger_policy / feishu_blocks / watchdog）。**全量 pytest 待补跑**：GPU 仅剩 ~296 MiB 空闲（API 常驻模型 + 桌面程序），试跑 `test_gateway_trust + test_mcp + test_mcp_policy` 时**前 16 项通过后进程硬崩溃** | 🔴 **新发现（比预期严重）**：显存不足时**不是干净的 CUDA OOM**，而是 **`0xC0000005` 访问违例**，崩溃点在 `transformers/core_model_loading.py::_materialize_copy` ⇒ **跑 GPU 用例前必须先停 `recall.api`**，否则只会拿到"进程直接死掉"这种无信息量的失败。**伴生**：崩溃使 `conftest` 的 `finally` 未执行，留下孤儿 collection `recall-test-1698b3d45196`，已用 Qdrant API 删除（**未**动磁盘目录，避开本表 2026-09-26 记的"运行时删目录可能留失效句柄"风险）⇒ **全量跑崩后必须查一次孤儿**。📌 待项目工程师停 `recall.api`（PID 4796）后补跑全量并登记结果 |
 | 2026-10-01 | R-49b | ✅ **`recall/lark_md.py`：飞书卡片 `lark_md` 安全转义适配层 + 50 用例 + 5 doctest** | 公开 API 六件：`escape_lark_md`（纯字面量转义）/ `to_lark_md`（保留 `**加粗**`）/ `to_lark_md_within`（**在原始字符边界**截断且保证渲染长度 ≤ 预算）/ `link`（仅 http/https 生成链接，否则降级为 `label（url）`）/ `render_reference_line` / `render_card_body`。**行内**转义 `& < > * ~` 反引号 `_ [ ] \`；**块级**转义标题 / 无序列表 / 有序列表 / 分割线。依据官方《消息卡片 > Markdown > 支持的语法》对照表 | 🐛 **三个自己抓出来的真问题**：① `render_reference_line` 对非 URL 来源走 `link(source, source)` ⇒ 渲染成 `a.md（a.md）` **自我重复**（已改为路径分支只渲染路径本身）；② 块级正则要求 `-` 后必须跟空格 ⇒ **裸 `---` 分割线抓不到**（已加 `-{3,}` 分支）；③ `render_card_body` 用 `"\n\n".join([body, heading, *lines])` ⇒ **每条引用各自成段、卡片里多出一串空行**，**由 doctest 抓到**（已改为引用之间单换行，并补一条回归用例钉死）。另删掉 `>` 的块级分支（行内转义已先处理，属**死代码**）。**gates**：ruff 全绿 + `ruff format --check` 通过 + mypy strict **27 文件**零错误 + **pytest 55 passed（50 用例 + 5 doctest）**。📌 本步是**纯函数、零 GPU 依赖** —— 在全项目"跑 GPU 用例必先停 API"的约束下，它是唯一能在 API 运行时完成并全程验证的一步 |
+| 2026-10-01 | R-49c | ✅ **飞书入口主体：`recall/feishu_bot.py` + `Settings.feishu_*` + 32 用例** | ① `Settings` 增 `feishu_app_id` / `feishu_app_secret`（`FEISHU_APP_ID` / `FEISHU_APP_SECRET`）与 **`feishu_enabled`** 属性（**两者齐全才算启用**，fail-closed）；② `recall/feishu_bot.py`（新）：`extract_message`（两种负载包法 / `content` 是 JSON 字符串 / 剥 `@_user_N` 群聊占位符）、`EventDeduper`（有界 LRU + 线程锁）、`TenantTokenCache`（`threading.Lock`；HTTP 取 token 放在锁**外**）、`HttpAnswerSource`（调本机 `/kb/answer`）、`HttpReplySender`（**必查 `code != 0`**）、`build_card`（卡片 JSON 2.0）、`render_card_text`（复用 `lark_md`）、`FeishuBot`（`handle_event` = ACK 即返；`process` = 真活；回答失败**降级成卡片**而非静默）、`build_ws_client`（延迟导入 SDK）、`main`（fail-closed，退出码 2）；③ 用例 `tests/test_feishu_bot.py` **32 项**，**全部免 GPU / Qdrant / 真飞书**（HTTP 走 `httpx.MockTransport`，回答来源与回复发送器注入假件） | 🎯 **核心契约用例刻意不靠计时**：用"卡住回答"的假件证明 `handle_event` 在回答完成**之前**已返回（先 ACK、后异步）—— 实现若改成同步等待，该用例立刻失败。🐛 **发现三个 SDK 层事实**：① **`import lark_oapi` 冷启动 8.28s**（累计 9.3s）—— SDK 急切导入它全部生成的 API（`-X importtime` 里成片 `lark_oapi.api.*.resource`）⇒ **机器人冷启动约 10s**，R-49d 的 runbook 必须写明；② `lark.ws.Client` **没有 `stop()` / `close()`**，且构造它会在 `ExpiringCache.__init__` 里 `loop.create_task(...)` 起一个清理 cron ⇒ 单元测试里构造会留下 "Task was destroyed but it is pending" 的 asyncio ERROR 噪音（**已改为只校验 SDK 表面**：方法名 + `inspect.signature`，覆盖面相同且无副作用，噪音已消除）；③ `lark_oapi` **无类型存根** ⇒ `pyproject.toml` 的 mypy override 增 `lark_oapi.*`。**gates**：ruff 全绿、mypy **63 文件**零错误、**免 GPU 子集 272 passed**。⚠️ 另记一条**既存**事实：`ruff format --check .` 有 **16 个历史文件未格式化**（非本次引入）⇒ 本次只保证**自己改动的文件**合规，未做全仓重排（避免无关 churn） |

@@ -437,6 +437,10 @@ class Settings:
         deepseek_api_key: DeepSeek API key（仅胖端点使用；绝不入日志/库/payload）。
         deepseek_base_url: DeepSeek OpenAI 兼容接口地址。
         deepseek_model: 生成用模型名。
+        feishu_app_id: 飞书企业自建应用 App ID（``FEISHU_APP_ID``，roadmap R-49）。
+            与 :attr:`feishu_app_secret` 构成"两者齐全才启用"的 fail-closed 开关，
+            见 :attr:`feishu_enabled`。**绝不入日志**（code_standards §12）。
+        feishu_app_secret: 飞书应用 App Secret（``FEISHU_APP_SECRET``）。**绝不入日志**。
         host: API 监听地址（默认仅本机，code_standards §12）。
         port: API 监听端口（REST 与 MCP 同端口，tech.md §8）。
         collection: 检索目标 collection；``None`` 表示用契约默认名
@@ -464,6 +468,8 @@ class Settings:
     deepseek_api_key: str | None
     deepseek_base_url: str
     deepseek_model: str
+    feishu_app_id: str | None
+    feishu_app_secret: str | None
     host: str
     port: int
     collection: str | None
@@ -529,6 +535,8 @@ class Settings:
             deepseek_api_key=os.getenv("DEEPSEEK_API_KEY") or None,
             deepseek_base_url=os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com").strip(),
             deepseek_model=os.getenv("DEEPSEEK_MODEL", "deepseek-chat").strip(),
+            feishu_app_id=os.getenv("FEISHU_APP_ID") or None,
+            feishu_app_secret=os.getenv("FEISHU_APP_SECRET") or None,
             host=os.getenv("RECALL_HOST", "127.0.0.1").strip(),
             port=int(os.getenv("RECALL_PORT", "8000")),
             collection=collection_raw or None,
@@ -549,6 +557,18 @@ class Settings:
             配置了至少一个 key 时为 ``True``；空 key 表表示 S1 语义、不鉴权。
         """
         return bool(self.api_keys)
+
+    @property
+    def feishu_enabled(self) -> bool:
+        """飞书入口是否可用（App ID 与 App Secret **都**配了才算）。
+
+        **fail-closed**：任缺其一即视为未配置 ⇒ 机器人启动时明确拒绝并退出，
+        而不是"半配置"地连上飞书（那会拿到 401 却看不出原因）。
+
+        Returns:
+            两者都非空时为 ``True``。
+        """
+        return bool(self.feishu_app_id) and bool(self.feishu_app_secret)
 
     @property
     def audit_log_path(self) -> Path:
