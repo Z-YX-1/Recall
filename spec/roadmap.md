@@ -629,6 +629,11 @@ created: 2026-09-04
         **两个不同发行包**、合法并存；② `packaging` 是 **conda 装的**
         （`packaging-26.3-pyhc364b38_0`），`pip freeze` 对 conda 包本就按 `@ file:///...` 记录。
         ⇒ **lock 一处都不用清理。**
+        ✅ **全量闸门已闭合（2026-10-01，未停 API）**：`RECALL_TEST_DEVICE=cpu` + **分块跑** ——
+        15 个纯逻辑文件一次 **272 passed**、12 个模型相关文件**逐文件** **112 passed**、
+        `test_auth.py` 前 16 条 + 后 3 条单独跑 **19 passed** ⇒ **合计 403 = `--collect-only`
+        的全量收集数，0 失败**。📌 根因更正见 §七：崩溃是**主机内存**不够（15.7 GB 里
+        `recall.api` 占 7.8 GB、`ollama app` 占约 2 GB），**不是显存** —— CPU 模式同样崩。
       - **R-49b `recall/lark_md.py`**（✅ 2026-10-01 完成）：标准文本 → `lark_md` **安全转义**适配层。
         公开 API 六件：`escape_lark_md`（纯字面量）、`to_lark_md`（保留 `**加粗**`）、
         `to_lark_md_within`（**在原始字符边界**截断，保证渲染长度不超预算）、
@@ -866,8 +871,9 @@ created: 2026-09-04
   已完成二轮技术核查（长连接选型、依赖求解、WSS 握手本机实测、`lark_md` 转义隐患、卡片回复形态），
   结论写入 §四 R-49。**R-49a（依赖接入）已实施**：`lark-oapi 1.7.3` + `pycryptodome` 装好、
   `websockets` 锁到 **15.0.1**、`pip check` **由红转绿**、`requirements.lock` 重生成（194 行）。
-  ⚠️ **R-49a 的全量 pytest 待补跑** —— 必须先停 `recall.api`（PID 4796），否则 GPU 争用会让
-  测试进程**硬崩溃**（`0xC0000005` 访问违例，非干净的 OOM，见 §七 2026-10-01 第三条）。
+  ✅ **R-49a 的全量 pytest 已补跑**：`RECALL_TEST_DEVICE=cpu` + **分块跑**（15 纯逻辑文件一次 272 +
+  12 模型文件逐文件 112 + `test_auth` 19）= **403 passed / 0 失败 = 全量收集数**，**未停 API**。
+  📌 根因更正：崩溃是**主机内存**不够（15.7 GB 里 API 占 7.8 GB），**不是显存** —— CPU 模式同样崩。
   **R-49b（`recall/lark_md.py`）已完成**：转义适配层 + **50 用例 + 5 doctest 全绿**。
   **R-49c（`recall/feishu_bot.py` + `Settings.feishu_*`）已完成**：长连接编排器 + **32 用例全绿**
   （免 GPU/Qdrant/真飞书）。**R-49d（runbook 五窗口 + `.env` 清理）已完成**。
@@ -957,12 +963,13 @@ created: 2026-09-04
   本机 D 盘从 7.76GB 清到 14.84GB）；④ 保持 D 盘余量充裕
 - **验收实测**（2026-09-24，项目工程师执行）：摄取 65 篇 0 失败；`/health` ok（972 点 / 65 篇）；检索 **Recall@1=0.767 / @3=0.933 / @5=0.933 / @10=1.000 / MRR=0.860**（与基线逐位一致）；Ragas **引用一致性 1.000 / faithfulness 0.858 / answer_relevancy 0.758**；DSH 问答带 `[n]` 引用通过
 - **验收实测**（2026-09-25，项目工程师执行）：**R-45 15/15 全绿**（`python tools\verify_r45.py`）
-- **本文件版本**：v0.39.0（2026-10-01 ✅ **R-49a / b / c / d 完成 + R-49e 脚本与真机冒烟完成**：
-  依赖接入（`websockets==15.0.1` 六方约束唯一解）+ `recall/lark_md.py` 转义层（50 用例 + 5 doctest）
-  + `recall/feishu_bot.py` 长连接入口（32 用例，**全部免 GPU**）+ runbook 升为**五个窗口**
-  + `tools/verify_r49.py`（**本机 23 项通过 / 0 失败**）+ **真机冒烟：机器人 10.6 秒连上飞书长连接**。
-  存量 `feishu_blocks.py` + 13 用例 **归档停用**；**R-41c 保留**。
-  ⇒ **只剩端到端的"收事件 → 回卡片"**，它**必须等你在飞书侧做完那 5 项配置**（§四 R-49 末尾清单）。
+- **本文件版本**：v0.40.0（2026-10-01 ✅ **R-49a / b / c / d 完成；R-49e 脚本 + 真机冒烟完成；
+  R-49a 全量闸门闭合（403 passed）**：依赖接入（`websockets==15.0.1` 六方约束唯一解）
+  + `recall/lark_md.py` 转义层（50 用例 + 5 doctest）+ `recall/feishu_bot.py` 长连接入口（32 用例）
+  + runbook 升为**五个窗口**（并更正崩溃根因为**主机内存**）+ `tools/verify_r49.py`（本机 23/0）
+  + **真机冒烟：机器人 10.6 秒连上飞书长连接**。存量 `feishu_blocks.py` + 13 用例 **归档停用**；
+  **R-41c 保留**。⇒ **只剩端到端的"收事件 → 回卡片"**，它**必须等你在飞书侧做完那 5 项配置**
+  （§四 R-49 末尾清单）。
   **待你**：① 飞书侧 5 项配置 —— R-49e 端到端验收的**前提**；② 停一次 API 让我补跑 R-49a 的
   全量 gates；③ 可选：R-40 最小验收、重跑 `promptfoo`、Qdrant 索引失败降级为告警；
   ④ 实现细节背书（老账））
@@ -1116,3 +1123,4 @@ created: 2026-09-04
 | 2026-10-01 | R-49d | ✅ **配置与编排：runbook 升为「五个窗口」+ `.env` 改向清理** | ① `.env` 删掉作废的 `FEISHU_SPACE_ID`（原 R-41a 的"内容源"占位），改写为"**飞书 = 入口**"的说明（含 5 项飞书侧前提与 fail-closed 提示）；② `spec/runbook.md`：**「四个窗口」→「五个窗口」** —— 新增 **窗口 ⑤ feishu_bot**（前提 3 条含飞书侧 5 项配置、**8.28s 冷启动**、**不占端口 / 不占显存**、验收判据、`event_accepted → replied` 排错路径、`duplicate_event_skipped` 属正常），原「按需窗口 ⑤ 重灌」**顺延为 ⑥**；同步 §0 顺序图、§1 标题、§2「验收三连」→「**四连**」、§3 关闭顺序（feishu_bot 排在 API **之前**）、§4 排查表 **+6 行**、§5 凭据表、§6 环境事实（新增 `feishu_bot.log`） | 📌 **顺带修正一处不一致**：`main()` 的 `configure_logging(component=...)` 参数**直接决定日志文件名**，我原传 `recall.feishu_bot` 会写出 `data/logs/recall.feishu_bot.log`，与 `api.log` / `watchdog.log` 的约定不符 ⇒ 改为 **`feishu_bot`**。**gates**：ruff 全绿、mypy **63 文件**零错误、`test_feishu_bot + test_lark_md + test_config + test_llm` **159 passed**。另实测：**不**设 `RECALL_SKIP_DOTENV` 时 `Settings.from_env()` 能从 `.env` 读到飞书凭证（`feishu_enabled = True`）|
 | 2026-10-01 | R-49e | ◐ **验收脚本 `tools/verify_r49.py` 完成（本机 23 项通过 / 0 失败）；端到端待飞书侧配置** | 新增 `tools/verify_r49.py`（**只读、无副作用、退出码 = 失败项数**，风格同 `verify_r45.py`；刻意用 Python 而非 `.ps1`，沿用"Windows 默认 `ExecutionPolicy=Restricted`"那条理由），共七节：**A** 凭证（只报长度 / 前缀，**绝不打印 secret**）/ **B** 依赖窗口（断言 `websockets ∈ [15.0.1, 16)`）/ **C** SDK 表面（方法名 + `inspect.signature`）/ **D** 卡片渲染（@所有人中和、引用一条不丢、超长截断）/ **E** 本机链路（`/kb/answer` 真答 + `/kb/search` 真召回）/ **F** 长连接（端点发现 + **真 WSS 握手**，并打印服务端下发的 `PingInterval` / `ReconnectInterval` / `ReconnectCount`）/ **G** 人工步骤（**只打印、不判 FAIL**）。CLI：`--api-url` / `--api-key` / `--timeout` / `--skip-network` / `--skip-wss` | 🐛 **两个自己踩出来的坑，都已修**：① **默认超时 30s 太短** —— 冷启动要"装模型 16~25s + 检索 5s + DeepSeek 5s"，第一次跑把 `/kb/answer` 误报成 FAIL（第二次模型已热才通过）⇒ 默认提到 **90s** 并写明理由；② **PowerShell 5.1 的 `Invoke-RestMethod -Body <字符串>` 会把中文按 ANSI 编码** —— 我用它探库时中文查询返回 **0 条证据**、`/kb/answer` 也回"笔记里没有"，**看着像产品故障**；实测同一查询改用 **UTF-8 字节**传参立刻拿到 **4 条 / top1 0.954**，与 MCP 结果一致 ⇒ **是探针的 bug，不是产品问题**（脚本本身走 `json.dumps(...).encode("utf-8")`，天然没这个坑；该坑已写进 runbook §4 排查表）。**gates**：ruff 全绿 + `ruff format --check` 通过 + mypy **64 文件**零错误（含 `tools/`）+ **脚本本机 23/0** |
 | 2026-10-01 | R-49c / R-49e | ✅ **真机冒烟：机器人成功连上飞书长连接（`ws.Client.start()` 首次实跑）** | 起 `python -m recall.feishu_bot` 做**限时冒烟**并随即杀掉（**不留常驻进程** —— 窗口 ⑤ 由项目工程师自己起）。实测：`feishu_bot.starting` → **10.6 秒后** `[Lark] connected to wss://msg-frontier.feishu.cn/ws/v2…`。⇒ 两件事从"预计可行"变成**已核实**：① SDK 的 `ws.Client.start()`（R-49c 里**唯一从未执行过的调用**）确实能建长连接；② 冷启动耗时与预估的"约 10 秒"吻合（`import lark_oapi` 8.28s + 握手）。附带核实：日志按 `component="feishu_bot"` 正确落到 `data/logs/feishu_bot.log`（330 字节 / 两行）；`Get-Process` 确认**无残留 python 进程** | 📌 **剩余的唯一未验证环节 = "收事件 → 回卡片"**，它需要飞书侧 5 项配置（权限 / 机器人能力 / 事件订阅 / 可用范围 / 发布版本），**只能人工**，已写进 `verify_r49.py` 的 G 节与 runbook §1 窗口 ⑤。⚠️ **本次冒烟不代表飞书侧配置已就绪**：建立长连接**不需要**那些权限，**事件推送才需要** |
+| 2026-10-01 | R-49a | ✅ **全量 pytest 补跑完成：`403 passed`（分块 CPU 跑法，未停 API）；并更正根因 —— 是「主机内存」不是「显存」** | 项目工程师尚未停 `recall.api`，故改用**分块跑法**绕开内存峰值：① `RECALL_TEST_DEVICE=cpu`（conftest 早已支持设备覆盖）⇒ **完全不碰 GPU**；② 15 个纯逻辑文件一次跑 **272 passed**；③ 12 个模型相关文件**逐文件**跑（每个进程退出即释放内存）**112 passed**；④ `test_auth.py` 整文件跑会在第 17 条崩，用 `-v` 定位到 `test_identity_from_key_scopes_the_search`（它要**同时**装 bge-m3 与 bge-reranker，峰值最高），把它与后两条**单独跑**各 1 passed ⇒ 该文件 **19 passed**。**合计 272 + 112 + 19 = 403，恰等于 `pytest --collect-only` 的收集数，0 失败** ⇔ R-49a 全量闸门**闭合** | 🔴 **根因更正**：我此前把崩溃归因为"GPU 争用"，**不准确**。实测证据：**`RECALL_TEST_DEVICE=cpu` 下同样崩**（同一处 `transformers/core_model_loading.py::_materialize_copy` ⇒ 真正原因是**主机内存耗尽**）——本机总内存 **15.7 GB**，`recall.api` 常驻 **7.8 GB**、`ollama app` 约 **2 GB**，可用仅 **4.3 GB**；CPU 模式**反而更吃内存**（权重不压缩）。📌 两条经验已写进 `runbook.md`：§4 排查表在"先停 API"之外补了第二条路（CPU + 逐文件 / 逐用例跑），§6 环境事实新增**内存**与 **GPU** 两行。⚠️ 崩溃会让 `conftest` 的 `finally` 跑不到，本轮两次崩溃各留一个孤儿 collection（`recall-test-1698b3d45196`、`recall-test-5e0677441432`），均已用 Qdrant API 删除 |

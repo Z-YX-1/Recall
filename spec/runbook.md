@@ -222,7 +222,7 @@ curl.exe -s -o NUL -w "%{http_code}\n" https://recall.iamzyx.xyz/health
 | Qdrant 建 payload 索引报 `IO Error: 拒绝访问` | Qdrant 偶发降级（`tech.md` §12.3） | **重启 Qdrant**（该状态重试无用）；仍复现就跑 `tools\clean_qdrant_orphans.py` 清泄漏 |
 | 端口 6333 / 8000 被占用 | 已经有一个实例在跑 | `Get-NetTCPConnection -LocalPort 8000 -State Listen`；**别起两份**（双份模型会 OOM/崩溃） |
 | 改了 `.env` 但没生效 | 配置只在**进程启动时**读取 | 重启对应进程；`verify_phase6.py` 的"配置-运行态一致性"检查能查出这种假绿 |
-| 跑全量 `pytest` 崩溃 | API 占着显存（模型 ≈4GB） | 先停 `recall.api` 再跑测试。⚠️ **实测失败形态是 `0xC0000005` 访问违例**（崩在 `transformers` 模型加载处），比干净的 OOM 更难读 ⇒ 别指望看到清晰的 OOM 报错；崩后 `conftest` 的清理跑不到，**要查一次 Qdrant 孤儿 collection** |
+| 跑全量 `pytest` 崩溃 / **`0xC0000005` 访问违例**（崩在 `transformers` 模型加载处） | 🔴 **主机内存不够 —— 不只是显存**。本机总内存 **15.7 GB**，而 `recall.api` 常驻 **7.8 GB**、`ollama app` 约 **2 GB** ⇒ 全量 pytest 再装一份 bge-m3 就耗尽（实测可用内存仅 ~**4.3 GB**）。⚠️ 比干净的 OOM 更难读，**别指望看到清晰的 OOM 报错** | ① **首选**：先停 `recall.api` 再跑全量（同时解决显存与内存）；② **不想停 API 的替代**：`$env:RECALL_TEST_DEVICE='cpu'` **且逐文件跑**（`pytest tests/test_x.py`）—— 每个进程退出即释放内存，实测可行（`test_ingest.py` 12 passed / `test_rerank.py` 8 passed）；③ 崩后 `conftest` 的清理跑不到 ⇒ **必须查一次 Qdrant 孤儿 collection**（`recall-test-*`） |
 | 飞书里问机器人**完全没反应** | 事件没订阅上 / 版本未发布 / 可用范围没加自己 | 逐项核对窗口 ⑤「前提 ③」那 5 条；若 `feishu_bot` 日志里**连 `event_accepted` 都没有**，就是事件根本没推过来（配置问题），不是代码问题 |
 | 飞书机器人回**"服务暂时不可用"** | API 没起，或 `recall.api` 正在重启 | 起窗口 ②。这条卡片是**刻意的降级**（用户提问就该拿到回复），不是 bug |
 | 飞书机器人**启动即退出（退出码 2）** | `FEISHU_APP_ID` / `FEISHU_APP_SECRET` 缺一个 | 看日志 `feishu_bot.not_configured` 的 `hint`；补齐后重启 |
@@ -267,6 +267,8 @@ curl.exe -s -o NUL -w "%{http_code}\n" https://recall.iamzyx.xyz/health
 | 隧道配置 | `%USERPROFILE%\.cloudflared\config.yml`（模板：`tools/cloudflared/config.example.yml`） |
 | 日志 | `data\logs\api.log`、`watchdog.log`、**`feishu_bot.log`**、`audit.jsonl`（审计，含 `peer`/`client_source`） |
 | 磁盘 | D 盘需留余量；全量 `pytest` 每次泄漏 0.7~1.4GB，定期 `python tools\clean_qdrant_orphans.py` |
+| **内存** | 总 **15.7 GB**；⚠️ `recall.api` 常驻 **7.8 GB**、`ollama app` 约 **2 GB** ⇒ 剩余通常只有 **4~5 GB**。**跑全量 `pytest` 会因此崩溃**（见 §4），要么先停 API，要么 `RECALL_TEST_DEVICE=cpu` + 逐文件跑 |
+| GPU | RTX 4050 Laptop **6141 MiB**；`recall.api` 常驻模型 + 浏览器等桌面程序后，**常常只剩 300~500 MiB** ⇒ 跑 GPU 用例前务必先停 API |
 
 ---
 
