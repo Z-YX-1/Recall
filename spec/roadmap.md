@@ -629,8 +629,16 @@ created: 2026-09-04
         **两个不同发行包**、合法并存；② `packaging` 是 **conda 装的**
         （`packaging-26.3-pyhc364b38_0`），`pip freeze` 对 conda 包本就按 `@ file:///...` 记录。
         ⇒ **lock 一处都不用清理。**
-      - **R-49b `recall/lark_md.py`**：标准文本 → `lark_md` **安全转义**适配层（含超长截断），
-        配确定性用例。
+      - **R-49b `recall/lark_md.py`**（✅ 2026-10-01 完成）：标准文本 → `lark_md` **安全转义**适配层。
+        公开 API 六件：`escape_lark_md`（纯字面量）、`to_lark_md`（保留 `**加粗**`）、
+        `to_lark_md_within`（**在原始字符边界**截断，保证渲染长度不超预算）、
+        `link`（仅 http/https 生成链接，否则降级为纯文本）、`render_reference_line`、
+        `render_card_body`。**行内**转义 `& < > * ~` 反引号 `_ [ ] \`；**块级**转义
+        标题 / 无序列表 / 有序列表 / 分割线（它们**仅飞书 7.6+ 生效**，低版本会渲染成
+        "升级提示占位图"⇒ 宁可显示朴素文本）；`**加粗**` 保留、**落单的 `**` 按字面量处理**
+        （不吞掉后文）。用例 **50 项** + **5 项 doctest**：含 **@所有人被中和**
+        （`<at id=all></at>` 是安全项）、引用中括号不再构成链接、截断不切坏实体、
+        **引用一条不丢**、确定性。
       - **R-49c `recall/feishu_bot.py`**：长连接 `lark.ws.Client` + 事件 handler（先 ACK 后异步）
         + `event_id` **幂等去重** + 出站限流（复用 `recall/ratelimit.py::SlidingWindowLimiter`）
         + 调 `/kb/answer`（**回环带 `X-API-Key`**）+ 卡片渲染 + reply；API 不可用时优雅降级。
@@ -829,8 +837,10 @@ created: 2026-09-04
   已完成二轮技术核查（长连接选型、依赖求解、WSS 握手本机实测、`lark_md` 转义隐患、卡片回复形态），
   结论写入 §四 R-49。**R-49a（依赖接入）已实施**：`lark-oapi 1.7.3` + `pycryptodome` 装好、
   `websockets` 锁到 **15.0.1**、`pip check` **由红转绿**、`requirements.lock` 重生成（194 行）。
-  ⚠️ **全量 pytest 待补跑** —— 必须先停 `recall.api`（PID 4796），否则 GPU 争用会让测试进程
-  **硬崩溃**（`0xC0000005` 访问违例，非干净的 OOM，见 §七 2026-10-01 第三条）。**接着做 R-49b**。
+  ⚠️ **R-49a 的全量 pytest 待补跑** —— 必须先停 `recall.api`（PID 4796），否则 GPU 争用会让
+  测试进程**硬崩溃**（`0xC0000005` 访问违例，非干净的 OOM，见 §七 2026-10-01 第三条）。
+  **R-49b（`recall/lark_md.py`）已完成**：转义适配层 + **50 用例 + 5 doctest 全绿**
+  （纯函数、零 GPU 依赖 ⇒ 是全项目唯一能在 API 运行时验完的一步）。**接着做 R-49c**。
   ⛔ **旧卡点作废**：原"待开飞书 `wiki:*`/`docx:*`/`drive:*` 只读权限 + 把应用加进知识库成员"的前提
   （"飞书里放着我的笔记"）**不成立** ⇒ 那些权限**不再需要开**；飞书侧只剩 5 项
   （`im:message` + `im:message:send_as_bot` + 机器人能力 + 事件订阅长连接 + 可用范围 + 发布版本）。
@@ -1063,3 +1073,4 @@ created: 2026-09-04
 | 2026-10-01 | R-49a | ⚠️ **更正：我登记的「两处 lock 瑕疵」两处都不是瑕疵** | R-49a 完成后取证：① `httpx2` **不是历史遗留**，而是 **`openai 3.x` 与 `langsmith` 的正式依赖**（`openai: httpx2<3,>=2.7.0`、`langsmith: httpx2<3,>=2`），与 `httpx 0.28.1` 是**两个不同发行包**、合法并存；② `packaging` 是 **conda 装的**（`conda-meta/packaging-26.3-pyhc364b38_0.json`），`pip freeze` 对 conda 管理的包本就按 `@ file:///home/conda/...` 记录 ⇒ 两行都是**正确表示**，**lock 一处都不用清理**。据此把 §四 R-49a 的"清理两处瑕疵"更正为"不动"，并把该子步骤标为 ✅ 完成 | ⚠️ **教训**：我在**没有反查依赖方**的情况下，把"没见过的包名 / 没见过的路径"直接判成"瑕疵"。正确顺序是**先查 `Required-by` 与 `conda-meta` 归属，再下结论** —— 这与本轮 `websockets` 归属判断出错属**同一类错误**（凭印象归因）。另记两个环境事实：conda 只提供 Python 运行时与 pip / setuptools / wheel / **packaging**，其余 190+ 包全是 pip 装的 |
 | 2026-10-01 | R-49a | ✅ **依赖接入完成** | ① `pyproject.toml` 增 `lark-oapi>=1.7,<2` + 显式 `websockets>=15.0.1,<16`（附注释写明"15.0.1 是六方约束唯一解"，把传递约束升为显式声明以保确定性）；② `pip install -e ".[dev,eval]"` 实测**只装 4 项**（`lark-oapi-1.7.3` / `pycryptodome-3.23.0` / `recall-0.1.0`（元数据刷新）/ `websockets-15.0.1`），无其它连带变更；③ **`pip check` 由红转绿**（`No broken requirements found`）—— 陈旧的 `openai<2` 元数据已随重装刷新；④ `requirements.lock` 重生成：**192 → 194 行，diff 只有 3 项**（`+lark-oapi==1.7.3`、`+pycryptodome==3.23.0`、`websockets 16.1.1→15.0.1`），**编码与行尾逐字节保持**（无 BOM + CRLF，用 `[System.IO.File]::WriteAllLines` + `UTF8Encoding($false)` 复现，**未用 `>` / `Out-File`** —— 本机 shell 是 **PowerShell 5.1**，二者都会写 BOM）；⑤ 导入验证通过：`websockets 15.0.1` 从**新路径**加载、`fastmcp 2.14.7` 正常、`lark_oapi` 正常、`websockets.speedups` 正常 | ⚠️ **安装期踩到一个真实残留**：卸载 websockets 16.1.1 时 pip 报 `Failed to remove contents in a temporary directory '...\site-packages\~ebsockets'`，残留一个旧的 `speedups.cp311-win_amd64.pyd`（11KB，属性 `Archive` 非只读但**被拒删**）。**已确认为无害**：`~ebsockets` 不是合法包名、永不被 import，实测导入全部指向新路径；两个 python 进程（API 4796 / watcher 17232）均未持有该文件（疑为 Defender 或索引器短暂持有）⇒ 登记为**待其占用者释放后清理的垃圾**，不影响功能。另核实：降级前已确认 **API 未加载 websockets**（`Get-Process -Module` 命中 0）才动手，避免"装到一半半残" |
 | 2026-10-01 | R-49a | ⏸ **闸门状态：全量 pytest 被 GPU 争用阻塞（提交时诚实登记，不假装全绿）** | 本步骤**未改任何 Python 源码**，改动仅 `pyproject.toml` / `requirements.lock` / 已安装包集合。已完成的验证：**ruff 全绿**、**mypy strict 26 文件零错误**、**`pip check` 由红转绿**、导入验证（`websockets 15.0.1` 从新路径加载 / `fastmcp 2.14.7` / `lark_oapi` / `websockets.speedups` 均正常）、**纯单测子集 172 passed**（12 个文件：models / chunker / registry / assemble / connectors / config / ratelimit / eval_scores / answer_template / trigger_policy / feishu_blocks / watchdog）。**全量 pytest 待补跑**：GPU 仅剩 ~296 MiB 空闲（API 常驻模型 + 桌面程序），试跑 `test_gateway_trust + test_mcp + test_mcp_policy` 时**前 16 项通过后进程硬崩溃** | 🔴 **新发现（比预期严重）**：显存不足时**不是干净的 CUDA OOM**，而是 **`0xC0000005` 访问违例**，崩溃点在 `transformers/core_model_loading.py::_materialize_copy` ⇒ **跑 GPU 用例前必须先停 `recall.api`**，否则只会拿到"进程直接死掉"这种无信息量的失败。**伴生**：崩溃使 `conftest` 的 `finally` 未执行，留下孤儿 collection `recall-test-1698b3d45196`，已用 Qdrant API 删除（**未**动磁盘目录，避开本表 2026-09-26 记的"运行时删目录可能留失效句柄"风险）⇒ **全量跑崩后必须查一次孤儿**。📌 待项目工程师停 `recall.api`（PID 4796）后补跑全量并登记结果 |
+| 2026-10-01 | R-49b | ✅ **`recall/lark_md.py`：飞书卡片 `lark_md` 安全转义适配层 + 50 用例 + 5 doctest** | 公开 API 六件：`escape_lark_md`（纯字面量转义）/ `to_lark_md`（保留 `**加粗**`）/ `to_lark_md_within`（**在原始字符边界**截断且保证渲染长度 ≤ 预算）/ `link`（仅 http/https 生成链接，否则降级为 `label（url）`）/ `render_reference_line` / `render_card_body`。**行内**转义 `& < > * ~` 反引号 `_ [ ] \`；**块级**转义标题 / 无序列表 / 有序列表 / 分割线。依据官方《消息卡片 > Markdown > 支持的语法》对照表 | 🐛 **三个自己抓出来的真问题**：① `render_reference_line` 对非 URL 来源走 `link(source, source)` ⇒ 渲染成 `a.md（a.md）` **自我重复**（已改为路径分支只渲染路径本身）；② 块级正则要求 `-` 后必须跟空格 ⇒ **裸 `---` 分割线抓不到**（已加 `-{3,}` 分支）；③ `render_card_body` 用 `"\n\n".join([body, heading, *lines])` ⇒ **每条引用各自成段、卡片里多出一串空行**，**由 doctest 抓到**（已改为引用之间单换行，并补一条回归用例钉死）。另删掉 `>` 的块级分支（行内转义已先处理，属**死代码**）。**gates**：ruff 全绿 + `ruff format --check` 通过 + mypy strict **27 文件**零错误 + **pytest 55 passed（50 用例 + 5 doctest）**。📌 本步是**纯函数、零 GPU 依赖** —— 在全项目"跑 GPU 用例必先停 API"的约束下，它是唯一能在 API 运行时完成并全程验证的一步 |
