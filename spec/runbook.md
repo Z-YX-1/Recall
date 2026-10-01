@@ -168,12 +168,13 @@ python ingest.py --rebuild       :: 整篇重灌（会持有模型锁数分钟�
 
 ---
 
-## 2. 起完后的验收四连
+## 2. 起完后的验收五连
 
 ```bat
 cd /d D:\Project\Recall
 curl.exe -s http://127.0.0.1:6333/healthz
 python tools\verify_phase6.py --api-key <本机 token>
+python tools\verify_r49.py
 curl.exe -s -o NUL -w "%{http_code}\n" https://recall.iamzyx.xyz/health
 ```
 
@@ -181,10 +182,15 @@ curl.exe -s -o NUL -w "%{http_code}\n" https://recall.iamzyx.xyz/health
 | :--- | :--- |
 | `healthz` | `healthz check passed` |
 | `verify_phase6.py` | **16 项通过 / 0 失败**（鉴权、审计、门槛、文档权限、工具白名单、watcher 都在里面） |
+| **`verify_r49.py`** | **23 项通过 / 0 失败**（飞书凭证 / 依赖窗口 / SDK 表面 / 卡片转义 / 本机检索链路 / 长连接握手；含一次真 WSS 握手） |
 | 公网 `/health` | `200` |
 | **飞书入口** | 窗口 ⑤ 日志出现 `feishu_bot.starting`；在飞书里问一句**笔记里有的**问题 ⇒ 收到**带 `[n]` 引用的卡片** |
 
-> 飞书入口**没有可 curl 的端点**（它是长连接，不监听端口）⇒ 它的验收只能"看日志 + 真问一句"，
+> ⚠️ `verify_r49.py` 的 E 节会真调一次 `/kb/answer`：**冷启动要 35 秒以上**是正常的
+> （装模型 16~25s + 检索 5s + DeepSeek 5s），脚本默认超时已放到 90s。
+> 想只跑本地检查用 `python tools\verify_r49.py --skip-network`。
+>
+> 飞书入口**没有可 curl 的端点**（它是长连接，不监听端口）⇒ 最后一项只能"看日志 + 真问一句"，
 > 见 §1 窗口 ⑤。
 
 ---
@@ -225,6 +231,7 @@ curl.exe -s -o NUL -w "%{http_code}\n" https://recall.iamzyx.xyz/health
 | **Qdrant 启动即 panic**：`Failed to load local shard … Wal error: Can't init WAL: Kind(WouldBlock)` | **已经有一个 Qdrant 在用这个 storage 目录**（WAL 文件被占用）—— 不是数据损坏 | 先查：`Get-Process qdrant` / `Get-NetTCPConnection -LocalPort 6333 -State Listen`。**若已有一个健康的在跑，直接关掉你刚开的那个窗口即可**（panic 的是"第二个"，第一个没受影响）；确认没有在跑再启动 |
 | 启动时 `Config file not found: config/config`、`Filesystem type check is not supported` | Qdrant 找不到**可选**的配置文件、Windows 不支持文件系统类型检查 | **正常噪音**，忽略 |
 | 手动 curl 检索返回空/异常 | `-H "X-API-Key: <本机token>"` 里的 **`<本机token>` 是占位符**，忘了替换 | 真值在 `.env` 的 `RECALL_API_KEYS`（第一个 token）；没带对 key 会返回 **401** 而不是空 |
+| 手动 curl 查**中文** query 时 `/kb/search` 返回 **0 条证据**（英文 query 正常） | **PowerShell 5.1 的 `Invoke-RestMethod -Body <字符串>` 会把中文按 ANSI 编码**，查询词被弄坏 ⇒ 检索自然为空。**不是产品故障** | 用 **UTF-8 字节**传参：`$b=[Text.Encoding]::UTF8.GetBytes((@{query='内容哈希 幂等';top_k=5}\|ConvertTo-Json -Compress)); Invoke-RestMethod ... -Body $b`。实测同一查询：字符串传参 0 条 → 字节传参 **4 条 / top1 0.954** |
 
 ---
 
