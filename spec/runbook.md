@@ -1,6 +1,6 @@
 # Recall 启动与运维手册（runbook）
 
-> **用途**：每次开机后照本页依次启动四个窗口；出问题时按 §4 排查。
+> **用途**：每次开机后照本页依次启动**五个常驻窗口**；出问题时按 §4 排查。
 > **决定**：项目工程师 2026-09-30 明确**不做开机自启** ⇒ 保持手工启动，本页就是操作步骤。
 > **关联**：`spec/tech.md` §11/§12（拓扑与目录）、`spec/roadmap.md` R-38/R-39、
 > `docs/R-39-public-access.md`（公网接入与验收判据）。
@@ -8,18 +8,20 @@
 ## 0. 一句话顺序
 
 ```
-Qdrant  →  recall.api  →  （recall.watchdog、cloudflared 可并行）
+Qdrant  →  recall.api  →  （recall.watchdog、cloudflared、recall.feishu_bot 可并行）
   ↑            ↑
 必须最先起   依赖 Qdrant
 ```
 
 - **watcher 必须在 API 起来之后再起**（它启动时会调一次 `POST /kb/ingest` 补同步）。
 - **cloudflared 只依赖 API**（它把公网流量转发到 `127.0.0.1:8000`），不依赖 Qdrant。
-- 全部四个窗口都要**保持开着**（Ctrl+C 就是停服务）。
+- **feishu_bot 只依赖 API**（每次提问都调 `POST /kb/answer`）⇒ 必须**在 API 之后**起，
+  否则用户在飞书里只会收到"服务暂时不可用"的降级卡片。
+- 五个常驻窗口都要**保持开着**（Ctrl+C 就是停服务）。
 
 ---
 
-## 1. 四个窗口的启动命令
+## 1. 五个窗口的启动命令
 
 ### 窗口 ①　Qdrant（向量库）
 
@@ -127,7 +129,34 @@ python -m recall.watchdog
   "C:\Program Files (x86)\cloudflared\cloudflared.exe" tunnel --config "%USERPROFILE%\.cloudflared\config.yml" ingress validate
   ```
 
-### （按需）窗口 ⑤　重灌 / 手动摄取
+### 窗口 ⑤　feishu_bot（飞书入口，roadmap R-49）
+
+```bat
+cd /d D:\Project\Recall
+python -m recall.feishu_bot
+```
+
+- 前提 ①：**API 已在跑**（每次提问都调 `POST /kb/answer`）。
+- 前提 ②：`.env` 里 `FEISHU_APP_ID` / `FEISHU_APP_SECRET` **两个都**配了 —— 缺任一个会
+  **fail-closed 直接退出（退出码 2）**，并在日志里写明缺什么、要去开发者后台开什么。
+- 前提 ③ —— **飞书侧 5 项一次性配置**（详见 `roadmap.md` §四 R-49 末尾）：
+  ① 权限 `im:message` + `im:message:send_as_bot`；② 开通「机器人」能力；
+  ③ 「事件与回调」选 **长连接** 方式并订阅 `im.message.receive_v1`；
+  ④ **可用范围包含本人**（否则私聊搜不到机器人）；⑤ 创建版本并发布。
+  ⛔ 原 R-41 那套 `wiki:*` / `docx:document:readonly` / `drive:*` **不需要开**。
+- ⚠️ **启动到连上约 10 秒**：`import lark_oapi` 冷启动实测 **8.28s**
+  （SDK 会急切导入它全部生成的 API）—— 不是卡死，等一下即可。
+- ⚠️ **不需要公网、不占端口**：走**长连接**（WebSocket），事件由飞书推到本进程 ⇒
+  不依赖窗口 ④ 的隧道，也不用动防火墙。
+- ⚠️ 它**不装载任何模型**（只 HTTP 调本机 API）⇒ **不占显存**，可以随时起停，
+  不会和窗口 ② / `pytest` 抢 GPU。
+- 验收：日志出现 `feishu_bot.starting` 且**没有** `feishu_bot.not_configured`；
+  然后在飞书里给机器人发一句**笔记里有的**问题，应收到**带 `[n]` 引用的卡片**。
+- 排错就看这几条结构化事件：`event_accepted`（收到了）→ `replied`（答了）。
+  只有 `event_accepted` 没有 `replied` ⇒ 多半是飞书权限 / 可用范围 / 版本未发布。
+  `duplicate_event_skipped` 是**正常**的：断线重连会重放历史事件，我们按 `event_id` 去重。
+
+### （按需）窗口 ⑥　重灌 / 手动摄取
 
 不是常驻窗口，需要时在**本机**执行（公网的 `/kb/ingest` 已被隧道层挡掉，这是刻意的）：
 
@@ -139,7 +168,7 @@ python ingest.py --rebuild       :: 整篇重灌（会持有模型锁数分钟�
 
 ---
 
-## 2. 起完后的验收三连
+## 2. 起完后的验收四连
 
 ```bat
 cd /d D:\Project\Recall
@@ -148,20 +177,25 @@ python tools\verify_phase6.py --api-key <本机 token>
 curl.exe -s -o NUL -w "%{http_code}\n" https://recall.iamzyx.xyz/health
 ```
 
-| 命令 | 期望 |
+| 项 | 期望 |
 | :--- | :--- |
 | `healthz` | `healthz check passed` |
 | `verify_phase6.py` | **16 项通过 / 0 失败**（鉴权、审计、门槛、文档权限、工具白名单、watcher 都在里面） |
 | 公网 `/health` | `200` |
+| **飞书入口** | 窗口 ⑤ 日志出现 `feishu_bot.starting`；在飞书里问一句**笔记里有的**问题 ⇒ 收到**带 `[n]` 引用的卡片** |
+
+> 飞书入口**没有可 curl 的端点**（它是长连接，不监听端口）⇒ 它的验收只能"看日志 + 真问一句"，
+> 见 §1 窗口 ⑤。
 
 ---
 
 ## 3. 关闭顺序（与启动相反）
 
 1. **cloudflared**（先断公网入口）
-2. **watcher**
-3. **recall.api**
-4. **Qdrant**
+2. **feishu_bot**（再断飞书入口 —— 否则用户提问会打到正在关的 API 上）
+3. **watcher**
+4. **recall.api**
+5. **Qdrant**
 
 每个窗口 `Ctrl+C` 即可。Qdrant 建议让它自己收尾（Ctrl+C 会触发优雅关闭）。
 
@@ -182,7 +216,12 @@ curl.exe -s -o NUL -w "%{http_code}\n" https://recall.iamzyx.xyz/health
 | Qdrant 建 payload 索引报 `IO Error: 拒绝访问` | Qdrant 偶发降级（`tech.md` §12.3） | **重启 Qdrant**（该状态重试无用）；仍复现就跑 `tools\clean_qdrant_orphans.py` 清泄漏 |
 | 端口 6333 / 8000 被占用 | 已经有一个实例在跑 | `Get-NetTCPConnection -LocalPort 8000 -State Listen`；**别起两份**（双份模型会 OOM/崩溃） |
 | 改了 `.env` 但没生效 | 配置只在**进程启动时**读取 | 重启对应进程；`verify_phase6.py` 的"配置-运行态一致性"检查能查出这种假绿 |
-| 跑全量 `pytest` 崩溃 | API 占着显存（模型 ≈4GB） | 先停 `recall.api` 再跑测试 |
+| 跑全量 `pytest` 崩溃 | API 占着显存（模型 ≈4GB） | 先停 `recall.api` 再跑测试。⚠️ **实测失败形态是 `0xC0000005` 访问违例**（崩在 `transformers` 模型加载处），比干净的 OOM 更难读 ⇒ 别指望看到清晰的 OOM 报错；崩后 `conftest` 的清理跑不到，**要查一次 Qdrant 孤儿 collection** |
+| 飞书里问机器人**完全没反应** | 事件没订阅上 / 版本未发布 / 可用范围没加自己 | 逐项核对窗口 ⑤「前提 ③」那 5 条；若 `feishu_bot` 日志里**连 `event_accepted` 都没有**，就是事件根本没推过来（配置问题），不是代码问题 |
+| 飞书机器人回**"服务暂时不可用"** | API 没起，或 `recall.api` 正在重启 | 起窗口 ②。这条卡片是**刻意的降级**（用户提问就该拿到回复），不是 bug |
+| 飞书机器人**启动即退出（退出码 2）** | `FEISHU_APP_ID` / `FEISHU_APP_SECRET` 缺一个 | 看日志 `feishu_bot.not_configured` 的 `hint`；补齐后重启 |
+| 飞书机器人启动后**约 10 秒才连上** | `import lark_oapi` 冷启动实测 **8.28s** | **正常**（SDK 急切导入它全部生成的 API），不是卡死 |
+| `pip check` 报 `lark-oapi` / `websockets` 版本冲突 | `websockets` 被顶到 ≥16 | 重新 `pip install -e ".[dev,eval]"`；`pyproject.toml` 已显式钉 `websockets>=15.0.1,<16`（**15.0.1 是六方约束唯一解**，见 `tech.md` §18 决策 19） |
 | **Qdrant 启动即 panic**：`Failed to load local shard … Wal error: Can't init WAL: Kind(WouldBlock)` | **已经有一个 Qdrant 在用这个 storage 目录**（WAL 文件被占用）—— 不是数据损坏 | 先查：`Get-Process qdrant` / `Get-NetTCPConnection -LocalPort 6333 -State Listen`。**若已有一个健康的在跑，直接关掉你刚开的那个窗口即可**（panic 的是"第二个"，第一个没受影响）；确认没有在跑再启动 |
 | 启动时 `Config file not found: config/config`、`Filesystem type check is not supported` | Qdrant 找不到**可选**的配置文件、Windows 不支持文件系统类型检查 | **正常噪音**，忽略 |
 | 手动 curl 检索返回空/异常 | `-H "X-API-Key: <本机token>"` 里的 **`<本机token>` 是占位符**，忘了替换 | 真值在 `.env` 的 `RECALL_API_KEYS`（第一个 token）；没带对 key 会返回 **401** 而不是空 |
@@ -196,6 +235,7 @@ curl.exe -s -o NUL -w "%{http_code}\n" https://recall.iamzyx.xyz/health
 | `RECALL_API_KEYS` | `.env` | `token:user` 逗号分隔；当前**两个 token 都映射 `me`**（本机一个、Coze 一个，便于单独吊销） |
 | `RECALL_WATCHDOG_API_KEY` | `.env` | watcher 调 `POST /kb/ingest` |
 | `DEEPSEEK_API_KEY` | `.env` | 胖端点 `kb_answer` 的生成 |
+| `FEISHU_APP_ID` / `FEISHU_APP_SECRET` | `.env` | 飞书入口（`recall.feishu_bot`）的应用凭证；开发者后台「凭证与基础信息」取。**两个都要有**才算配置完成 |
 | `X-API-Key`（本机 token） | `$DSH_HOME\mcp-servers.json` | DSH 经 MCP 调 Recall |
 | `X-API-Key`（Coze token） | Coze 的自定义 MCP 配置 | Coze 调 Recall |
 | `cert.pem`、`<tunnel-id>.json` | `%USERPROFILE%\.cloudflared\` | cloudflared 认证与隧道凭据（**绝不入库**） |
@@ -212,12 +252,13 @@ curl.exe -s -o NUL -w "%{http_code}\n" https://recall.iamzyx.xyz/health
 | Qdrant | `tools\qdrant\qdrant.exe`，**v1.19.1**，`127.0.0.1:6333` |
 | API | `python -m recall.api`，**只绑** `127.0.0.1:8000` |
 | watcher | `python -m recall.watchdog` |
+| **feishu_bot** | `python -m recall.feishu_bot`（roadmap R-49）—— **长连接**，**不监听任何端口** ⇒ 不需要公网、不占端口；`import lark_oapi` 冷启动 **8.28s**；**不装载模型** ⇒ 不占显存 |
 | cloudflared | `C:\Program Files (x86)\cloudflared\cloudflared.exe`，**2026.9.3** |
 | 隧道 | 名称 `recall`，ID `83a05aa9-0966-4c88-9f9d-9e918b07bf60` |
 | 域名 | `iamzyx.xyz`（**阿里云注册**，NS = `zita/paul.ns.cloudflare.com`） |
 | 公网入口 | `https://recall.iamzyx.xyz/mcp/`（Coze）、`/kb/search`（REST，需 key） |
 | 隧道配置 | `%USERPROFILE%\.cloudflared\config.yml`（模板：`tools/cloudflared/config.example.yml`） |
-| 日志 | `data\logs\api.log`、`watchdog.log`、`audit.jsonl`（审计，含 `peer`/`client_source`） |
+| 日志 | `data\logs\api.log`、`watchdog.log`、**`feishu_bot.log`**、`audit.jsonl`（审计，含 `peer`/`client_source`） |
 | 磁盘 | D 盘需留余量；全量 `pytest` 每次泄漏 0.7~1.4GB，定期 `python tools\clean_qdrant_orphans.py` |
 
 ---

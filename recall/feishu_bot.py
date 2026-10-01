@@ -545,7 +545,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     settings = Settings.from_env()
-    configure_logging(settings, level=args.log_level, component="recall.feishu_bot")
+    configure_logging(settings, level=args.log_level, component="feishu_bot")
 
     if not settings.feishu_enabled:
         logger.error(
