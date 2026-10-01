@@ -523,6 +523,13 @@ created: 2026-09-04
     ⑤ 查看 `data/logs/audit.jsonl` 应有一行行 JSON 记录，且**不含 token**。
 - [ ] **R-41** 新 Connector：**平台已定 = 飞书**（项目工程师 2026-09-30 批准，属任务范围变更）。
     按 Connector 协议新增，不改管道其余部分 —— **但有一处必改**：见 R-41c 的账本隔离缺陷。
+    - 🚨 **本节定义已作废（改向，2026-10-01 项目工程师拍板）** —— 原定义假设"飞书里放着我的笔记"，
+      该前提**不成立**（项目工程师原话："我的飞书里面没有笔记，我只是希望我能通过飞书来使用我的 RAG"）。
+      飞书在本项目里的正确角色是**交互入口（客户端）**，不是**内容源**。⇒ 本节以下内容**仅作历史存档**，
+      新定义见 **R-49**。存量处置：`R-41d(1/2)` 的 `feishu_blocks.py`（+13 用例）**归档停用**；
+      `R-41d(2/2)` / `R-41e` / `R-41f` / `R-41g` **不再实施**；**R-41c 保留**（多来源账本隔离是
+      通用正确性修复，与飞书角色无关）；`.env` 的 `FEISHU_APP_ID`/`FEISHU_APP_SECRET` **继续使用**
+      （R-49 机器人要用），`FEISHU_SPACE_ID` 作废。
     📌 预研已核实（2026-09-30，Context7：`/websites/open_feishu_cn_document` + `/larksuite/oapi-sdk-python`）：
     - **鉴权**：企业自建应用 `app_id`/`app_secret` → `tenant_access_token`；官方 Python SDK `lark-oapi`
       （`lark.Client.builder().app_id(..).app_secret(..).build()`，SDK 自动管理 token 与续期）。
@@ -574,6 +581,58 @@ created: 2026-09-04
     | 8 | **一期不做事件增量**：Webhook 需回调地址+验签+**按文件逐个 `files/{token}/subscribe`**（且该接口权限要求 `docs:event:subscribe`）；长连接免回调但"docx 正文编辑事件是否全支持长连接"本次未查到权威结论 | R-41g 明确延期，一期用"定时/手动全量扫描 + `content_hash` 跳过"；二期优先长连接，再核实事件覆盖 |
     | 9 | **Markdown 生成必须确定性**：同一文档两次转换输出必须逐字节一致，否则 `content_hash` 每次变 ⇒ 每次重灌 | 映射器要配"两次转换结果一致"的确定性测试；复用 `normalize_text` |
     | 10 | ⚠️ **文档字段名不一致**：示例里文本字段既有 `text_run.content`（单数）又有 `text_runs[].text`（复数） | **写代码前先拉一篇真实文档落盘 sample**，对照真实字段名，不照抄文档示例 |
+- [ ] **R-49** 飞书**交互入口**（原 R-41 改向后的正式定义；2026-10-01 项目工程师拍板选「路线 A：自写机器人」）。
+    目标：在飞书里私聊机器人提问 → 命中 Recall 检索链路 → 带 `[n]` 引用的答案回到飞书。
+    **飞书只做入口，不承载笔记。**
+    📌 技术细节已二轮核查（2026-10-01，Context7 `/websites/open_feishu_cn_document` +
+    `/larksuite/oapi-sdk-python` + **本机实测**）：
+    - **传输 = 长连接（WebSocket），不走 Webhook**：官方称长连接"大幅降低接入成本和开发周期、
+      简化本地开发环境测试、内置鉴权逻辑、后续事件推送为明文数据" ⇒ **无需公网回调**，
+      R-39 的隧道不必为它让路。
+      ✅ **本机实测通过**：`POST /callback/ws/endpoint` → `code=0`；
+      `wss://msg-frontier.feishu.cn/ws/v2` **握手成功**（随后主动关闭，无残留连接）；
+      默认 opener（走系统代理）与强制直连**两条都通**。
+    - ⚠️ **文档与实测不一致（已纠）**：SDK 文档写从 `data.endpoint.URL` 取地址，
+      **实测响应是 `data.URL`（扁平）** ⇒ 必须按实测解析（照文档写会拿到**空 URL**，v1 探针已踩）。
+    - **保活/重连参数由服务端权威下发**：实测
+      `ClientConfig = {PingInterval: 90, ReconnectInterval: 90, ReconnectNonce: 25, ReconnectCount: -1}`
+      ⇒ **无限重连**、ping 与重连均 **90 秒**量级 ⇒ 超时与日志设计按 90s 走；
+      `ReconnectCount=-1` 意味着重连必然发生 ⇒ **重放幂等是硬要求**。
+    - **必须"先 ACK、后异步"**：SDK 把 handler 的**返回值写回 socket 作为确认**（异常 ⇒ 500）
+      ⇒ handler 必须**立即返回**，耗时工作（调 `/kb/answer` → DeepSeek 数秒~十几秒）丢后台，
+      否则堵死心跳、反复重连。
+    - **依赖（已 `pip --dry-run` 实测）**：`lark-oapi==1.7.3` + `pycryptodome`
+      （复用已有 `requests` / `requests_toolbelt` / `httpx`）。`websockets` 被 SDK 约束 `<16,>=11`
+      ⇒ **`15.0.1` 是唯一可行版本**：同时满足 lark-oapi `<16`、**fastmcp `>=15.0.1`**、
+      mcp `>=15.0.1`、langgraph-sdk `<17,>=14`、langsmith `>=15.0`、uvicorn[standard] `>=13.0`；
+      且**全仓库零 websocket 代码**（grep 无命中）⇒ 降级对自有代码**无行为影响**。
+    - **回复形态 = 消息卡片**：`msg_type="interactive"` + card JSON 2.0；发送用
+      `POST /open-apis/im/v1/messages/{message_id}/reply`（直接吃事件里的 `message_id`，
+      **免 `receive_id_type`**，单聊呈引用样式）。
+    - 🚨 **`lark_md` 是 markdown 子集且需 HTML 转义**（`*`→`&#42;`、`[`→`&#91;`、`<`→`&#60;`、
+      `#`→`&#35;` 等）⇒ LLM 答案正文**不可裸灌**，必须过转义适配层；列表/代码块
+      **仅飞书 7.6+ 生效**（低版本显示升级占位图）⇒ 正文保守用「纯文本 + 加粗 + 文字链接」。
+    - **权限与配置（飞书侧 5 项，项目工程师做）**：scope `im:message` + `im:message:send_as_bot`；
+      开通「机器人」能力；开发者后台「事件与回调」选**长连接**并订阅 `im.message.receive_v1`；
+      **可用范围必须包含本人**（否则私聊搜不到机器人）；创建版本并发布。
+      ⛔ **原 R-41 那套 `wiki:*` / `docx:document:readonly` / `drive:*` 权限已不需要开。**
+    - **子步骤**：
+      - **R-49a 依赖接入**：`pyproject.toml` 增 `lark-oapi`；`websockets` 固定 `15.0.1`；
+        **刷新 editable 元数据**（`pip install -e ".[dev,eval]"` —— 现存 `pip check` 报
+        `recall` 元数据仍写 `openai<2` 而实装 3.3.0，属 09-22 装完后改过 pyproject 未重装）；
+        **重生成 `requirements.lock`**（并清理两处既存瑕疵：`httpx2` 与 `httpx` 并存、
+        `packaging @ file:///home/conda/...` 的 Linux 直链）。
+      - **R-49b `recall/lark_md.py`**：标准文本 → `lark_md` **安全转义**适配层（含超长截断），
+        配确定性用例。
+      - **R-49c `recall/feishu_bot.py`**：长连接 `lark.ws.Client` + 事件 handler（先 ACK 后异步）
+        + `event_id` **幂等去重** + 出站限流（复用 `recall/ratelimit.py::SlidingWindowLimiter`）
+        + 调 `/kb/answer`（**回环带 `X-API-Key`**）+ 卡片渲染 + reply；API 不可用时优雅降级。
+      - **R-49d 配置与编排**：`Settings.feishu_app_id` / `feishu_app_secret`（**未配置即
+        fail-closed 禁用**，仿 `RECALL_MCP_*` 既有做法）；`.env` 删除 `FEISHU_SPACE_ID` 注释行；
+        `spec/runbook.md` 增**第 5 窗口**与启动顺序（Qdrant → API → watcher/cloudflared →
+        **feishu_bot**）；`tech.md` §2 选型表与 §11 目录树同步。
+      - **R-49e 验收**：新增 `tools/verify_r49.py`（WS 握手冒烟 + 端到端问答 + **重连不重答**）；
+        飞书私聊问一句 ⇒ 答案带**可核对引用**；重跑 `ruff` / `mypy strict` / `pytest` 全绿。
 - [ ] **R-42** 检索调优 A/B：top_k / rerank / 切分参数用黄金集 + Recall@K 并排对比，数据驱动决策（tech.md §10 触发点）。
     ✅ 预研（2026-09-25，Context7 核实 + 本机核验）：① "同文档多样性约束"候选**有现成服务器能力**——
     qdrant-client 1.19.1 的 `AsyncQdrantClient.query_points_groups(group_by=..., limit=..., group_size=...)`
@@ -757,14 +816,14 @@ created: 2026-09-04
 ## 六、 当前进度快照（每步完成/受阻后更新）
 
 - **当前阶段**：🎉 **Phase 0~6 全部完成** —— 首版交付 + R-38 / R-39 / R-42 / R-47 / R-48 全部落地并验收；
-  **仅剩 R-40 真实验收（你说"下次再说"）与 R-41 新 Connector（待你选平台）**
-- **当前步骤**：**R-41d（1/2）完成（2026-09-30）** —— 飞书 `blocks` → Markdown 映射器
-  `recall/connectors/feishu_blocks.py` + **13 项用例**（纯函数，不需 GPU/Qdrant）。**卡点已定位**：
-  飞书应用**权限尚未开通**（探针实测 `code 99991672`，缺 `wiki:wiki:readonly` /
-  `docx:document:readonly` / `drive:drive:readonly`）⇒ 需在开放平台「权限管理」勾选后
-  **创建版本并发布**；走知识库还要把**应用加进知识库成员**（否则接口返回空列表、不报错）。
-  ⇒ **下一步**：权限生效后，探针即可列出 `space_id`，随后写 R-41d（2/2）真实 API 客户端
-  （httpx 直写 + token 缓存/续期 + 5 QPS 限速 + 错误隔离），再接 R-41e/f。
+  **Phase 7（飞书交互入口）开工中**：R-41 已**改向**（内容源 ⇒ 交互入口），飞书方向正式定义为 **R-49**；
+  仍剩 R-40 真实验收（你说"下次再说"）
+- **当前步骤**：**R-49 开工（2026-10-01）** —— 飞书**交互入口**（原 R-41 改向）。
+  已完成二轮技术核查（长连接选型、依赖求解、WSS 握手本机实测、`lark_md` 转义隐患、卡片回复形态），
+  结论写入 §四 R-49。**正在做 R-49a（依赖接入）**。
+  ⛔ **旧卡点作废**：原"待开飞书 `wiki:*`/`docx:*`/`drive:*` 只读权限 + 把应用加进知识库成员"的前提
+  （"飞书里放着我的笔记"）**不成立** ⇒ 那些权限**不再需要开**；飞书侧只剩 5 项
+  （`im:message` + `im:message:send_as_bot` + 机器人能力 + 事件订阅长连接 + 可用范围 + 发布版本）。
 - **R-41c（已完成，2026-09-30）**：🔴 **多来源账本隔离**（数据事故级缺陷修复）：
   `ingest.py::_reconcile_deleted` 现按 `source_types` **收窄对账范围**（否则跑一次 `--source feishu`
   会删光 65 篇 Obsidian 笔记）；新增 `--source`（未知值**大声失败**）+ `_SUPPORTED_SOURCES`；
@@ -789,15 +848,13 @@ created: 2026-09-04
   ③ **R-40 真实验收下次再说**；④ **R-48 批准**，已实施完毕
 - **未通过项**：R-02（官方源网络超时，已走 R-02b）、R-03（Docker 未运行，已走 R-03b）
 - **待请示事项**（以下为**非阻塞**的后续选择）：
-  - **需你拍板（2026-09-30 收敛后只剩 1 项 + 3 个可选）**：
-    1. **R-41 新 Connector —— ✅ 平台已定：飞书（2026-09-30 项目工程师批准）**。细化步骤已写入 §四
-       （**R-41a 飞书侧准备 → R-41b 预研核实 → R-41c 多来源账本隔离 → R-41d Connector 实现 →
-       R-41e 配置与依赖 → R-41f 幂等与验收 → R-41g 增量触发（二期）**）。
-       🔴 **现已查明一个必须先修的前置缺陷（R-41c）**：`ingest.py::_reconcile_deleted` 对账范围是
-       **注册表全部文档**，跑一次纯飞书 run 会把 65 篇 Obsidian 笔记**全部当成"源侧已删"删掉**。
-       ⇒ **待你两项**：① 在飞书建**企业自建应用**并开只读权限、把 `app_id`/`app_secret` 给我；
-       ② 告诉我要接入**哪个内容源**（知识库空间 wiki / 云空间文件夹 drive）—— 若选 wiki，
-       把那个知识库的链接或 `space_id` 给我即可。
+  - **需你拍板（2026-10-01 收敛后只剩 1 项 + 3 个可选）**：
+    1. **R-41 / R-49 飞书方向 —— ✅ 已改向并定案（2026-10-01 项目工程师拍板）**。
+       原定义（飞书 = **内容源**）**作废**：项目工程师明确"我的飞书里面没有笔记，我只是希望我能
+       通过飞书来使用我的 RAG" ⇒ 飞书是**交互入口**。原 `R-41d(2/2)` / `R-41e` / `R-41f` / `R-41g`
+       **不再实施**；`feishu_blocks.py` + 13 用例 **归档停用**；**R-41c 保留**（通用正确性修复）。
+       新定义 **R-49（长连接机器人 + 消息卡片，子步骤 a~e）** 已写入 §四，技术细节二轮核查完毕
+       （含 **WSS 握手本机实测通过**）。**唯一待你做的**：飞书侧 5 项配置（见 §四 R-49 末尾清单）。
     - ✅ ~~R-39 最后一条验收~~ → **已完成（2026-09-30）**：Coze 用正式域名提问、引用可核对 ⇒ R-39 **已通过**。
     - ✅ ~~Qdrant 安全加固~~ → **已完成（2026-09-30）**：绑定层 `127.0.0.1` + 网络层防火墙 `Block`，
       实测同网段已**不可达**；详见 `spec/runbook.md` **§7.1**。
@@ -845,13 +902,12 @@ created: 2026-09-04
   本机 D 盘从 7.76GB 清到 14.84GB）；④ 保持 D 盘余量充裕
 - **验收实测**（2026-09-24，项目工程师执行）：摄取 65 篇 0 失败；`/health` ok（972 点 / 65 篇）；检索 **Recall@1=0.767 / @3=0.933 / @5=0.933 / @10=1.000 / MRR=0.860**（与基线逐位一致）；Ragas **引用一致性 1.000 / faithfulness 0.858 / answer_relevancy 0.758**；DSH 问答带 `[n]` 引用通过
 - **验收实测**（2026-09-25，项目工程师执行）：**R-45 15/15 全绿**（`python tools\verify_r45.py`）
-- **本文件版本**：v0.34.0（2026-09-30 ✅ **R-41d（1/2）：飞书 blocks → Markdown 映射器 + 13 项用例**
-  （纯函数；实测踩出两个真问题并修掉：`elements` 两种挂法会让整篇转空、`child_ids` 边遍历边建会让
-  表格单元格全丢）。R-41a 侧进展：**凭据已写入 `.env`**（`tenant_access_token` 实测拿到 ⇒ 凭据有效），
-  但**应用权限未开通**（`99991672`）⇒ 待项目工程师在开放平台勾权限 + 发布版本。
-  **待你**：① 飞书权限（wiki/docx/drive 只读）+ 发布 + 把应用加进知识库成员；② 停一次 API 让我补跑
-  全量 gates；③ 可选：R-40 最小验收、重跑 `promptfoo`、Qdrant 索引失败降级为告警；
-  ④ 实现细节背书（老账）**）
+- **本文件版本**：v0.35.0（2026-10-01 ⛔ **R-41 改向：飞书由「内容源」改为「交互入口」，新定义 = R-49**
+  （长连接机器人 + 消息卡片）。技术细节二轮核查：长连接选型、`websockets==15.0.1` 唯一解、
+  **WSS 握手本机实测通过**、`data.URL` 与文档不符、`lark_md` 需 HTML 转义、90s 保活 + 无限重连
+  ⇒ 重放幂等必做。存量 `feishu_blocks.py` + 13 用例 **归档停用**；**R-41c 保留**。
+  **待你**：① 飞书侧 5 项配置（§四 R-49）；② 停一次 API 让我补跑全量 gates；
+  ③ 可选：R-40 最小验收、重跑 `promptfoo`、Qdrant 索引失败降级为告警；④ 实现细节背书（老账）**）
 
 ---
 
@@ -992,3 +1048,5 @@ created: 2026-09-04
 | 2026-09-26 | R-47 | ✅ **实施：「提了名没解释」的回答模板（四处同步）** | ① `recall/llm.py::SYSTEM_PROMPT`：新增第 3 条（证据只提到术语却未解释 ⇒ 必须写明"只提及、未解释"，不得展开成原理、不得用自身知识补充），原 3/4 条顺延为 4/5；② `recall/assemble.py::FIDELITY_RULES`：新增第 3 条同规则（原 3~5 顺延），并在常量文档串里写明它与 2026-09-24 回退的"相邻主题"路线的**判据差异**；③ `skill/recall-assembly.md`：把「三段式模板」升级为「**两种情形** + 三段式」——新增**情形 B**（怎么认／为什么高分不等于能回答／三段处置／底线"提到过≠解释过"），并补 A/B 判别表；④ `ASSEMBLY.md` 同步（无 skill 时的兜底）⇒ 已把 skill 复制到 `$DSH_HOME/skills/recall-assembly.md`（**7697 字节**，哈希与仓库副本一致）。新增 `tests/test_answer_template.py`（5 项）与 `tools/verify_r47.py` | ⚠️ **判据必须是「证据解释了问题吗」**，不是"证据讲的是不是这个问题"：后者 2026-09-24 实测会让**过度拒答**复发 ⇒ 用例专门钉住"常量里不许出现『相邻主题』"。⚠️ 胖端点**无联网能力**：它只能声明"只提及未解释"，**联网那半只能由 DSH Agent 做** —— 故 `verify_r47.py` 分三类判读（门槛拦下 / 模板声明 / 硬答）并附**黄金集对照组**防过度拒答，DSH 那半仍列人工 |
 | 2026-09-26 | R-42 | 🔴 **`.env` 落地引发的测试假红 + 根治（不是打补丁）** | 把 `RECALL_EVIDENCE_MIN_SCORE=0.60` 写进 `.env` 后，全量跑立刻出现 **1 项真实失败**：`test_config.py::test_evidence_threshold_defaults_to_disabled` —— 它 `delenv` 后断言**代码默认值** 0.0，而 `Settings.from_env()` 走 `load_dotenv(override=False)`，`.env` 里的 0.60 就漏了进来。修复分两步：① `tests/conftest.py` 直接赋值 `RECALL_EVIDENCE_MIN_SCORE=0.0`（对症）；② **根治**：`recall/config.py` 新增 `RECALL_SKIP_DOTENV`（真值 ⇒ `from_env` **完全不读** `.env`），`conftest` 置 `1` ⇒ **测试会话与开发者个人 `.env` 彻底隔离** | 为什么值得根治：同类假红这已是**第三次**（`RECALL_API_KEYS`、`RECALL_MCP_TOOL_POLICY`、现在的门槛），前两次都是"在 conftest 里逐个键直接赋值"——**那是对策，每来一个进 `.env` 的键就要再补一次**。现在语义变成"用例只认进程环境与代码默认值"，一次解决。⚠️ 也解释了为什么"全量 gates"不能省：这条改动**只在 `.env` 有值时才暴露** |
 | 2026-09-26 | — | ⚠️ **更正：Qdrant 1.19.1 只是"大幅降低频率"，并未消除该故障** | 2026-09-25 那条"✅ 已解决：升级 1.19.1 ⇒ 故障消失，根因确认"**下得太满**，现更正：今天（09-26）三次全量跑里 **2 次各出现 1 项**同签名失败 —— `test_store.py::test_ensure_collection_rejects_mixed_embedding_version`（`index:visibility`）与 `test_ingest.py::test_broken_document_keeps_previously_indexed_chunks`（`index:updated_at_ts`），报文仍是 `500 + Not recovered from previous error: IO Error: 拒绝访问 (os error 5)`。**单跑该用例即通过**；再用独立探针复现（新建 collection + 依次建 `doc_id`/`groups`/`updated_at_ts`/`visibility` 四个索引）**全部成功** ⇒ 判定为**瞬时、可自愈**，且**当前运行态健康** | 频次对比：1.19.0 时代是"每跑必炸 3~4 项"，1.19.1 之后是"偶发 1 项" ⇒ 升级**仍然值得**，但**根因未完全确认**。已排除：磁盘余量、杀毒（实时防护 **Disabled**、无篡改保护）、文件系统（NTFS）、多实例（只有 1 个 `qdrant.exe`）。📌 剩下两个未验证方向：① Qdrant 仍存在的 segment/CoW 竞态（该 500 会让**整个运行期**进入"不回退"状态，重试无用）；② **在 Qdrant 运行时用 `tools/clean_qdrant_orphans.py` 删目录**（今天做过）可能留下失效句柄。**候选缓解（未实施，需批准）**：把"建 payload 索引失败"从**致命**降为**告警并继续**（索引是性能优化、不是正确性前提），另加运行期自愈提示 |
+| 2026-10-01 | **R-41→R-49** | 🚨 **改向登记：飞书由「内容源」改为「交互入口」** | 项目工程师指出真实需求是「**通过飞书使用我的 RAG**」，而原 R-41 假设「飞书里放着我的笔记」——**该前提不成立**（飞书里一篇笔记都没有）。处置：① §四 R-41 加**改向横幅**（原定义**存历史、不删**）；② 飞书方向正式定义为 **R-49**（长连接机器人 + 消息卡片，子步骤 a~e 已写入 §四）；③ `R-41d(2/2)` / `R-41e` / `R-41f` / `R-41g` **不再实施**；④ `recall/connectors/feishu_blocks.py` + `tests/test_feishu_blocks.py`（13 项）**归档停用**（文件与用例保留，登记为「前提不成立而停用」）；⑤ **R-41c 保留**（多来源账本隔离是通用正确性修复，与飞书角色无关）；⑥ `.env` 的 `FEISHU_APP_ID`/`FEISHU_APP_SECRET` **继续使用**（机器人要用），`FEISHU_SPACE_ID` 作废。`tech.md` §2/§11 同步 | ⚠️ **这是一次任务范围反向变更**（原定「新增内容源」变成「新增客户端」）：方向搞反导致 `feishu_blocks.py` 整块工作失去用途。教训——**批准「平台」之前必须先确认该平台的「角色」（源 or 入口）**；我在 R-41b 只确认了「平台 = 飞书」就往下推了 |
+| 2026-10-01 | R-49 | **技术细节二轮核查（Context7 + 本机实测）—— 6 项会改变实现的事实** | ① **长连接 vs Webhook 定型为长连接**：官方称其「降低接入成本、免公网、内置鉴权、事件明文」⇒ **不走 R-39 隧道**；② ✅ **本机实测**：`POST /callback/ws/endpoint` → `code=0`，`wss://msg-frontier.feishu.cn/ws/v2` **握手成功**（随后主动关闭、无残留），默认 opener 与强制直连**两条都通** ⇒ **传输层无结构性阻塞**；③ ⚠️ **文档与实测不符**：SDK 文档称从 `data.endpoint.URL` 取地址，实测是 **`data.URL`（扁平）**（照文档写会拿到**空 URL**）；④ `ClientConfig` 为**服务端下发**：`PingInterval=90` / `ReconnectInterval=90` / `ReconnectNonce=25` / **`ReconnectCount=-1`（无限重连）** ⇒ 超时按 90s 量级设计，且**重放幂等是硬要求**；⑤ **依赖求解**：`websockets` 被 lark-oapi 约束 `<16,>=11`，逐查 6 个依赖方（lark-oapi `<16` / **fastmcp `>=15.0.1`** / mcp `>=15.0.1` / langgraph-sdk `<17,>=14` / langsmith `>=15.0` / uvicorn[standard] `>=13.0`）⇒ **`15.0.1` 是唯一解**；全仓库零 websocket 代码 ⇒ 降级对自有代码**无行为影响**；⑥ 🚨 **`lark_md` 是 markdown 子集且需 HTML 转义**（`*` / `[` / `<` / `#` ⇒ 实体），且列表与代码块**仅飞书 7.6+ 生效** ⇒ 答案正文**不可裸灌**，须有转义适配层 | ⚠️ **纠正我上一轮的两处表述**：① 我曾把 `websockets` 归属为「uvicorn[standard] 传递引入」，实测 `Required-by: **fastmcp**, langgraph-sdk, langsmith`（**fastmcp 正是我们的 MCP 服务端**）；② 我曾以「风险极低」的**定性猜测**作结，实际应给出的是**约束求解**（15.0.1 是唯一解）。另新发现两个**独立于本步骤**的环境问题并登记待办：`pip check` 因 **editable 元数据陈旧**（元数据写 `openai<2`、实装 3.3.0，09-22 装完后改过 pyproject 未重装）而失败；`requirements.lock` 是**全环境冻结**（192 包含 dev+eval extras）且带两处瑕疵（`httpx2` 与 `httpx` 并存、`packaging @ file:///home/conda/...` 的 Linux 直链）⇒ 由 R-49a 一并处置 |

@@ -42,8 +42,9 @@ created: 2026-09-04
 | 检索 | **混合（dense+sparse）+ RRF + Rerank 精排** | 2026 生产基线三件套 |
 | 切分 | **两级级联**：① 按 `#/##` 标题层级主切；② 节超 **MAX=800 token** 时递归切分（`\n\n→\n→句号→空格` 优先级）兜底，overlap ≈ 100 字符 | 子块继承 `heading_path` + `sub_index`；导航类小节（<100 token）不合并不重切 |
 | 文档注册表 | **SQLite 单文件**（doc_id/hash/chunk_ids/indexed_at） | 增量跳过 + 孤儿清理的账本；权限 S3 阶段的 user/group 表也放这里 |
-| 摄取 | Connector 接口（v1 = Obsidian 文件系统；飞书见 roadmap R-41） | 幂等 upsert + 断点续传；重灌 = 同一管道参数化（collection/model/chunker/force）；**来源用 `--source` 选（一次 run 一个来源）**，见 §5.0 |
+| 摄取 | Connector 接口（v1 = Obsidian 文件系统；预留语雀/网页） | 幂等 upsert + 断点续传；重灌 = 同一管道参数化（collection/model/chunker/force）；**来源用 `--source` 选（一次 run 一个来源）**，见 §5.0。🚫 **飞书不在此列**：2026-10-01 已改向为**交互入口**（见下表"飞书入口"行与 §18），`feishu_blocks.py` 归档停用 |
 | 接入 | **REST + MCP 双口**（FastMCP 挂进 FastAPI，同端口） | MCP：DSH/Coze；REST：客服/业务系统 |
+| 飞书入口 | **自建应用 + 长连接机器人**（`python -m recall.feishu_bot`），回复**消息卡片** | roadmap **R-49**（原 R-41 改向）。**长连接免公网回调** ⇒ 不走 R-39 隧道；依赖 `lark-oapi` + **`websockets==15.0.1`**（六方约束的唯一解）；卡片正文须过 `lark_md` 转义（§18 决策 18/19） |
 | 组装 | **瘦核心共享**（kb_search 止步于证据） + **胖端点**（kb_answer 内部走完检索→组装→生成） | 组装规范独立成 skill，交给 agent 消费 |
 | 权限 | 单用户 + **四阶段扩展路线**（见 §7） | 字段与接口第一天就位，将来加代码不加重构 |
 | LLM | DeepSeek API | 仅胖端点与 agent 侧使用 |
@@ -401,10 +402,10 @@ project/Recall/
 ├─ spec/tech.md                # 本文档（技术栈决策记录）
 ├─ spec/roadmap.md             # 开发路线图与问题/变更日志（含"只增不改"铁律）
 ├─ spec/code_standards.md      # 代码与工程规范
-├─ spec/runbook.md             # **启动与运维手册**：四个窗口的启动命令/顺序/验收/排查（R-39 收尾产物）
+├─ spec/runbook.md             # **启动与运维手册**：五个窗口的启动命令/顺序/验收/排查（R-39 收尾产物；R-49 增第 5 窗口）
 ├─ ingest.py                   # 摄取 CLI：--update / --rebuild --collection --model
 ├─ recall/                     # 包名 recall
-│  ├─ connectors/              # base.py(Connector) + obsidian.py + feishu_blocks.py(块→Markdown，R-41d)
+│  ├─ connectors/              # base.py(Connector) + obsidian.py + feishu_blocks.py(块→Markdown，**R-41d 已归档停用**)
 │  ├─ chunker.py               # 两级级联切分（标题主切 + 递归兜底）
 │  ├─ embedder.py              # BGEM3FlagModel: dense+sparse（GPU, fp16, batch 16~32, 版本从 spec 注入）
 │  ├─ registry.py              # SQLite 文档注册表
@@ -415,9 +416,11 @@ project/Recall/
 │  ├─ audit.py                 # 审计（JSON lines，绝不写密钥）
 │  ├─ ratelimit.py             # 写端点滑动窗口限流（code_standards §6.1）
 │  ├─ watchdog.py              # vault 监听 → 增量摄取（R-38，不自行装载模型）
+│  ├─ lark_md.py               # 标准文本 → 飞书 `lark_md` 安全转义适配层（R-49b）
+│  ├─ feishu_bot.py            # 飞书长连接机器人 → /kb/answer → 消息卡片（R-49c，不自行装载模型）
 │  └─ api.py                   # FastAPI：REST + FastMCP 挂载 + 身份中间件（同端口 8000）
 ├─ eval/                       # golden_set.jsonl + eval_retrieval.py + eval_ragas.py + measure_scores.py + promptfoo/
-├─ tools/                      # verify_r45.py（R-45 验收）、verify_phase6.py（Phase 6 验收）等
+├─ tools/                      # verify_r45.py（R-45）、verify_phase6.py（Phase 6）、verify_r49.py（飞书入口，R-49e）等
 ├─ docs/                       # R-39-public-access.md（公网接入手册：路线/前置/Coze 侧/验收/回滚）
 ├─ skill/recall-assembly.md    # → 复制到 ~/.dsh/skills/
 ├─ data/                       # qdrant 存储、registry.db、日志（gitignore）
@@ -722,3 +725,58 @@ Bug Fixes **第一条**正是：
     - **不变量**：门槛仍是**门槛不是裁剪**（证据带原样保留）；`/kb/search` 只多一个可选开关，
       既有字段与状态码未变。
     - 记录位置：§4.1、`eval/BASELINE.md` §7.6、roadmap R-42 与 §七。
+
+## 18. 关键决策记录（2026-10-01，飞书改向）
+
+18. **飞书在本项目里的角色 = 交互入口，不是内容源**（项目工程师 2026-10-01 拍板）。
+    - **背景**：原 roadmap R-41 把飞书定义为**新 Connector（内容源）**，并已据此完成
+      `recall/connectors/feishu_blocks.py`（blocks → Markdown 映射器 + 13 项用例）。
+      但项目工程师指出真实需求是「**通过飞书来使用我的 RAG**」，且**飞书里一篇笔记都没有**
+      ⇒ 原定义的前提**不成立**。
+    - **决定**：① 飞书方向正式定义为 **R-49（长连接机器人 + 消息卡片）**，数据流向为
+      **飞书 → Recall → 飞书**（提问进、引用答案出），**不写入知识库**；
+      ② `feishu_blocks.py` + 13 用例 **归档停用**（文件保留，登记为「前提不成立而停用」）；
+      ③ `R-41d(2/2)` / `R-41e` / `R-41f` / `R-41g` **不再实施**；④ **R-41c 保留**
+      （多来源账本隔离是通用正确性修复，与飞书角色无关）；⑤ `.env` 的
+      `FEISHU_APP_ID` / `FEISHU_APP_SECRET` **继续复用**（机器人要用），`FEISHU_SPACE_ID` 作废。
+    - **不再需要的飞书权限**：`wiki:*` / `docx:document:readonly` / `drive:*`（原 R-41a 清单）。
+    - **仍需的飞书权限**：`im:message` + `im:message:send_as_bot` + 「机器人」能力 +
+      事件订阅 `im.message.receive_v1`（**长连接**方式）+ 可用范围含本人 + 创建版本并发布。
+    - **为什么这是一条要写进契约的决策**：它把「飞书」从**摄取层**搬到了**接入层**——
+      同一个第三方在两层的实现、权限、依赖完全不同，写错层的代价是整块工作作废（本次即如此）。
+    - **不变量**：`Connector` 协议、摄取管道、检索链路、API 契约**全部未变**；
+      本决定只**新增一个客户端**，不改任何既有契约。
+    - 记录位置：roadmap §四 R-41（改向横幅）与 **R-49**、§六、§七 2026-10-01 两条。
+
+19. **飞书入口的技术选型：长连接 + `lark-oapi` + 消息卡片**（roadmap R-49，2026-10-01 核查定案）。
+    - **传输 = 长连接（WebSocket），不用 Webhook**：官方称其「降低接入成本、简化本地开发测试、
+      **内置鉴权**、后续事件推送为明文数据」；且**无需公网回调地址** ⇒ 不必把 R-39 的隧道面扩大。
+      ✅ **本机实测**：`POST /callback/ws/endpoint` → `code=0`；
+      `wss://msg-frontier.feishu.cn/ws/v2` **握手成功**（随后主动关闭，无残留连接）；
+      默认 opener（走系统代理）与强制直连**两条都通**。
+    - ⚠️ **文档与实测不一致**：SDK 文档称从 `data.endpoint.URL` 取地址，
+      **实测是 `data.URL`（扁平）** ⇒ **以实测为准**（照文档写会拿到**空 URL**，探针 v1 已踩）。
+    - **保活参数由服务端下发**：实测 `PingInterval=90` / `ReconnectInterval=90` /
+      `ReconnectNonce=25` / **`ReconnectCount=-1`（无限重连）** ⇒ 超时按 **90s 量级**设计；
+      **重连会重放事件** ⇒ **按 `event_id` 幂等去重是硬要求**。
+    - **必须「先 ACK、后异步」**：SDK 把 handler 的**返回值写回 socket 作为确认**（异常 ⇒ 500）
+      ⇒ handler 立即返回，`/kb/answer`（要调 DeepSeek）丢后台，否则堵死心跳、反复重连。
+    - **依赖决策**：`lark-oapi` 约束 `websockets<16,>=11`；逐查全部 6 个依赖方后
+      **`15.0.1` 是唯一解**（同时满足 lark-oapi `<16`、**fastmcp `>=15.0.1`**、
+      mcp `>=15.0.1`、langgraph-sdk `<17,>=14`、langsmith `>=15.0`、uvicorn[standard] `>=13.0`）。
+      全仓库**零 websocket 代码** ⇒ 把 `websockets` 从 16.1.1 降到 15.0.1
+      **对自有代码无行为影响**。⚠️ 记录一处**曾出错的判断**：初版曾把 `websockets` 归属为
+      「uvicorn[standard] 传递引入」，实测 `Required-by: **fastmcp**, langgraph-sdk, langsmith`
+      —— **fastmcp 正是我们的 MCP 服务端**。
+    - **回复形态 = 消息卡片**（card JSON 2.0，`msg_type="interactive"`），发送用
+      `POST /open-apis/im/v1/messages/{message_id}/reply`（直接吃事件里的 `message_id`，
+      **免 `receive_id_type`**，单聊呈引用样式）。
+      🚨 **`lark_md` 是 markdown 子集且需 HTML 转义**（`*`→`&#42;`、`[`→`&#91;`、`<`→`&#60;`、
+      `#`→`&#35;` …），故**新增 `recall/lark_md.py` 适配层**（R-49b）——LLM 答案正文**不可裸灌**；
+      列表与代码块**仅飞书 7.6+ 生效** ⇒ 正文保守用「纯文本 + 加粗 + 文字链接」。
+    - **进程模型**：`python -m recall.feishu_bot` 为**第 5 个常驻进程**，**不自行装载模型**
+      （只 HTTP 调本机 API），符合 R-23b「不双份 bge-m3」；启动顺序
+      Qdrant → API → watcher/cloudflared → **feishu_bot**（见 `spec/runbook.md`）。
+    - **不变量**：不新增 REST 端点、不改 MCP 工具名与既有端点字段；
+      飞书侧只**消费**既有 `/kb/answer`。
+    - 记录位置：roadmap §四 R-49、§七 2026-10-01 第二条、`spec/runbook.md`。
