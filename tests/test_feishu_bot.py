@@ -240,6 +240,17 @@ def test_card_is_a_schema_2_markdown_card() -> None:
     assert card["header"]["title"]["content"]
 
 
+def test_card_config_keeps_update_multi_true() -> None:
+    """🔴 回归：``update_multi=False`` 会被飞书**拒收整张卡片**。
+
+    实测（2026-10-03，`tools/diagnose_r49.py` D 节逐个试形态）：
+    ``code=230099`` / ``ext=ErrCode: 300302; ErrMsg: update_multi is false``；
+    而 ``True`` / 不带 ``config`` / 旧版卡片 三种都能发出去。
+    外部现象是"消息收到了、答案也生成了，但回复发不出去"，只留一条 `reply_failed`。
+    """
+    assert build_card("正文")["config"]["update_multi"] is True
+
+
 def test_card_text_is_escaped_and_carries_references() -> None:
     text = render_card_text(_ANSWER)
     assert "&#91;1&#93;" in text  # 引用编号已转义，不会变成链接语法
@@ -410,17 +421,25 @@ async def test_process_replies_with_the_escaped_answer() -> None:
     assert "&#91;1&#93;" in _card_markdown(card)
 
 
-async def test_process_degrades_to_a_card_when_answering_fails() -> None:
-    """回答失败也必须回一张卡片 —— 用户提问了就该拿到回复，哪怕是降级说明。"""
+async def test_process_degrades_to_a_card_when_answering_fails(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """回答失败也必须回一张卡片 —— 用户提问了就该拿到回复，哪怕是降级说明。
+
+    顺带钉住：失败**原因**要出现在日志的 message 里（`extra` 会被格式器丢掉）。
+    """
     answers = FakeAnswerSource(error=RuntimeError("api down"))
     replies = FakeReplySender()
     bot = FeishuBot(answer_source=answers, reply_sender=replies)
 
-    await bot.process(IncomingMessage(event_id="e", message_id="om-1", text="问"))
+    with caplog.at_level(logging.WARNING, logger="recall.feishu_bot"):
+        await bot.process(IncomingMessage(event_id="e", message_id="om-1", text="问"))
     bot.close()
 
     card = replies.replies[0][1]
     assert SERVICE_UNAVAILABLE_TEXT in _card_markdown(card)
+    assert "feishu_bot.answer_failed" in caplog.text
+    assert "RuntimeError" in caplog.text and "api down" in caplog.text
 
 
 async def test_a_failing_reply_sender_does_not_raise() -> None:
@@ -431,6 +450,30 @@ async def test_a_failing_reply_sender_does_not_raise() -> None:
     bot = FeishuBot(answer_source=FakeAnswerSource(), reply_sender=BrokenSender())
     await bot.process(IncomingMessage(event_id="e", message_id="om-1", text="问"))
     bot.close()
+
+
+async def test_reply_failure_logs_the_error_detail_in_the_message(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """诊断信息必须进 **message**：`LOG_FORMAT` 丢弃 `extra`。
+
+    2026-10-03 就是因为 `reply_failed` 只打了事件名、详情在 extra 里被丢掉，
+    "卡片被飞书拒收"完全看不出来，白多排查一轮。
+    """
+
+    class BrokenSender:
+        async def reply_card(self, message_id: str, card: object) -> None:
+            raise RuntimeError("Failed to create card content")
+
+    bot = FeishuBot(answer_source=FakeAnswerSource(), reply_sender=BrokenSender())
+    try:
+        with caplog.at_level(logging.WARNING, logger="recall.feishu_bot"):
+            await bot.process(IncomingMessage(event_id="e", message_id="om-1", text="问"))
+        assert "feishu_bot.reply_failed" in caplog.text
+        assert "RuntimeError" in caplog.text
+        assert "Failed to create card content" in caplog.text
+    finally:
+        bot.close()
 
 
 def test_handle_event_acks_before_the_answer_completes() -> None:

@@ -197,7 +197,12 @@ def build_card(body_text: str, *, title: str = CARD_TITLE) -> dict[str, Any]:
     """
     return {
         "schema": "2.0",
-        "config": {"update_multi": False},
+        # 🔴 **必须是 True**（2026-10-03 实测逼出来的）：写 `False` 时飞书**直接拒收整张卡片** ——
+        # `code=230099` / `ext=ErrCode: 300302; ErrMsg: update_multi is false`。
+        # 外部现象是"机器人收到了消息、也答出来了，但回复发不出去"，日志只有一条 `reply_failed`。
+        # ⚠️ 别把这里"顺手"改回 False。`tools/diagnose_r49.py` 的 D 节会把四种卡片形态逐个试，
+        # 用飞书的返回码决定哪个能用（当时证明 True / 无 config / 旧版卡片三种都行）。
+        "config": {"update_multi": True},
         "header": {
             "title": {"tag": "plain_text", "content": title},
             "template": CARD_TEMPLATE,
@@ -508,9 +513,12 @@ class FeishuBot:
             result = await self._answer_source.answer(incoming.text)
             body = render_card_text(result)
         except Exception as exc:  # noqa: BLE001 - 任何失败都必须降级成"有回复"
+            # ⚠️ 错误详情写在 **message** 里：`LOG_FORMAT` 丢弃 `extra`。
             logger.warning(
-                "feishu_bot.answer_failed",
-                extra={"message_id": incoming.message_id, "error": type(exc).__name__},
+                "feishu_bot.answer_failed message_id=%s error=%s: %s",
+                incoming.message_id,
+                type(exc).__name__,
+                exc,
             )
             body = to_lark_md(SERVICE_UNAVAILABLE_TEXT)
         await self._send(incoming.message_id, build_card(body))
@@ -531,9 +539,13 @@ class FeishuBot:
         try:
             await self._reply_sender.reply_card(message_id, card)
         except Exception as exc:  # noqa: BLE001 - 回复失败只记日志，不能让工作线程崩
+            # ⚠️ 错误详情必须写在 **message** 里：2026-10-03 因为只打了 `reply_failed`（详情在
+            # `extra` 里被格式器丢弃），"卡片被飞书拒收"这件事完全看不出来，白多排查一轮。
             logger.warning(
-                "feishu_bot.reply_failed",
-                extra={"message_id": message_id, "error": type(exc).__name__},
+                "feishu_bot.reply_failed message_id=%s error=%s: %s",
+                message_id,
+                type(exc).__name__,
+                exc,
             )
             return
         logger.info("feishu_bot.replied", extra={"message_id": message_id})
