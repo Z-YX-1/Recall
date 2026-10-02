@@ -37,6 +37,7 @@ from collections import OrderedDict
 from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Final, Protocol
 
 import httpx
@@ -68,6 +69,9 @@ DEFAULT_OUTBOUND_RATE_WINDOW_S: Final[float] = 1.0
 
 CARD_TITLE: Final[str] = "Recall · 拾忆"
 CARD_TEMPLATE: Final[str] = "blue"
+
+FRAME_DUMP_FILENAME: Final[str] = "feishu_bot_frame.json"
+"""``--dump-frame`` 落盘的文件名（放在 ``settings.log_dir`` 下，即 ``data/logs/``）。"""
 
 SERVICE_UNAVAILABLE_TEXT: Final[str] = "Recall 服务暂时不可用（本机 API 未响应），请稍后再问一次。"
 
@@ -126,6 +130,22 @@ def extract_message(payload: Mapping[str, Any]) -> IncomingMessage | None:
     Returns:
         :class:`IncomingMessage`；非文本消息 / 缺 ``message_id`` / 正文为空时为 ``None``。
     """
+    incoming, _ = _extract(payload)
+    return incoming
+
+
+def _extract(payload: Mapping[str, Any]) -> tuple[IncomingMessage | None, str]:
+    """``extract_message`` 的真身，**多返回一个"为什么拒收"的原因**供日志使用。
+
+    拆成两个函数是为了让拒收原因**只有一个来源**：日志里打的 reason 与真正走的判定
+    是同一条代码路径，不会出现"日志说 A、实际因为 B 被拒"的漂移。
+
+    Args:
+        payload: 事件负载。
+
+    Returns:
+        ``(可处理的消息 或 None, 原因)``；成功时原因为空串。
+    """
     raw_event = payload.get("event")
     event: Mapping[str, Any] = raw_event if isinstance(raw_event, Mapping) else payload
     raw_header = payload.get("header")
@@ -133,21 +153,29 @@ def extract_message(payload: Mapping[str, Any]) -> IncomingMessage | None:
 
     raw_message = event.get("message")
     if not isinstance(raw_message, Mapping):
-        return None
-    if str(raw_message.get("msg_type") or "") != "text":
-        return None
+        return None, f"event 里没有 message（顶层键={_top_keys(payload)}）"
+    msg_type = str(raw_message.get("msg_type") or "")
+    if msg_type != "text":
+        return None, f"msg_type={msg_type!r}（只处理 text）"
 
     message_id = str(raw_message.get("message_id") or "").strip()
     if not message_id:
-        return None
+        return None, f"缺 message_id（message 键={_top_keys(raw_message)}）"
 
     text = _message_text(raw_message)
     if not text:
-        return None
+        return None, f"正文为空（content={raw_message.get('content')!r}）"
 
     # ``event_id`` 优先取 header；缺失时退化为按 ``message_id`` 去重（仍能挡住重放）。
     event_id = str(header.get("event_id") or payload.get("event_id") or "").strip() or message_id
-    return IncomingMessage(event_id=event_id, message_id=message_id, text=text)
+    return IncomingMessage(event_id=event_id, message_id=message_id, text=text), ""
+
+
+def _top_keys(node: Mapping[str, Any], limit: int = 10) -> str:
+    """把 mapping 的顶层键拼成一行，供诊断日志用（**只给键，不给值**，免泄内容）。"""
+    keys = sorted(str(key) for key in node)
+    shown = ",".join(keys[:limit])
+    return shown + ("…" if len(keys) > limit else "")
 
 
 def build_card(body_text: str, *, title: str = CARD_TITLE) -> dict[str, Any]:
@@ -385,6 +413,7 @@ class FeishuBot:
         deduper: EventDeduper | None = None,
         outbound_limiter: SlidingWindowLimiter | None = None,
         max_workers: int = 4,
+        frame_dump: Path | None = None,
     ) -> None:
         self._answer_source = answer_source
         self._reply_sender = reply_sender
@@ -397,6 +426,8 @@ class FeishuBot:
         self._executor = ThreadPoolExecutor(
             max_workers=max(1, max_workers), thread_name_prefix="feishu"
         )
+        self._frame_dump = frame_dump
+        self._frame_dumped = False
 
     def handle_event(self, payload: Mapping[str, Any]) -> None:
         """SDK 的事件回调入口：解析 → 去重 → 投递线程池，**立刻返回**（ACK）。
@@ -407,36 +438,55 @@ class FeishuBot:
         Args:
             payload: 事件负载 mapping。
         """
+        incoming, reason = _extract(payload)
         # ⚠️ **进来就记一条 INFO**（2026-10-02 排查得出的必要观测点）：
         # 事故现场是"9 次成功连接、21 小时、`event_accepted` 一条都没有"，但**分不清**
-        # 是"一帧都没到"（飞书侧问题）还是"到了但不是文本消息 / 字段形状不认识"（我们这边）。
-        # 这条 `frame_received` 就是那条分界线：**没有它就一定是飞书侧没推**。
+        # 是"一帧都没到"（飞书侧）还是"到了但没认出来"（我们这边）。这条就是那条分界线。
+        # 🔴 **诊断值必须写在 message 里**：`LOG_FORMAT` 是 `%(message)s`，
+        # `extra={...}` 会被**直接丢弃**（2026-10-02 实测：打了 extra 却在日志里一个字都看不到）。
         logger.info(
-            "feishu_bot.frame_received",
-            extra={"event_type": _event_type(payload), "msg_type": _raw_msg_type(payload)},
+            "feishu_bot.frame_received event_type=%r msg_type=%r top_keys=[%s]",
+            _event_type(payload),
+            _raw_msg_type(payload),
+            _top_keys(payload),
         )
-        incoming = extract_message(payload)
+        self._maybe_dump_frame(payload)
         if incoming is None:
-            logger.info(
-                "feishu_bot.event_ignored",
-                extra={
-                    "reason": "非文本消息或缺少 message_id / 正文为空",
-                    "event_type": _event_type(payload),
-                    "msg_type": _raw_msg_type(payload),
-                },
-            )
+            logger.info("feishu_bot.event_ignored reason=%s", reason)
             return
         if not self._deduper.first_sight(incoming.event_id):
             logger.info(
-                "feishu_bot.duplicate_event_skipped",
-                extra={"event_id": incoming.event_id, "message_id": incoming.message_id},
+                "feishu_bot.duplicate_event_skipped event_id=%s message_id=%s",
+                incoming.event_id,
+                incoming.message_id,
             )
             return
         logger.info(
-            "feishu_bot.event_accepted",
-            extra={"event_id": incoming.event_id, "message_id": incoming.message_id},
+            "feishu_bot.event_accepted event_id=%s message_id=%s",
+            incoming.event_id,
+            incoming.message_id,
         )
         self._executor.submit(self._run, incoming)
+
+    def _maybe_dump_frame(self, payload: Mapping[str, Any]) -> None:
+        """把收到的**第一帧**原样落盘（``--dump-frame`` 开启；一次性）。
+
+        为什么值得有：2026-10-02 那次"帧到了但被拒收"的排查里，日志只能给出键名，
+        而真正要判断的是**字段的嵌套形状与取值** ⇒ 直接留一份原始 JSON 最省事，
+        免得让项目工程师为同一个问题重启好几轮。
+        """
+        if self._frame_dump is None or self._frame_dumped:
+            return
+        self._frame_dumped = True
+        try:
+            self._frame_dump.parent.mkdir(parents=True, exist_ok=True)
+            self._frame_dump.write_text(
+                json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
+        except OSError as exc:
+            logger.warning("feishu_bot.frame_dump_failed error=%s", type(exc).__name__)
+            return
+        logger.info("feishu_bot.frame_dumped path=%s", self._frame_dump)
 
     async def process(self, incoming: IncomingMessage) -> None:
         """真正的处理：取回答 → 渲染卡片 → 回复（**测试直接 await 这个方法**）。
@@ -594,10 +644,12 @@ def attach_connection_hooks(client: Any) -> Any:
 
 
 def _log_reconnecting() -> None:
-    """长连接断开、正在重连。"""
+    """长连接断开、正在重连。
+
+    ⚠️ 提示写在 **message** 里：`LOG_FORMAT` 只打 `%(message)s`，`extra` 会被丢弃。
+    """
     logger.warning(
-        "feishu_bot.reconnecting",
-        extra={"hint": "长连接已断，正在重连；**此期间飞书事件不会推达，用户消息会丢**"},
+        "feishu_bot.reconnecting（长连接已断，正在重连；此期间飞书事件不会推达、用户消息会丢）"
     )
 
 
@@ -617,6 +669,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     """
     parser = argparse.ArgumentParser(description="Recall 飞书长连接机器人（roadmap R-49）")
     parser.add_argument("--log-level", default="INFO", help="日志级别，如 INFO / DEBUG")
+    parser.add_argument(
+        "--dump-frame",
+        action="store_true",
+        help="把收到的**第一帧**原样落盘（诊断用；默认关闭，不写任何内容）",
+    )
     args = parser.parse_args(argv)
 
     settings = Settings.from_env()
@@ -624,12 +681,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if not settings.feishu_enabled:
         logger.error(
-            "feishu_bot.not_configured",
-            extra={
-                "hint": "请在 .env 配齐 FEISHU_APP_ID 与 FEISHU_APP_SECRET；"
-                "并确认开发者后台已开 im:message / im:message:send_as_bot、"
-                "订阅 im.message.receive_v1（长连接）、且可用范围包含本人"
-            },
+            "feishu_bot.not_configured（请在 .env 配齐 FEISHU_APP_ID 与 FEISHU_APP_SECRET；"
+            "并确认开发者后台已开 im:message / im:message:send_as_bot、"
+            "订阅 im.message.receive_v1（长连接）、且可用范围包含本人）"
         )
         return EXIT_NOT_CONFIGURED
 
@@ -638,9 +692,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         reply_sender=HttpReplySender(
             settings.feishu_app_id or "", settings.feishu_app_secret or ""
         ),
+        frame_dump=(settings.log_dir / FRAME_DUMP_FILENAME) if args.dump_frame else None,
     )
     try:
-        logger.info("feishu_bot.starting", extra={"api": _api_base(settings)})
+        logger.info("feishu_bot.starting api=%s", _api_base(settings))
         build_ws_client(settings, bot).start()
     finally:
         bot.close()

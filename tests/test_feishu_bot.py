@@ -18,6 +18,7 @@ import json
 import logging
 import threading
 from collections.abc import Callable
+from pathlib import Path
 
 import httpx
 import pytest
@@ -535,6 +536,9 @@ def test_any_incoming_frame_is_visible_at_info_level(
 
     2026-10-02 排查时吃过这个亏：日志只有"连上了"（9 次），却分不清"事件没来"还是
     "来了但没认出来"（`event_ignored` 当时打在 DEBUG，INFO 下看不见）。
+
+    ⚠️ 诊断值必须出现在 **message** 里 —— `LOG_FORMAT` 只打 `%(message)s`，
+    `extra` 会被整个丢弃（实测：打了 extra 却在日志里一个字都看不到）。
     """
     replies = FakeReplySender()
     bot = FeishuBot(answer_source=FakeAnswerSource(), reply_sender=replies)
@@ -543,15 +547,33 @@ def test_any_incoming_frame_is_visible_at_info_level(
             bot.handle_event(_sdk_payload(msg_type="image"))
 
         names = [record.getMessage() for record in caplog.records]
-        assert "feishu_bot.frame_received" in names
-        assert "feishu_bot.event_ignored" in names
-        # ⚠️ extra 字段不在 caplog.text 里，必须断言在 record 上
-        ignored = next(r for r in caplog.records if r.getMessage() == "feishu_bot.event_ignored")
-        assert getattr(ignored, "msg_type", None) == "image"
-        assert getattr(ignored, "event_type", None) == "im.message.receive_v1"
+        received = next(m for m in names if m.startswith("feishu_bot.frame_received"))
+        ignored = next(m for m in names if m.startswith("feishu_bot.event_ignored"))
+        assert "msg_type='image'" in received  # 形状入 message，才看得见
+        assert "event_type='im.message.receive_v1'" in received
+        assert "msg_type='image'" in ignored  # 拒收原因也入 message
         assert replies.replies == []
     finally:
         bot.close()
+
+
+def test_frame_dump_writes_exactly_once(tmp_path: Path) -> None:
+    """`--dump-frame` 只落**第一帧**：诊断用，不能变成每帧写盘。"""
+    target = tmp_path / "nested" / "frame.json"
+    bot = FeishuBot(
+        answer_source=FakeAnswerSource(),
+        reply_sender=FakeReplySender(),
+        frame_dump=target,
+    )
+    try:
+        bot.handle_event(_sdk_payload(event_id="evt-first", text="第一帧"))
+        bot.handle_event(_sdk_payload(event_id="evt-second", text="第二帧"))
+    finally:
+        bot.close()
+
+    dumped = json.loads(target.read_text(encoding="utf-8"))
+    message = dumped["event"]["message"]
+    assert json.loads(message["content"])["text"] == "第一帧"  # 是**第一帧**
 
 
 def test_a_usable_frame_logs_both_received_and_accepted(
@@ -564,8 +586,8 @@ def test_a_usable_frame_logs_both_received_and_accepted(
         with caplog.at_level(logging.INFO, logger="recall.feishu_bot"):
             bot.handle_event(_sdk_payload())
         names = [record.getMessage() for record in caplog.records]
-        assert "feishu_bot.frame_received" in names
-        assert "feishu_bot.event_accepted" in names
+        assert any(m.startswith("feishu_bot.frame_received") for m in names)
+        assert any(m.startswith("feishu_bot.event_accepted") for m in names)
     finally:
         bot.close()
 
