@@ -44,6 +44,59 @@ DEFAULT_TIMEOUT_S = 180.0
 PREVIEW_CHARS = 320
 
 
+def _newest_source_mtime() -> float:
+    """项目源码里最新的 mtime（用来判断"进程是不是比代码旧"）。"""
+    newest = 0.0
+    for pattern in ("recall/**/*.py", "ingest.py"):
+        for path in REPO_ROOT.glob(pattern):
+            newest = max(newest, path.stat().st_mtime)
+    return newest
+
+
+def _api_process_start() -> float | None:
+    """找 ``recall.api`` 进程的启动时间；取不到返回 ``None``（不强依赖 psutil）。"""
+    try:
+        import psutil
+    except ImportError:
+        return None
+    for proc in psutil.process_iter(["cmdline", "create_time"]):
+        try:
+            cmdline = proc.info.get("cmdline") or []
+            if any("recall.api" in str(part) for part in cmdline):
+                return float(proc.info["create_time"])
+        except Exception:  # noqa: BLE001 - 进程可能在枚举途中退出
+            continue
+    return None
+
+
+def section_staleness() -> None:
+    """A. 运行态 vs 磁盘代码 —— **改了代码没重启进程**会让后面所有结论都作废。
+
+    2026-10-03 实测踩到：我改完提示词后连测 3 次"毫无变化"，差点得出"改动无效"的错误结论；
+    真实原因是 **API 进程比代码旧**（进程 18:48 启动，`llm.py` 02:59 才改）—— Python 不会热加载。
+    这类"假绿/假红"与 `tools/verify_phase6.py` 里那条"配置-运行态一致性"是同一类问题，
+    只不过这里比的是**代码**而不是配置。
+    """
+    print("\n=== A. 运行态 vs 磁盘代码（防「改了没重启」）===")
+    newest = _newest_source_mtime()
+    started = _api_process_start()
+    if started is None:
+        print("  [skip] 找不到 recall.api 进程（或未安装 psutil）—— 请自行确认进程比代码新")
+        return
+    if newest > started:
+        import datetime as _dt
+
+        fmt = "%Y-%m-%d %H:%M:%S"
+        print(
+            "  🔴 **陈旧进程**：源码 mtime "
+            f"{_dt.datetime.fromtimestamp(newest):{fmt}} 晚于 API 启动 "
+            f"{_dt.datetime.fromtimestamp(started):{fmt}}"
+        )
+        print("     ⇒ 下面测的是**旧代码**。请先重启 `python -m recall.api` 再解读结果。")
+    else:
+        print("  [ OK ] API 进程比所有源码都新（跑的是当前代码）")
+
+
 def load_env() -> dict[str, str]:
     """从 `.env` 读键值（只读）。"""
     out: dict[str, str] = {}
@@ -200,6 +253,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     print("Recall 答案一致性排查：瘦核心 vs 胖端点")
     print(f"问题：{args.question}")
+    section_staleness()
     env = load_env()
     api_key = default_api_key(env, args.api_key)
 
