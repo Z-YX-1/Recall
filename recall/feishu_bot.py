@@ -154,9 +154,16 @@ def _extract(payload: Mapping[str, Any]) -> tuple[IncomingMessage | None, str]:
     raw_message = event.get("message")
     if not isinstance(raw_message, Mapping):
         return None, f"event 里没有 message（顶层键={_top_keys(payload)}）"
-    msg_type = str(raw_message.get("msg_type") or "")
+    # 🔴 **字段名有两个拼法，必须都认**（2026-10-03 由 `--dump-frame` 抓到的真实帧证实）：
+    # 真实长连接帧里是 **`message_type`**，而官方文档示例 / 旧版 webhook 写的是 `msg_type`。
+    # 只认 `msg_type` 的后果不是报错，而是**每一条消息都被静默判成"非文本"**——
+    # 项目工程师因此发了 3 次消息、机器人一个字都没回。
+    msg_type = str(raw_message.get("message_type") or raw_message.get("msg_type") or "")
     if msg_type != "text":
-        return None, f"msg_type={msg_type!r}（只处理 text）"
+        return (
+            None,
+            f"message_type={msg_type!r}（只处理 text；message 键={_top_keys(raw_message)}）",
+        )
 
     message_id = str(raw_message.get("message_id") or "").strip()
     if not message_id:
@@ -552,12 +559,15 @@ def _event_type(payload: Mapping[str, Any]) -> str:
 
 
 def _raw_msg_type(payload: Mapping[str, Any]) -> str:
-    """取消息类型（``text`` / ``image`` …）；取不到返回空串。"""
+    """取消息类型（``text`` / ``image`` …）；取不到返回空串。
+
+    ⚠️ 两个拼法都要认：真实帧是 ``message_type``，文档示例是 ``msg_type``（见 :func:`_extract`）。
+    """
     raw_event = payload.get("event")
     event: Mapping[str, Any] = raw_event if isinstance(raw_event, Mapping) else payload
     message = event.get("message")
     if isinstance(message, Mapping):
-        return str(message.get("msg_type") or "")
+        return str(message.get("message_type") or message.get("msg_type") or "")
     return ""
 
 

@@ -113,18 +113,49 @@ def _sdk_payload(
     text: str = "怎么切分？",
     msg_type: str = "text",
 ) -> dict[str, object]:
-    """SDK 形状的 ``im.message.receive_v1`` 负载（``content`` 是 **JSON 字符串**）。"""
+    """**真实长连接帧**的形状（照 2026-10-03 `--dump-frame` 抓到的原始帧复刻；ID 换成假值）。
+
+    🔴 关键差异（曾让机器人**静默不回复**）：真实帧里消息类型字段是 **``message_type``**，
+    而官方文档示例写的是 ``msg_type``。夹具必须跟**真实**走，否则这条 bug 永远测不出来。
+    """
     return {
-        "header": {"event_id": event_id, "event_type": "im.message.receive_v1"},
+        "schema": "2.0",
+        "header": {
+            "event_id": event_id,
+            "event_type": "im.message.receive_v1",
+            "tenant_key": "tenant-x",
+            "app_id": "cli_x",
+        },
         "event": {
-            "sender": {"sender_id": {"open_id": "ou_x"}},
+            "sender": {
+                "sender_id": {"open_id": "ou_x", "union_id": "on_x"},
+                "sender_type": "user",
+            },
             "message": {
                 "message_id": message_id,
-                "msg_type": msg_type,
+                "chat_id": "oc_x",
+                "chat_type": "p2p",
+                "message_type": msg_type,
                 "content": json.dumps({"text": text}),
             },
         },
     }
+
+
+def test_extract_accepts_the_legacy_msg_type_spelling() -> None:
+    """文档示例用的是 ``msg_type``；老负载 / 第三方转发可能还是那个拼法 ⇒ **两种都要认**。"""
+    payload = _sdk_payload()
+    message = payload["event"]["message"]  # type: ignore[index]
+    message["msg_type"] = message.pop("message_type")
+    incoming = extract_message(payload)
+    assert incoming is not None
+    assert incoming.text == "怎么切分？"
+
+
+def test_extract_rejects_a_non_text_message_type() -> None:
+    """真·非文本消息才该被拒（回归：字段名写错会把**所有**消息都拒掉）。"""
+    assert extract_message(_sdk_payload(msg_type="image")) is None
+    assert extract_message(_sdk_payload(msg_type="")) is None
 
 
 def _card_markdown(card: dict[str, object]) -> str:
@@ -187,7 +218,7 @@ def test_extract_falls_back_to_message_id_when_event_id_is_missing() -> None:
 @pytest.mark.parametrize(
     "mutate",
     [
-        pytest.param(lambda p: p["event"]["message"].update(msg_type="image"), id="非文本"),
+        pytest.param(lambda p: p["event"]["message"].update(message_type="image"), id="非文本"),
         pytest.param(lambda p: p["event"]["message"].update(message_id=""), id="缺 message_id"),
         pytest.param(lambda p: p["event"]["message"].update(content={"text": "   "}), id="空正文"),
         pytest.param(lambda p: p.pop("event"), id="无 event"),
@@ -551,7 +582,7 @@ def test_any_incoming_frame_is_visible_at_info_level(
         ignored = next(m for m in names if m.startswith("feishu_bot.event_ignored"))
         assert "msg_type='image'" in received  # 形状入 message，才看得见
         assert "event_type='im.message.receive_v1'" in received
-        assert "msg_type='image'" in ignored  # 拒收原因也入 message
+        assert "message_type='image'" in ignored  # 拒收原因也入 message
         assert replies.replies == []
     finally:
         bot.close()
