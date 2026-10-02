@@ -528,6 +528,48 @@ def test_connection_hooks_are_attached_and_are_visible_in_the_log(
     assert "feishu_bot.reconnected" in caplog.text
 
 
+def test_any_incoming_frame_is_visible_at_info_level(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """**诊断分界线**：帧一到就记 INFO —— 日志里没有 `frame_received` 就一定是飞书侧没推。
+
+    2026-10-02 排查时吃过这个亏：日志只有"连上了"（9 次），却分不清"事件没来"还是
+    "来了但没认出来"（`event_ignored` 当时打在 DEBUG，INFO 下看不见）。
+    """
+    replies = FakeReplySender()
+    bot = FeishuBot(answer_source=FakeAnswerSource(), reply_sender=replies)
+    try:
+        with caplog.at_level(logging.INFO, logger="recall.feishu_bot"):
+            bot.handle_event(_sdk_payload(msg_type="image"))
+
+        names = [record.getMessage() for record in caplog.records]
+        assert "feishu_bot.frame_received" in names
+        assert "feishu_bot.event_ignored" in names
+        # ⚠️ extra 字段不在 caplog.text 里，必须断言在 record 上
+        ignored = next(r for r in caplog.records if r.getMessage() == "feishu_bot.event_ignored")
+        assert getattr(ignored, "msg_type", None) == "image"
+        assert getattr(ignored, "event_type", None) == "im.message.receive_v1"
+        assert replies.replies == []
+    finally:
+        bot.close()
+
+
+def test_a_usable_frame_logs_both_received_and_accepted(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """可处理的帧：`frame_received` → `event_accepted` 两条都要有（排错就按这两条定位）。"""
+    replies = FakeReplySender()
+    bot = FeishuBot(answer_source=FakeAnswerSource(), reply_sender=replies)
+    try:
+        with caplog.at_level(logging.INFO, logger="recall.feishu_bot"):
+            bot.handle_event(_sdk_payload())
+        names = [record.getMessage() for record in caplog.records]
+        assert "feishu_bot.frame_received" in names
+        assert "feishu_bot.event_accepted" in names
+    finally:
+        bot.close()
+
+
 def test_main_fails_closed_without_feishu_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("FEISHU_APP_ID", raising=False)
     monkeypatch.delenv("FEISHU_APP_SECRET", raising=False)

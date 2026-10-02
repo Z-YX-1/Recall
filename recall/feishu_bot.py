@@ -407,9 +407,24 @@ class FeishuBot:
         Args:
             payload: 事件负载 mapping。
         """
+        # ⚠️ **进来就记一条 INFO**（2026-10-02 排查得出的必要观测点）：
+        # 事故现场是"9 次成功连接、21 小时、`event_accepted` 一条都没有"，但**分不清**
+        # 是"一帧都没到"（飞书侧问题）还是"到了但不是文本消息 / 字段形状不认识"（我们这边）。
+        # 这条 `frame_received` 就是那条分界线：**没有它就一定是飞书侧没推**。
+        logger.info(
+            "feishu_bot.frame_received",
+            extra={"event_type": _event_type(payload), "msg_type": _raw_msg_type(payload)},
+        )
         incoming = extract_message(payload)
         if incoming is None:
-            logger.debug("feishu_bot.event_ignored")
+            logger.info(
+                "feishu_bot.event_ignored",
+                extra={
+                    "reason": "非文本消息或缺少 message_id / 正文为空",
+                    "event_type": _event_type(payload),
+                    "msg_type": _raw_msg_type(payload),
+                },
+            )
             return
         if not self._deduper.first_sight(incoming.event_id):
             logger.info(
@@ -474,6 +489,26 @@ class FeishuBot:
             logger.exception(
                 "feishu_bot.process_crashed", extra={"message_id": incoming.message_id}
             )
+
+
+def _event_type(payload: Mapping[str, Any]) -> str:
+    """取事件类型（兼容 SDK 的 ``header.event_type`` 与扁平 ``event_type``）。"""
+    header = payload.get("header")
+    if isinstance(header, Mapping):
+        value = header.get("event_type")
+        if value:
+            return str(value)
+    return str(payload.get("event_type") or "")
+
+
+def _raw_msg_type(payload: Mapping[str, Any]) -> str:
+    """取消息类型（``text`` / ``image`` …）；取不到返回空串。"""
+    raw_event = payload.get("event")
+    event: Mapping[str, Any] = raw_event if isinstance(raw_event, Mapping) else payload
+    message = event.get("message")
+    if isinstance(message, Mapping):
+        return str(message.get("msg_type") or "")
+    return ""
 
 
 def _message_text(message: Mapping[str, Any]) -> str:
