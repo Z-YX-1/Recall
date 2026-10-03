@@ -348,16 +348,45 @@ class QdrantStore:
             await self._create_index(name, field, models.PayloadSchemaType.INTEGER)
 
     async def _create_index(self, name: str, field: str, schema: models.PayloadSchemaType) -> None:
-        """建单个字段索引（``create_payload_index`` 本身幂等，可重复调用）。"""
-        await with_retry(
-            f"index:{field}",
-            lambda: self._client.create_payload_index(
-                collection_name=name,
-                field_name=field,
-                field_schema=schema,
-                wait=True,
-            ),
-        )
+        """建单个字段索引（``create_payload_index`` 本身幂等，可重复调用）。
+
+        🔴 **失败只告警、不阻断**（2026-10-03 项目工程师批准；背景见 `tech.md` §12.3）：
+
+        索引是**查询性能**优化，**不是检索正确性的前提** —— 没有索引，过滤检索只是**变慢**
+        （退化成全量扫描），**结果依然正确**。而 Qdrant 1.19.x 在**建索引**这条路上有**瞬时
+        IO 故障**（实测 `500 + Not recovered from previous error: IO Error:`
+        `拒绝访问 (os error 5)`），
+        一旦命中就会让**整个建库 / 写入流程失败** —— 等于把"慢一点"升级成"完全不可用"，
+        代价严重不对等。故先 `with_retry` 重试，重试仍失败则**降级为告警**。
+
+        ⚠️ **但必须留下痕迹**（这是降级的代价，不能省）：漏建的索引在日志里点名，
+        否则"检索悄悄变慢"将**无从归因**。诊断入口::
+
+            grep store.index_failed data/logs/*.log
+
+        该 500 还会让 Qdrant **整个运行期**进入"未从先前错误恢复"的降级态（后续请求一律 500）
+        ⇒ 看到这条告警时，**重启 Qdrant** 才是根治（`with_retry` 对降级态无效）。
+        """
+        try:
+            await with_retry(
+                f"index:{field}",
+                lambda: self._client.create_payload_index(
+                    collection_name=name,
+                    field_name=field,
+                    field_schema=schema,
+                    wait=True,
+                ),
+            )
+        except Exception as exc:  # noqa: BLE001 - 见 docstring：性能优化不该拖垮正确性
+            logger.warning(
+                "store.index_failed collection=%s field=%s error=%s: %s"
+                "（仅影响过滤检索性能、结果仍正确；若因 Qdrant 瞬时 IO 故障，"
+                "需重启 Qdrant 才能恢复，见 tech.md §12.3）",
+                name,
+                field,
+                type(exc).__name__,
+                exc,
+            )
 
     async def collection_metadata(self, name: str) -> dict[str, Any]:
         """读回 collection metadata（tech.md §3.1：建库参数可读回）。

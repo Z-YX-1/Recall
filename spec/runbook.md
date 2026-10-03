@@ -220,6 +220,8 @@ curl.exe -s -o NUL -w "%{http_code}\n" https://recall.iamzyx.xyz/health
 | 公网 `/kb/stats`、`/kb/ingest` 返回 **403** | **正常**（隧道层刻意挡死） | 无需处理；要重灌请走本机 `ingest.py` |
 | 公网 `/mcp`（**少了尾斜杠**）返回 **307** | Starlette 挂载点重定向 | 外部配置一律写 `/mcp/` |
 | Qdrant 建 payload 索引报 `IO Error: 拒绝访问` | Qdrant 偶发降级（`tech.md` §12.3） | **重启 Qdrant**（该状态重试无用）；仍复现就跑 `tools\clean_qdrant_orphans.py` 清泄漏 |
+| 日志里出现 `store.index_failed` | 某字段索引**重试后仍失败**，已**降级为告警**（2026-10-03 起不再致命，`tech.md` §12.3） | 结果**仍然正确**，只是**过滤检索会变慢**（退化成全量扫描）。`grep store.index_failed data/logs/*.log` 看漏了哪些字段；**若由 Qdrant 瞬时 IO 故障引起，重启 Qdrant 才是根治** |
+| `pytest` 崩溃后留下 `recall-test-*` collection（约 0.7~1.5GB） | 崩溃让夹具的 `finally` 跑不到 ⇒ `delete_collection` 从未执行，**Qdrant 仍认得**它（与"孤儿目录"不是一回事） | `python tools\clean_qdrant_orphans.py` 先看分类，确认后 **`--yes --include-known`**（先经 API 删 collection、再删磁盘目录，**顺序不可颠倒**）；⚠️ 执行前确认**测试没在跑** |
 | 端口 6333 / 8000 被占用 | 已经有一个实例在跑 | `Get-NetTCPConnection -LocalPort 8000 -State Listen`；**别起两份**（双份模型会 OOM/崩溃） |
 | 改了 `.env` 但没生效 | 配置只在**进程启动时**读取 | 重启对应进程；`verify_phase6.py` 的"配置-运行态一致性"检查能查出这种假绿 |
 | 跑全量 `pytest` 崩溃 / **`0xC0000005` 访问违例**（崩在 `transformers` 模型加载处） | 🔴 **主机内存不够 —— 不只是显存**。本机总内存 **15.7 GB**，而 `recall.api` 常驻 **7.8 GB**、`ollama app` 约 **2 GB** ⇒ 全量 pytest 再装一份 bge-m3 就耗尽（实测可用内存仅 ~**4.3 GB**）。⚠️ 比干净的 OOM 更难读，**别指望看到清晰的 OOM 报错** | ① **首选**：先停 `recall.api` 再跑全量（同时解决显存与内存）；② **不想停 API 的替代**：`$env:RECALL_TEST_DEVICE='cpu'` **且逐文件跑**（`pytest tests/test_x.py`）—— 每个进程退出即释放内存，实测可行（`test_ingest.py` 12 passed / `test_rerank.py` 8 passed）；③ 崩后 `conftest` 的清理跑不到 ⇒ **必须查一次 Qdrant 孤儿 collection**（`recall-test-*`） |

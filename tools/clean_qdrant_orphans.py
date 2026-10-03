@@ -12,21 +12,37 @@
 - D 盘一紧，Qdrant 就报 `IO Error: 拒绝访问 (os error 5)` 并进入"未从先前错误恢复"的
   降级态 ⇒ 对后续请求一律 500 ⇒ 测试表现为**随机 flaky**（见 `tech.md` §12.3）。
 
+## 两类残留，处理方式**不同**（2026-10-03 项目工程师批准补第二类）
+
+两类残留，处理方式**不同**：
+
+- **孤儿目录**：``recall-test-*`` 且 **Qdrant 已不认得**它 ⇒ 直接删磁盘目录（原本的能力）；
+- **仍在册的测试 collection**：``recall-test-*`` 但 **Qdrant 仍认得**它 ⇒
+  **先经 API 删 collection、再删磁盘目录**（`--include-known`）。
+
+第二类是 2026-10-01 全量 `pytest` 崩溃留下的（崩溃让夹具的 `finally` 跑不到，于是
+`delete_collection` 从未执行）：实测还留着 **2 个、共约 1.5GB**。
+⚠️ **删"仍在册"的 collection 比删孤儿目录更重** —— 前者的数据在 Qdrant 里是"活的"，
+所以它**必须显式开关**（`--include-known`），不能跟孤儿一起默认处理。
+
 ## 安全性
 
-只删**名字匹配 ``recall-test-*``** 的目录：
+只碰**名字匹配 ``recall-test-*``** 的目录 / collection：
 
 - 生产 collection 的命名契约是 ``recall__<模型>@<版本>__<切分器>``（tech.md §3.1），
   **不可能**撞上这个前缀；
-- 这些目录也**不在** Qdrant 的 collection 列表里（Qdrant 已经不认它们），
+- 孤儿目录也**不在** Qdrant 的 collection 列表里（Qdrant 已经不认它们），
   所以删掉不会影响任何在用数据。
 
 ⚠️ 仍请在**测试没在跑**的时候执行 —— 万一有正在进行的用例，它的临时 collection 会被误删。
 
 用法::
 
-    python tools/clean_qdrant_orphans.py            # 只列出（默认，不动任何文件）
-    python tools/clean_qdrant_orphans.py --yes      # 真正删除
+    python tools/clean_qdrant_orphans.py                     # 只列出（默认，不动任何文件）
+    python tools/clean_qdrant_orphans.py --yes               # 真删**孤儿目录**
+    python tools/clean_qdrant_orphans.py --yes --include-known
+                                                             # 连同**仍在册**的 recall-test-* 一起删
+                                                             # （先 API 删 collection，再删目录）
 """
 
 from __future__ import annotations
@@ -58,6 +74,29 @@ def _known_collections(qdrant_url: str) -> list[str]:
     return [str(item.get("name", "")) for item in payload.get("result", {}).get("collections", [])]
 
 
+def _delete_collection(qdrant_url: str, name: str) -> tuple[bool, str]:
+    """经 Qdrant API 删掉一个 collection。
+
+    **顺序很重要**：先让 Qdrant 自己删（它要落元数据、释放句柄），成功后再删磁盘目录。
+    反过来做会让 Qdrant 持着失效句柄 —— `tech.md` §12.3 里"在 Qdrant 运行时删目录可能留下
+    失效句柄"正是这个坑。
+
+    Args:
+        qdrant_url: Qdrant 根地址。
+        name: collection 名（调用方保证已匹配 ``recall-test-*``）。
+
+    Returns:
+        ``(是否成功, 说明文本)``；失败时不抛异常，由调用方决定怎么报。
+    """
+    request = urllib.request.Request(f"{qdrant_url}/collections/{name}", method="DELETE")
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:  # noqa: S310 - 本机固定回环
+            payload = json.loads(response.read().decode("utf-8"))
+    except (urllib.error.URLError, OSError, json.JSONDecodeError) as exc:
+        return False, f"{type(exc).__name__}: {exc}"
+    return bool(payload.get("result")), str(payload.get("status", ""))
+
+
 def _size_mb(path: Path) -> float:
     """目录的逻辑大小（MB）。"""
     total = sum(item.stat().st_size for item in path.rglob("*") if item.is_file())
@@ -65,7 +104,7 @@ def _size_mb(path: Path) -> float:
 
 
 def main() -> int:
-    """列出（可选删除）泄漏的测试 collection 目录。"""
+    """列出（可选删除）泄漏的测试 collection 目录，以及仍在册的测试 collection。"""
     parser = argparse.ArgumentParser(description="清理 Qdrant 泄漏的测试 collection 目录")
     parser.add_argument(
         "--qdrant-url",
@@ -78,6 +117,11 @@ def main() -> int:
         help="Qdrant collections 存储目录",
     )
     parser.add_argument("--yes", action="store_true", help="真正删除（默认只列出）")
+    parser.add_argument(
+        "--include-known",
+        action="store_true",
+        help="连**仍在册**的 recall-test-* collection 一起处理（先 API 删 collection，再删目录）",
+    )
     args = parser.parse_args()
 
     root = Path(args.storage)
@@ -93,26 +137,41 @@ def main() -> int:
     print(f" Qdrant 认得 {len(known)} 个：{', '.join(known) or '（取不到列表）'}")
     print("=" * 62)
 
-    orphans = sorted(
-        path
-        for path in root.iterdir()
-        if path.is_dir() and path.name.startswith(TEST_PREFIX) and path.name not in known
-    )
-    if not orphans:
-        print("\n没有泄漏的测试目录 ✓\n")
-        return 0
+    test_dirs = [
+        path for path in root.iterdir() if path.is_dir() and path.name.startswith(TEST_PREFIX)
+    ]
+    orphans = sorted(path for path in test_dirs if path.name not in known)
+    live = sorted(path for path in test_dirs if path.name in known)
 
-    total = 0.0
-    print(f"\n发现 {len(orphans)} 个泄漏目录：")
-    for path in orphans:
-        size = _size_mb(path)
-        total += size
-        print(f"  {path.name:<34} {size:8.0f} MB")
-    print(f"\n合计约 {total / 1024:.2f} GB")
+    def _report(paths: list[Path], title: str) -> float:
+        """打印一组目录及其占用，返回合计 MB。"""
+        if not paths:
+            return 0.0
+        print(f"\n{title}（{len(paths)} 个）：")
+        total = 0.0
+        for path in paths:
+            size = _size_mb(path)
+            total += size
+            print(f"  {path.name:<34} {size:8.0f} MB")
+        return total
+
+    orphan_mb = _report(orphans, "① 孤儿目录（Qdrant 已不认得 ⇒ 直接删目录）")
+    live_mb = _report(
+        live,
+        "② **仍在册**的测试 collection（Qdrant 还认得 ⇒ 须先 API 删 collection，再删目录）",
+    )
+    if not orphans and not live:
+        print("\n没有残留的测试 collection ✓\n")
+        return 0
+    print(f"\n合计约 {(orphan_mb + live_mb) / 1024:.2f} GB")
+    if live and not args.include_known:
+        print(f"⚠️ ② 那 {len(live)} 个**不会**被处理 —— 要一并清掉请加 --include-known。")
 
     if not args.yes:
         print("\n（默认只列出，不删任何东西）确认后重跑并加 --yes：")
         print(f"  {sys.executable} tools\\clean_qdrant_orphans.py --yes")
+        if live:
+            print(f"  {sys.executable} tools\\clean_qdrant_orphans.py --yes --include-known")
         print("⚠️ 执行前请确认**测试没在跑**，否则可能删掉正在进行用例的临时 collection。")
         print()
         return 0
@@ -124,9 +183,30 @@ def main() -> int:
             removed += 1
         except OSError as exc:
             print(f"  [FAIL] 删除 {path.name} 失败：{exc}")
-    print(f"\n已删除 {removed}/{len(orphans)} 个目录，预计释放约 {total / 1024:.2f} GB")
+
+    failed_known = 0
+    if args.include_known:
+        for path in live:
+            ok, detail = _delete_collection(args.qdrant_url, path.name)
+            if not ok:
+                print(f"  [FAIL] API 删除 {path.name} 失败：{detail}")
+                failed_known += 1
+                continue
+            try:
+                shutil.rmtree(path)
+                removed += 1
+            except OSError as exc:
+                print(f"  [FAIL] {path.name} 的 API 已删、但目录删除失败：{exc}")
+                failed_known += 1
+    else:
+        failed_known = len(live)
+
+    total_dirs = len(orphans) + (len(live) if args.include_known else 0)
+    print(f"\n已删除 {removed}/{total_dirs} 个，预计释放约 {(orphan_mb + live_mb) / 1024:.2f} GB")
+    if failed_known and not args.include_known:
+        print(f"（其中 {failed_known} 个仍在册的未处理，见上面的 --include-known 提示）")
     print()
-    return 0 if removed == len(orphans) else 1
+    return 0 if removed == total_dirs else 1
 
 
 if __name__ == "__main__":
