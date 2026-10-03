@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from collections.abc import Mapping
 from typing import Any
 
 from openai import AsyncOpenAI
@@ -26,6 +27,11 @@ DEFAULT_MAX_RETRIES = 3
 DEFAULT_MAX_OUTPUT_TOKENS = 3072
 """输出 token 上限。⚠️ 不能太小：实测 2048 时模型复述证据会把 JSON 截断，
 整段回答直接作废（见 :data:`recall.assemble.PROMPT_FOOTER` 的说明）。"""
+
+SELF_CHECK_MAX_TOKENS = 200
+"""自检调用的输出上限（roadmap R-47 方案 D）：只回 ``answered`` + 一句 ``sentence``，
+给足即可 ⇒ 实测单次约 **0.72s**（对比完整生成段约 1.31s）。"""
+
 RETRY_BASE_DELAY = 0.5
 """指数退避基数（秒）：第 n 次失败后等待 ``RETRY_BASE_DELAY * 2**(n-1)``（code_standards §10）。"""
 
@@ -85,6 +91,96 @@ SYSTEM_PROMPT = (
   （实测原文：``把不可计算的"意思"变成"坐标"``），字符串被提前截断，
   ``json.loads`` 报 ``Expecting ',' delimiter``，整段回答作废。
 """
+
+
+RETRY_INSTRUCTION = (
+    "\n\n【补充】已用裁判核对：上面的证据**确实直接回答了**该问题。"
+    "请据此按第 2 条作答，**不得**再使用「只提及 / 没有解释」这类拒答句，"
+    "并在 answer 中指出回答该问题的那句话所对应的证据编号。"
+)
+"""自检判定"证据确实回答了问题"后，追加到原 prompt 末尾的指令（roadmap R-47 方案 D）。"""
+
+DECLINE_MARKERS: tuple[str, ...] = (
+    "只提及",
+    "仅提及",
+    "只提到",
+    "仅提到",
+    "只是提到",
+    "未解释",
+    "没有解释",
+    "未展开",
+    "没有展开",
+    "未给出",
+    "没有给出",
+    "未涉及",
+    "只列出",
+    "仅列出",
+    "只点名",
+    "仅点名",
+    "笔记里只",
+    "笔记中只",
+    "笔记里没有相关内容",
+)
+"""答案里出现任一 ⇒ 判为**拒答**，需要走一次"自检"（roadmap R-47 方案 D，2026-10-03 拍板）。
+
+与 :mod:`tools.verify_r47` 的判据**同源**（该脚本据此表导入），避免两处漂移。
+⚠️ 它是**启发式**：覆盖常见措辞、不是分类器 —— 见 `tools/verify_r47.py` 里那次假阴性记录。
+⚠️ 判为拒答**不等于**答案错：真·只提及的题**就该**拒答，自检会把它放行回拒答。
+"""
+
+SELF_CHECK_SYSTEM_PROMPT = (
+    "你是检索质量裁判，只回答一个问题：给定的证据有没有**直接回答**用户的问题。"
+    "输出必须是 json 对象，含 answered（true / false）与 sentence"
+    "（证据里直接回答该问题的那句话原文；没有就填空字符串）两个字段。\n"
+    "判断标准：证据里有没有一句话**直接回答**了问题所问的那件事。"
+    "若证据只是**提到**问题里的名词、或讲的是**同一主题下的另一种做法 / 路线**，"
+    "answered 取 false。\n"
+    "answer 里不要使用英文双引号，需要引号时一律用「」。"
+)
+"""自检用系统提示词：**只问一件事**（roadmap R-47 方案 D）。
+
+为什么要拆成两次：生成那一次要让模型同时干"理解问题、判断证据、决定答不答"三件事，
+任一环节抖一下就误拒（实测同一输入 `temperature=0.0` 也会在"答 / 拒"之间横跳）。
+拆开之后只判"这段证据有没有直接回答"，实测判得准 —— 2026-10-03 样例正确挑出了回答句。
+"""
+
+
+def looks_like_decline(answer: str) -> bool:
+    """答案是否**像**拒答（命中 :data:`DECLINE_MARKERS` 任一）。
+
+    Args:
+        answer: 生成出来的答案正文。
+
+    Returns:
+        命中任一标记词为 ``True``。
+    """
+    return any(marker in answer for marker in DECLINE_MARKERS)
+
+
+def build_self_check_prompt(question: str, evidence_text: str) -> str:
+    """拼自检用的提示词：问题 + 一段证据（通常取最高分那条）。"""
+    return f"问题：{question}\n\n证据：\n{evidence_text}"
+
+
+def parse_answered(payload: Mapping[str, Any]) -> bool:
+    """从自检返回体里取 ``answered``（容忍布尔与字符串两种写法）。
+
+    Args:
+        payload: 自检返回的 JSON 对象。
+
+    Returns:
+        裁判是否认为证据直接回答了问题。
+
+    Raises:
+        ValueError: 缺 ``answered`` 或类型不可识别 —— 调用方须**降级**为"保留原答案"，
+            绝不能因为自检出问题就把用户的回答弄丢。
+    """
+    raw = payload.get("answered")
+    if isinstance(raw, bool):
+        return raw
+    if isinstance(raw, str):
+        return raw.strip().lower() in {"true", "yes", "y", "1", "是"}
+    raise ValueError(f"自检返回体缺少可识别的 answered 字段：{raw!r}")
 
 
 class LlmError(RuntimeError):
@@ -253,6 +349,37 @@ class DeepSeekClient:
         raise LlmError(
             f"DeepSeek 调用失败（{self._max_retries} 次尝试）：{last_error}"
         ) from last_error
+
+    async def verify_evidence_answers(self, question: str, evidence_text: str) -> bool:
+        """自检：这段证据有没有**直接回答**该问题（roadmap R-47 方案 D，2026-10-03 拍板）。
+
+        它是"拒答闸门"的第二道：生成侧误判成"只提及未解释"时，用一次**只问一件事**的
+        调用复核；复核说不算回答，才允许把拒答句交给用户。
+
+        Args:
+            question: 用户原问题。
+            evidence_text: 待核对的证据正文（调用方通常取**最高分那条**）。
+
+        Returns:
+            ``True`` = 裁判认为证据直接回答了问题（调用方应带 :data:`RETRY_INSTRUCTION`
+            重新生成一次）。
+
+        Raises:
+            LlmNotConfiguredError: 未配置 API key。
+            LlmError: 调用失败或返回体不可解析。
+            ValueError: 返回体缺 ``answered`` —— 调用方须**降级**为"保留原答案"。
+        """
+        payload = await self.complete_json(
+            build_self_check_prompt(question, evidence_text),
+            system=SELF_CHECK_SYSTEM_PROMPT,
+            max_tokens=SELF_CHECK_MAX_TOKENS,
+        )
+        if not parse_answered(payload):
+            return False
+        # **自洽检查**：裁判说"回答了"就必须**引出那句话**；引不出就按"没回答"处理。
+        # 动机（2026-10-03 实测）：放到 10 题 `mentioned` 组上跑，裁判宽松放行了一题（GraphRAG），
+        # 而它本该拒答 —— 能引原文才算真的"直接回答"，这是一道几乎零成本的兜底。
+        return bool(str(payload.get("sentence") or "").strip())
 
     async def _call_once(self, prompt: str, *, system: str, max_tokens: int) -> dict[str, Any]:
         assert self._client is not None  # available 已在入口校验

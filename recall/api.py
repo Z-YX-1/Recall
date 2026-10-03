@@ -19,7 +19,7 @@ import uuid
 from collections.abc import AsyncIterator, Mapping, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, replace
-from typing import TypedDict
+from typing import Any, TypedDict
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
@@ -53,12 +53,13 @@ from recall.auth import (
 from recall.chunker import CHUNKER_NAME
 from recall.config import Settings, configure_logging
 from recall.embedder import DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_VERSION, Embedder
-from recall.llm import DeepSeekClient, LlmNotConfiguredError
+from recall.llm import RETRY_INSTRUCTION, DeepSeekClient, LlmNotConfiguredError, looks_like_decline
 from recall.mcp_policy import ToolPolicy, ToolPolicyMiddleware
 from recall.models import (
     AnswerRequest,
     AnswerResult,
     ChunkPayload,
+    Evidence,
     HealthResult,
     Identity,
     IngestRequest,
@@ -196,9 +197,7 @@ class Service:
             collection=collection or settings.collection or DEFAULT_COLLECTION,
             audit=AuditLog(settings.audit_log_path if settings.log_to_file else None),
             trusted_proxies=TrustedProxies.parse(settings.trusted_proxies),
-            limiter=SlidingWindowLimiter(
-                settings.ingest_rate_limit, settings.ingest_rate_window_s
-            ),
+            limiter=SlidingWindowLimiter(settings.ingest_rate_limit, settings.ingest_rate_window_s),
         )
 
     async def aclose(self) -> None:
@@ -432,6 +431,16 @@ async def kb_answer_core(request: AnswerRequest, identity: Identity | None = Non
         logger.exception("kb_answer.llm_failed", extra={"trace_id": trace_id})
         raise ApiError("llm_failed", f"生成失败：{type(exc).__name__}: {exc}", 502) from exc
 
+    # 方案 D（roadmap R-47）：只有答案**像拒答**时才多做一次自检复核；正常回答零额外开销。
+    payload = await _retry_when_declined(
+        service.llm,
+        prompt,
+        payload,
+        query=request.query,
+        evidence=search.evidence,
+        trace_id=trace_id,
+    )
+
     raw_answer = payload.get("answer")
     answer = str(raw_answer).strip() if raw_answer is not None else ""
     citations = _normalize_citations(payload.get("citations"), len(search.evidence), trace_id)
@@ -449,6 +458,64 @@ async def kb_answer_core(request: AnswerRequest, identity: Identity | None = Non
         },
     )
     return AnswerResult(answer=answer, citations=citations, references=search.references)
+
+
+async def _retry_when_declined(
+    llm: DeepSeekClient,
+    prompt: str,
+    payload: dict[str, Any],
+    *,
+    query: str,
+    evidence: list[Evidence],
+    trace_id: str,
+) -> dict[str, Any]:
+    """**方案 D（roadmap R-47，2026-10-03 批准）**：答案像拒答时，用一次"只问一件事"的自检复核。
+
+    **为什么只在拒答时触发**：正常回答（实测约 9/10 的题）**零额外开销**；触发时多约 2s
+    （自检 0.72s + 重生成 ≈1.31s），摊到平均约 **+0.2s**。换来的是不再把"笔记里没有"错答给用户。
+
+    **判据是"这段证据有没有直接回答"，不是"证据相不相关"** —— 生成那一次要让模型同时干
+    "理解问题、判断证据、决定答不答"三件事，任一环节抖一下就误拒（实测 `temperature=0.0`
+    也会在"答 / 拒"之间横跳）；拆成只问一件事后实测判得准。
+
+    ⚠️ **任何一步失败都必须降级为"保留原答案"**：复核是为了多给一次机会，
+    绝不能因为它自己出问题就把用户已有的回答弄丢。
+
+    Args:
+        llm: DeepSeek 客户端。
+        prompt: 第一次生成用的完整提示词（重生成时追加 :data:`~recall.llm.RETRY_INSTRUCTION`）。
+        payload: 第一次生成的返回体。
+        query: 用户原问题（喂给裁判）。
+        evidence: 证据列表（**已按分数降序**，取第 0 条给裁判）。
+        trace_id: 本次查询的追踪号。
+
+    Returns:
+        最终采用的返回体 —— 原样返回，或被重生成的结果替换。
+    """
+    answer = str(payload.get("answer") or "")
+    if not evidence or not looks_like_decline(answer):
+        return payload
+
+    try:
+        answered = await llm.verify_evidence_answers(query, evidence[0].text)
+    except Exception as exc:  # noqa: BLE001 - 自检失败不影响主答案
+        logger.warning(
+            "kb_answer.self_check_failed trace_id=%s error=%s", trace_id, type(exc).__name__
+        )
+        return payload
+
+    if not answered:
+        logger.info("kb_answer.self_check_confirmed_decline trace_id=%s", trace_id)
+        return payload
+
+    logger.info("kb_answer.self_check_overrode_decline trace_id=%s", trace_id)
+    try:
+        return await llm.complete_json(prompt + RETRY_INSTRUCTION)
+    except Exception as exc:  # noqa: BLE001 - 重生成失败就退回原答案
+        logger.warning(
+            "kb_answer.self_check_retry_failed trace_id=%s error=%s", trace_id, type(exc).__name__
+        )
+        return payload
 
 
 def _normalize_citations(raw: object, evidence_count: int, trace_id: str) -> list[int]:

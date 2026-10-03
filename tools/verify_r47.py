@@ -47,11 +47,17 @@ from pathlib import Path
 from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(REPO_ROOT) not in sys.path:  # 允许 `python tools/verify_r47.py` 直接跑
+    sys.path.insert(0, str(REPO_ROOT))
 
 # 统一输出编码：Windows 下 Python 对**管道/重定向**的 stdout 用本地代码页（cp936），
 # 而本项目全链路 UTF-8 ⇒ 不统一就会"控制台正常、重定向乱码"（同 verify_r45.py）。
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
+# 🔴 **与生产代码同源**：拒答措辞表只有一份，定义在 `recall/llm.py`（方案 D 也用它判"要不要复核"）。
+# 早期这里自己维护过一份，两边会漂 —— 2026-10-03 合并。
+from recall.llm import DECLINE_MARKERS as TEMPLATE_DECLINE_MARKERS  # noqa: E402
 
 TIMEOUT_S = 180.0
 """单次 ``/kb/answer`` 超时。胖端点要过一次 DeepSeek，比检索端点慢得多。"""
@@ -62,34 +68,12 @@ GATE_DECLINE_MARKERS = ("笔记里没有检索到",)
 ⚠️ 用它区分"门槛拒答"与"模板拒答"：前者**没调 LLM**，后者调了。
 """
 
-TEMPLATE_DECLINE_MARKERS = (
-    "只提及",
-    "仅提及",
-    "只提到",
-    "仅提到",
-    "只是提到",
-    "未解释",
-    "没有解释",
-    "未展开",
-    "没有展开",
-    "未给出",
-    "没有给出",
-    "未涉及",
-    "只列出",
-    "仅列出",
-    "只点名",
-    "仅点名",
-    "笔记里只",
-    "笔记中只",
-)
-"""模板声明"提了名没解释"时的措辞（R-47 提示词要求的语义词）。
-
-⚠️ 这张表是**启发式**：它只能覆盖常见措辞，判不准是它的固有限制。2026-09-26 实测踩到过一次
-**假阴性** —— 模型写的是"只列出了名字 / 没有展开 / 未给出解释"这类同义表达，不在**旧表**里，
-于是被判成"硬答"并报 FAIL（第 7 题 GraphRAG）。故：① 表已放宽到覆盖常见同义写法；
-② 判成 ``hard_answer`` 时下面的提示会**自曝可能是假阴性**，请连答案原文一起看，
-以人工判读为准（脚本只是筛子，不是裁判）。
-"""
+# ``TEMPLATE_DECLINE_MARKERS`` 由 `recall.llm.DECLINE_MARKERS` 导入（见文件顶部），此处不再自维护。
+# 📌 那张表是**启发式**：覆盖常见措辞，判不准是它的固有限制。2026-09-26 实测踩到过一次**假阴性**
+# —— 模型写的是"只列出了名字 / 没有展开 / 未给出解释"这类同义表达，不在**当时的旧表**里，
+# 于是被判成"硬答"并报 FAIL（第 7 题 GraphRAG）。故：① 表已放宽到覆盖常见同义写法；
+# ② 判成 ``hard_answer`` 时下面的提示会**自曝可能是假阴性**，请连答案原文一起看，
+# 以人工判读为准（脚本只是筛子，不是裁判）。
 
 NOT_IN_NOTES_MARKERS = ("笔记里没有", "笔记中没有", "没有找到")
 """黄金集对照组**不得**出现的拒答措辞。"""
