@@ -243,6 +243,7 @@ def test_from_settings_reads_deepseek_config() -> None:
         port=8000,
         collection=None,
         log_to_file=False,
+        log_extras=False,
     )
 
     client = DeepSeekClient.from_settings(settings)

@@ -221,6 +221,7 @@ curl.exe -s -o NUL -w "%{http_code}\n" https://recall.iamzyx.xyz/health
 | 公网 `/mcp`（**少了尾斜杠**）返回 **307** | Starlette 挂载点重定向 | 外部配置一律写 `/mcp/` |
 | Qdrant 建 payload 索引报 `IO Error: 拒绝访问` | Qdrant 偶发降级（`tech.md` §12.3） | **重启 Qdrant**（该状态重试无用）；仍复现就跑 `tools\clean_qdrant_orphans.py` 清泄漏 |
 | 日志里出现 `store.index_failed` | 某字段索引**重试后仍失败**，已**降级为告警**（2026-10-03 起不再致命，`tech.md` §12.3） | 结果**仍然正确**，只是**过滤检索会变慢**（退化成全量扫描）。`grep store.index_failed data/logs/*.log` 看漏了哪些字段；**若由 Qdrant 瞬时 IO 故障引起，重启 Qdrant 才是根治** |
+| 日志里只有事件名、**看不到 `trace_id` / 耗时** | `extra=` 默认被 `LOG_FORMAT` 丢弃（`tech.md` §12.4） | 临时需要：设 **`RECALL_LOG_EXTRAS=1`** 后重启进程。⚠️ 但**改代码时优先把关键值写进 message** —— 靠开关才能看见的诊断信息，在没开开关的那次故障里等于不存在（本轮两次白排查的教训） |
 | `pytest` 崩溃后留下 `recall-test-*` collection（约 0.7~1.5GB） | 崩溃让夹具的 `finally` 跑不到 ⇒ `delete_collection` 从未执行，**Qdrant 仍认得**它（与"孤儿目录"不是一回事） | `python tools\clean_qdrant_orphans.py` 先看分类，确认后 **`--yes --include-known`**（先经 API 删 collection、再删磁盘目录，**顺序不可颠倒**）；⚠️ 执行前确认**测试没在跑** |
 | 端口 6333 / 8000 被占用 | 已经有一个实例在跑 | `Get-NetTCPConnection -LocalPort 8000 -State Listen`；**别起两份**（双份模型会 OOM/崩溃） |
 | 改了 `.env` 但没生效 | 配置只在**进程启动时**读取 | 重启对应进程；`verify_phase6.py` 的"配置-运行态一致性"检查能查出这种假绿 |
@@ -268,6 +269,8 @@ curl.exe -s -o NUL -w "%{http_code}\n" https://recall.iamzyx.xyz/health
 | 公网入口 | `https://recall.iamzyx.xyz/mcp/`（Coze）、`/kb/search`（REST，需 key） |
 | 隧道配置 | `%USERPROFILE%\.cloudflared\config.yml`（模板：`tools/cloudflared/config.example.yml`） |
 | 日志 | `data\logs\api.log`、`watchdog.log`、**`feishu_bot.log`**、`audit.jsonl`（审计，含 `peer`/`client_source`） |
+| 日志里的 `extra` | **默认不打印**（`LOG_FORMAT` 只有 `%(message)s`）⇒ `trace_id` / `latency_ms` 等**看不见**。要看就设 **`RECALL_LOG_EXTRAS=1`** 并重启对应进程（会改变**所有**日志行格式，故默认关；白名单 + 拒绝子串 + 截断三道防线，见 `tech.md` §12.4）。⚠️ 排查时更推荐的做法仍是：**把关键值直接写进 message**（本轮两次白排查就是这么来的） |
+| Qdrant watcher 存活 | 看 **`data\logs\watchdog.heartbeat`**（每 30s 更新）——**不要看 `watchdog.log` 的新鲜度**：它只在检测到变化时才写，笔记不改就一直是旧的（曾因此误报"watcher 已退出"） |
 | 磁盘 | D 盘需留余量；全量 `pytest` 每次泄漏 0.7~1.4GB，定期 `python tools\clean_qdrant_orphans.py` |
 | **内存** | 总 **15.7 GB**；⚠️ `recall.api` 常驻 **7.8 GB**、`ollama app` 约 **2 GB** ⇒ 剩余通常只有 **4~5 GB**。**跑全量 `pytest` 会因此崩溃**（见 §4），要么先停 API，要么 `RECALL_TEST_DEVICE=cpu` + 逐文件跑 |
 | GPU | RTX 4050 Laptop **6141 MiB**；`recall.api` 常驻模型 + 浏览器等桌面程序后，**常常只剩 300~500 MiB** ⇒ 跑 GPU 用例前务必先停 API |

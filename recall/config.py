@@ -76,6 +76,155 @@ LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s %(message)s"
 LOG_MAX_BYTES = 5 * 1024 * 1024
 LOG_BACKUP_COUNT = 3
 
+LOG_EXTRAS_ENV = "RECALL_LOG_EXTRAS"
+"""开关：是否把白名单内的 ``extra=`` 字段追加到日志行末（roadmap §七 2026-10-03 批准）。
+
+**默认关闭**（:data:`DEFAULT_LOG_EXTRAS`）—— 打开会改变**所有**日志行的格式，
+可能影响已有的日志消费方（grep 习惯、外部采集），故必须显式开启。
+"""
+
+DEFAULT_LOG_EXTRAS = False
+"""``RECALL_LOG_EXTRAS`` 的默认值。"""
+
+LOG_EXTRA_MAX_LEN = 200
+"""单个 extra 值渲染后的最大字符数（超出截断并加省略号）——防超长值把日志行撑爆。"""
+
+LOG_EXTRA_ALLOWED_KEYS: frozenset[str] = frozenset(
+    {
+        # 追踪与分段（`api.py` / `store.py` / `watchdog.py` 的主力字段）
+        "trace_id",
+        "stage",
+        "latency_ms",
+        "attempt",
+        "delay_s",
+        "status",
+        "reason",
+        "kind",
+        "field",
+        # 检索/生成规模（判"卡在哪一段"用）
+        "evidence_count",
+        "citation_count",
+        "prompt_tokens",
+        "top1",
+        "documents",
+        "chunks",
+        "indexed_docs",
+        "points",
+        "count",
+        "syncs",
+        # 组件与环境标识
+        "model",
+        "collection",
+        "component",
+        "source_type",
+        "client_source",
+        "polling",
+        "debounce_s",
+        "interval_s",
+        "vault",
+        "api_url",
+    }
+)
+"""**白名单**：只有列在这里的 ``extra`` 键会被渲染（roadmap §七 2026-10-03 批准）。
+
+🔴 为什么是**白名单**而不是黑名单：``extra=`` 的键由**调用点**决定，一旦有人把
+凭证/令牌/正文塞进去，黑名单（靠关键字猜）**必然会漏**；白名单的失效方向是"少打一个字段"
+（可接受），而不是"把密钥打进日志"（不可接受）。⇒ **新增键必须先在这里登记**。
+
+⚠️ 与 :data:`LOG_EXTRA_DENY_SUBSTRINGS` 是**双重保险**，两道都要过。
+"""
+
+LOG_EXTRA_DENY_SUBSTRINGS: tuple[str, ...] = (
+    "key",
+    "secret",
+    "token",
+    "password",
+    "passwd",
+    "credential",
+    "authorization",
+    "cookie",
+    "api_key",
+)
+"""次级保险：键名含这些子串时**一律不渲染**（即便它误进了白名单）。
+
+⚠️ 注意 ``api_key`` / ``token`` 这类**子串**匹配是刻意放宽的（会连带挡掉
+``prompt_tokens`` 之外任何含 ``token`` 的键）。**宁可少打，不可泄露。**
+"""
+
+
+def _render_extra_value(value: object) -> str:
+    """把单个 extra 值渲染成短字符串（换行折成空格、超长截断）。"""
+    text = " ".join(str(value).split())
+    if len(text) > LOG_EXTRA_MAX_LEN:
+        text = text[:LOG_EXTRA_MAX_LEN] + "…"
+    return repr(text) if " " in text else text
+
+
+def collect_log_extras(record: logging.LogRecord) -> dict[str, str]:
+    """挑出该条日志里**允许渲染**的 ``extra`` 字段。
+
+    判定顺序：① 不是标准 ``LogRecord`` 属性；② 在 :data:`LOG_EXTRA_ALLOWED_KEYS` 白名单里；
+    ③ 键名不含 :data:`LOG_EXTRA_DENY_SUBSTRINGS` 任一子串；④ 值不是 ``None``。
+
+    Args:
+        record: 日志记录。
+
+    Returns:
+        键 → 渲染后字符串（保持 ``extra`` 的插入顺序）。
+    """
+    standard = _STANDARD_LOG_RECORD_ATTRS
+    out: dict[str, str] = {}
+    for key, value in record.__dict__.items():
+        if key in standard or value is None:
+            continue
+        if key not in LOG_EXTRA_ALLOWED_KEYS:
+            continue
+        lowered = key.lower()
+        if any(bad in lowered for bad in LOG_EXTRA_DENY_SUBSTRINGS):
+            continue
+        out[key] = _render_extra_value(value)
+    return out
+
+
+_STANDARD_LOG_RECORD_ATTRS: frozenset[str] = frozenset(
+    logging.LogRecord("", 0, "", 0, "", (), None).__dict__
+) | {"message", "asctime"}
+"""标准 ``LogRecord`` 属性名（含 ``message`` / ``asctime`` 两个格式化期才注入的）。"""
+
+
+class LogExtrasFormatter(logging.Formatter):
+    """标准格式 + 白名单内的 ``extra`` 字段（开关见 :data:`LOG_EXTRAS_ENV`）。
+
+    **为什么需要它**：``LOG_FORMAT`` 只有 ``%(message)s``，而项目里到处在用
+    ``logger.info("xxx.done", extra={"trace_id": …, "latency_ms": …})`` ——
+    ``extra`` **会被整个丢掉**。实测代价（2026-10-03）：**两次白排查**
+    （``event_ignored`` 与 ``reply_failed`` 的详情都在 extra 里，日志里一个字都看不到），
+    以及 ``trace_id`` 这个"串联一次请求全链路"的唯一钥匙失效。
+
+    ⚠️ 打开后**所有**日志行都会变长，故**默认关闭**。
+    """
+
+    def __init__(self, fmt: str, *, enabled: bool) -> None:
+        """初始化。
+
+        Args:
+            fmt: 基础格式串（通常 :data:`LOG_FORMAT`）。
+            enabled: 是否追加 extra（``False`` 时行为与普通 ``Formatter`` **完全一致**）。
+        """
+        super().__init__(fmt)
+        self._enabled = enabled
+
+    def format(self, record: logging.LogRecord) -> str:
+        """渲染日志行；``enabled`` 为假时**逐字节等价**于基类输出。"""
+        base = super().format(record)
+        if not self._enabled:
+            return base
+        extras = collect_log_extras(record)
+        if not extras:
+            return base
+        rendered = " ".join(f"{key}={value}" for key, value in extras.items())
+        return f"{base} | {rendered}"
+
 
 def _read_bool(name: str, *, default: bool) -> bool:
     """读布尔型环境变量（未设置时用 ``default``）。
@@ -474,6 +623,7 @@ class Settings:
     port: int
     collection: str | None
     log_to_file: bool
+    log_extras: bool
 
     @classmethod
     def from_env(cls, dotenv_path: Path | None = None) -> Settings:
@@ -541,6 +691,7 @@ class Settings:
             port=int(os.getenv("RECALL_PORT", "8000")),
             collection=collection_raw or None,
             log_to_file=os.getenv("RECALL_LOG_TO_FILE", "1").strip() not in {"0", "false", "False"},
+            log_extras=_read_bool(LOG_EXTRAS_ENV, default=DEFAULT_LOG_EXTRAS),
         )
         if settings.hf_endpoint:
             os.environ.setdefault("HF_ENDPOINT", settings.hf_endpoint)
@@ -616,10 +767,22 @@ def configure_logging(
                 encoding="utf-8",
             )
         )
+    # 🔴 `basicConfig` 的 `format=` 会**重建** Formatter ⇒ 必须传 `format=None` 自建，
+    # 否则我们装好的 `LogExtrasFormatter` 会被它覆盖掉（连控制台一起丢）。
+    formatter = LogExtrasFormatter(LOG_FORMAT, enabled=settings.log_extras)
+    for handler in handlers:
+        handler.setFormatter(formatter)
     logging.basicConfig(
         level=getattr(logging, level.upper(), logging.INFO),
-        format=LOG_FORMAT,
         handlers=handlers,
         force=True,
+    )
+    logger = logging.getLogger(__name__)
+    logger.info(
+        "config.logging_ready component=%s level=%s log_extras=%s log_dir=%s",
+        component,
+        level.upper(),
+        settings.log_extras,
+        settings.log_dir,
     )
     logging.getLogger("httpx").setLevel(logging.WARNING)

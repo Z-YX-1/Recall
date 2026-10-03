@@ -646,7 +646,44 @@ Bug Fixes **第一条**正是：
 反过来会让 Qdrant 持着失效句柄）。⚠️ 删"仍在册"的比删孤儿目录**更重**（数据在 Qdrant 里是活的），
 故它**必须显式开关**、不随默认行为生效。
 
-### 12.4 `RECALL_SKIP_DOTENV`：让**测试与 CI 不读 `.env`**（roadmap §七 2026-09-26）
+### 12.4 `extra=` 渲染：`RECALL_LOG_EXTRAS`（roadmap §七 2026-10-03 批准）
+
+**背景（一个真实的可观测性缺口）**：`LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s %(message)s"`
+只有 `%(message)s`，而全项目 **42 处**（13 个文件：`api.py` 12 / `watchdog.py` 8 / `store.py` 4 /
+`feishu_bot.py` 4 / `registry.py` 3 / `llm.py` 2 / `mcp_policy.py` 2 / `model_cache.py` 2 /
+`audit.py`、`config.py`、`embedder.py`、`rerank.py`、`base.py` 各 1）在用
+`logger.info("xxx.done", extra={...})` —— **`extra` 会被整个丢弃**。丢的是：
+
+| 字段 | 作用 |
+| :--- | :--- |
+| **`trace_id`** | **串联一次请求全链路日志的唯一钥匙**；没了只能按时间猜 |
+| **`latency_ms`** | 每阶段耗时的**唯一来源**（性能分析无从下手） |
+| `stage` / `evidence_count` / `top1` | 判"卡在哪一段" |
+
+**代价已实测**（2026-10-03）：**两次白排查** —— `feishu_bot.event_ignored` 与 `reply_failed`
+的详情都在 extra 里，日志里一个字都看不到，最后只能先把值塞进 message 才查下去。
+
+**开关**：`RECALL_LOG_EXTRAS`（`Settings.log_extras`），真值词法同其它布尔项；**默认 `False`**。
+
+🔴 **为什么默认关**：打开会**改变所有日志行的格式**，可能影响已有消费方（grep 习惯、外部采集）
+⇒ 必须是**显式选择**，不能是默认行为。关闭时输出与改动前**逐字节一致**（有用例钉住）。
+
+**三道防线**（`recall/config.py`，有用例 `tests/test_log_extras.py` **20 项**）：
+
+| # | 防线 | 说明 |
+| :--- | :--- | :--- |
+| 1 | **白名单** `LOG_EXTRA_ALLOWED_KEYS` | **只有登记过的键**才渲染。选白名单而非黑名单的理由：`extra` 的键由**调用点**决定，一旦有人把凭证塞进去，靠关键字猜的黑名单**必然会漏**；白名单的失效方向是"少打一个字段"（可接受），不是"把密钥打进日志"（不可接受）⇒ **新增键必须先登记** |
+| 2 | **拒绝子串** `LOG_EXTRA_DENY_SUBSTRINGS` | 键名含 `key`/`secret`/`token`/`password`/… 时**一律不渲染**，**即便它误进了白名单**（双重保险） |
+| 3 | **截断与整形** `LOG_EXTRA_MAX_LEN = 200` | 超长截断加 `…`；**换行折成空格** —— 否则一条日志会变成多行，破坏一切按行 grep |
+
+**接线细节（易错，已钉住）**：`logging.basicConfig(format=…)` 会**重建 Formatter**，
+把自建的那个覆盖掉（连控制台一起丢）⇒ `configure_logging` 必须传 `format=None` 并**自己
+`setFormatter`**。相关用例：`test_configure_logging_wires_the_formatter`。
+
+### 12.5 `RECALL_SKIP_DOTENV`：让**测试与 CI 不读 `.env`**（roadmap §七 2026-09-26）
+
+📌 **编号说明**：本节原为 §12.4，2026-10-03 因在其前插入「`extra=` 渲染」一节而**顺延为 §12.5**
+（内容未改）。全仓库无其它文档按编号引用本节，故顺延无副作用。
 
 `Settings.from_env()` 走 `load_dotenv(override=False)` —— **进程环境变量优先**，但"环境里没有的键"
 会从 `.env` 取。于是**用例断言的"代码默认值"会被开发者个人 `.env` 覆盖**，而且只在
