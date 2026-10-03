@@ -66,6 +66,46 @@ DEFAULT_TIMEOUT_S = 600.0
 MAX_COALESCED_ROUNDS = 5
 """一次触发期间若又有新变化，最多连做几轮（防止持续写入把循环饿死）。"""
 
+HEARTBEAT_INTERVAL_S = 30.0
+"""心跳写入间隔（秒）。"""
+
+HEARTBEAT_FILENAME = "watchdog.heartbeat"
+"""心跳文件名（落在 ``settings.log_dir`` 下，与日志同目录便于一起查看）。"""
+
+
+def heartbeat_path(log_dir: Path) -> Path:
+    """心跳文件路径（roadmap §七 2026-10-03）。
+
+    Args:
+        log_dir: 日志目录（``settings.log_dir``）。
+
+    Returns:
+        ``<log_dir>/watchdog.heartbeat``。
+    """
+    return log_dir / HEARTBEAT_FILENAME
+
+
+def write_heartbeat(path: Path) -> None:
+    """写一次心跳（mtime 即"最近一次活着"的时刻）。
+
+    🔴 **为什么需要它**：watcher 只在**检测到变化**时才写日志（``change_detected`` /
+    ``ingest_ok``）⇒ **笔记几小时没改，日志就几小时不动**，可它活得好好的。
+    而 `tools/verify_phase6.py` 原先正是拿"日志新鲜度"当存活判据 ⇒ **必然误报**
+    （2026-10-03 项目工程师实测：进程自前一天 19:06 一直在跑，
+    却因 22 小时没写日志被判 **不通过**）。
+    心跳给出的是**真正的存活信号**（证明事件循环还在转），且不刷日志。
+
+    ⚠️ 心跳**写失败不能拖垮 watcher** —— 它只是可观测性设施。
+
+    Args:
+        path: 心跳文件路径。
+    """
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(str(time.time()), encoding="utf-8")
+    except OSError as exc:  # noqa: BLE001 - 可观测性设施不该影响主功能
+        logger.warning("watchdog.heartbeat_failed path=%s error=%s", path, exc)
+
 
 def _event_path(event: FileSystemEvent) -> str:
     """取事件路径并统一成 ``str``。
@@ -417,9 +457,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         watcher.sync_once()
 
     watcher.start()
+    beat = heartbeat_path(settings.log_dir)
+    write_heartbeat(beat)  # 立刻写一次：让验收脚本不必等第一个间隔
+    logger.info("watchdog.heartbeat_started path=%s interval_s=%s", beat, HEARTBEAT_INTERVAL_S)
     try:
+        last_beat = time.monotonic()
         while True:
             time.sleep(1)
+            # 🔴 心跳：证明事件循环还在转（笔记不改时日志本来就不动，见 write_heartbeat 的说明）
+            if time.monotonic() - last_beat >= HEARTBEAT_INTERVAL_S:
+                write_heartbeat(beat)
+                last_beat = time.monotonic()
     except KeyboardInterrupt:
         logger.info("watchdog.interrupted")
     finally:

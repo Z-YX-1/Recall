@@ -302,31 +302,74 @@ def check_gate(report: Report, base: str, headers: dict[str, str], settings: Any
 # --------------------------------------------------------------------------------------
 
 
+def _watcher_process_alive() -> bool | None:
+    """有 ``recall.watchdog`` 进程在跑吗？取不到（无 psutil）返回 ``None``。"""
+    try:
+        import psutil
+    except ImportError:
+        return None
+    for proc in psutil.process_iter(["cmdline"]):
+        try:
+            cmdline = proc.info.get("cmdline") or []
+            if any("recall.watchdog" in str(part) for part in cmdline):
+                return True
+        except Exception:  # noqa: BLE001 - 进程可能在枚举途中退出
+            continue
+    return False
+
+
 def check_watchdog_state(report: Report, settings: Any) -> None:
-    """看 watcher 的日志新鲜度，判断它是否在跑（非侵入）。"""
+    """看 watcher 是否在跑（非侵入）。
+
+    🔴 **判据是心跳文件，不是日志新鲜度**（2026-10-03 更正）：
+
+    watcher 只在**检测到变化**时写日志（``change_detected`` / ``ingest_ok``）⇒
+    **笔记几小时没改，日志就几小时不动**，可进程活得好好的。原判据（"日志在最近 1 小时内
+    更新过"）**必然误报** —— 2026-10-03 项目工程师实测就吃了这个假红：watcher 自前一天
+    19:06 一直在跑，却因 22 小时没写日志被判**不通过**。
+
+    现改为三层证据，从强到弱：
+
+    1. **心跳文件**（``watchdog.heartbeat``）—— 由 watcher 每 30s 写入，**证明事件循环还在转**；
+    2. **进程存活**（psutil，取不到则跳过）—— 能区分"进程没了"与"进程卡住"；
+    3. **日志新鲜度** —— 降为**参考信息**，只在心跳也缺失时才用于提示，**不再判 FAIL**。
+    """
     step("R-38 一、watcher 状态")
+    beat = settings.log_dir / "watchdog.heartbeat"
     log = settings.log_dir / "watchdog.log"
-    if not log.exists():
+
+    if beat.exists():
+        age = time.time() - beat.stat().st_mtime
+        # 阈值给 5 分钟：心跳间隔 30s，留足挂起/慢盘的余量
         report.check(
-            "watcher 日志存在",
-            False,
-            f"未找到 {log} ⇒ watcher **似乎没在跑**（另开终端执行 python -m recall.watchdog）",
+            f"watcher 心跳新鲜（{age:.1f}s 前，间隔 30s）",
+            age < 300,
+            f"心跳文件 {age / 60:.1f} 分钟没更新 ⇒ watcher **可能已退出或卡死**"
+            "（另开终端执行 python -m recall.watchdog）",
         )
+    else:
+        alive = _watcher_process_alive()
+        detail = (
+            "⚠️ 没有心跳文件 ⇒ 该 watcher 进程是**加心跳之前**启动的（重启它即可），"
+            "本次改用进程存活与日志新鲜度判断。"
+        )
+        if alive is not None:
+            report.check("watcher 进程存活（无心跳文件，按进程判断）", alive, detail)
+        else:
+            report.info(f"{detail}（且未安装 psutil，无法查进程）")
+        if log.exists():
+            age = time.time() - log.stat().st_mtime
+            report.info(f"watchdog.log 最后更新 {age / 60:.1f} 分钟前（仅参考，不据此判失败）")
         return
-    age = time.time() - log.stat().st_mtime
-    fresh = age < 3600
-    report.check(
-        f"watcher 日志在最近 1 小时内更新过（{age / 60:.1f} 分钟前）",
-        fresh,
-        "日志很久没动 ⇒ watcher 可能已退出（启动时会写 watchdog.started）",
-    )
-    lines = [
-        line
-        for line in log.read_text(encoding="utf-8", errors="replace").splitlines()
-        if line.strip()
-    ]
-    for line in lines[-5:]:
-        report.info(f"watchdog.log: {line[:150]}")
+
+    if log.exists():
+        lines = [
+            line
+            for line in log.read_text(encoding="utf-8", errors="replace").splitlines()
+            if line.strip()
+        ]
+        for line in lines[-5:]:
+            report.info(f"watchdog.log: {line[:150]}")
 
 
 def probe_vault(report: Report, base: str, headers: dict[str, str], settings: Any) -> None:

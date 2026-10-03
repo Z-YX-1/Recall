@@ -5,11 +5,13 @@
 # 前置：
 #   1. Qdrant 在跑（tools/qdrant/qdrant.exe）
 #   2. python -m uvicorn recall.api:app --host 127.0.0.1 --port 8000
-#   3. .env 里配好 DEEPSEEK_API_KEY
+#   3. .env 里配好 DEEPSEEK_API_KEY **与 RECALL_WATCHDOG_API_KEY**（鉴权见下方 🔴）
 #
 # 运行：
 #   npx promptfoo@latest eval -c eval/promptfoo/promptfooconfig.yaml
 #   npx promptfoo@latest view
+#
+# ⚠️ 实测过的版本：**0.123.1**（2026-10-03）。`@latest` 会漂 ⇒ 回归结果要连版本一起记。
 
 description: Recall kb_answer 回归（引用格式 / 忠实度 / 无证据不硬答）
 
@@ -24,6 +26,17 @@ providers:
       method: POST
       headers:
         Content-Type: application/json
+        # 🔴 **必须带 key**：R-40 之后本机端点（含 `/kb/answer`）**全部要鉴权**。
+        # 值从 `.env` 的 `RECALL_WATCHDOG_API_KEY` 取（promptfoo 会自动读 cwd 的 `.env`）。
+        #
+        # ⚠️ **漏掉它会被一个极具误导性的报错带偏**（2026-10-03 实测，项目工程师先踩）：
+        #   本机返回 **401**，错误体是 `{"error": {"code": "unauthorized", …}}` —— `error` 是**对象**；
+        #   而 promptfoo 的错误分支 `isProviderResponseRateLimited` 写的是
+        #   `result?.error?.includes(…)`，**假设 `error` 是字符串** ⇒ 它自己抛
+        #   `TypeError: result?.error?.includes is not a function`，
+        #   **把 401 整个掩盖掉**（`Duration: 0s` 就是线索：请求根本没发出去）。
+        #   ⇒ **看到这个 TypeError，第一件事是查 key**，别去怀疑断言、模型或 promptfoo 本身。
+        X-API-Key: '{{env.RECALL_WATCHDOG_API_KEY}}'
       body:
         query: '{{query}}'
         max_tokens: 3000
