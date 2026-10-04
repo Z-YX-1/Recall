@@ -223,6 +223,7 @@ cd /d D:\Project\Recall
 curl.exe -s http://127.0.0.1:6333/healthz
 python tools\verify_phase6.py --api-key <本机 token>
 python tools\verify_r49.py
+python tools\verify_r40.py          :: 跨身份可见性隔离（需要配了 key 表；token 从 .env 读）
 curl.exe -s -o NUL -w "%{http_code}\n" https://recall.iamzyx.xyz/health
 ```
 
@@ -231,6 +232,7 @@ curl.exe -s -o NUL -w "%{http_code}\n" https://recall.iamzyx.xyz/health
 | `healthz` | `healthz check passed` |
 | `verify_phase6.py` | **16 项通过 / 0 失败**（鉴权、审计、门槛、文档权限、工具白名单、watcher 都在里面） |
 | **`verify_r49.py`** | **23 项通过 / 0 失败**（飞书凭证 / 依赖窗口 / SDK 表面 / 卡片转义 / 本机检索链路 / 长连接握手；含一次真 WSS 握手） |
+| **`verify_r40.py`** | **14 项通过 / 0 失败**（跨身份隔离：`me` 看得见私有、`stock_user` 查**同一段原文**得 0 条、公开内容看得见、**带 filter 也绕不过**、审计可归因）⚠️ **需要 `RECALL_API_KEYS` 里同时有 `me` 与 `stock_user`**；token 全部从 `.env` 读，**不改动、不回显** |
 | 公网 `/health` | `200` |
 | **飞书入口** | 窗口 ⑤ 日志出现 `feishu_bot.starting`；在飞书里问一句**笔记里有的**问题 ⇒ 收到**带 `[n]` 引用的卡片** |
 
