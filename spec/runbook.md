@@ -187,6 +187,23 @@ python ingest.py --rebuild                         :: ④ 整篇重灌（**只�
    **`--update` 就够**（正文哈希未变、但权限三元组变了 ⇒ 账本会放行这几篇重灌）；
    **`--rebuild` 是整篇重灌**（持有模型锁数分钟、期间检索排队），**不是本流程的必需项**，
    只有怀疑账本与 Qdrant 不一致时才用。
+
+   🔴 **两条摄取路径，资源代价完全不同 —— 别选错**（2026-10-03 实测）：
+
+   | 路径 | 在哪个进程跑 | 代价 |
+   | :--- | :--- | :--- |
+   | `python ingest.py --update` | **独立进程，自己装载 bge-m3** | ⚠️ **会跟常驻的 `recall.api` 抢显存**：本机 GPU 只有 6141 MiB，API 常驻后**常剩 300~500 MiB**，而 bge-m3 要 ~2GB ⇒ **大概率 CUDA OOM**（与"跑 `measure_scores.py` 必须先停 API"是同一类问题） |
+   | **`POST /kb/ingest`（本机）** ⭐ | **API 进程内**，**复用已加载的模型** | ✅ **无需停服务、无抢占**，也是 **watcher 走的那条路** |
+
+   ```bat
+   :: 推荐（本机、带 key；公网的 /kb/ingest 已被隧道层挡死）
+   curl.exe -s -X POST http://127.0.0.1:8000/kb/ingest ^
+     -H "Content-Type: application/json" -H "X-API-Key: <本机 token>" ^
+     -d "{\"mode\":\"update\"}"
+   ```
+
+   ⇒ **常驻 API 健在时一律走 `POST /kb/ingest`**；只有"要把整库重灌成新 collection"
+   或者 API 起不来时，才停掉 API 再用独立 `ingest.py`。
 2. **前缀要带 `/`**：`AI/` 只命中 `AI/` 目录；写 `AI`（不带斜杠）会**连带命中**
    `AI大模型开发架构大纲MOC.md` 这类同前缀**文件**（工具会就此警告；该文件确实在知识库里）。
 3. **`visibility: private` 不会被覆盖** —— 显式意图优先，方向 fail-closed
