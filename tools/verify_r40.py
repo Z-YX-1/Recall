@@ -14,7 +14,7 @@ D     判据 2：`stock_user` 查**同一**片段 ⇒ **应空**（这是隔离�
 E     判据 3：`stock_user` 查公开片段 ⇒ **应命中**（证明不是"整个库都看不到"）
 F     判据 4：**对抗性** —— `stock_user` 手动带 `filter` 索要 `private` ⇒ **仍应空**
 G     判据 5：审计里出现 `user=stock_user`
-H     判据 6：`/kb/stats` 的全局披露面（**只报告、不判失败**，见 tech.md §7.1）
+H     判据 6：`/kb/stats` 是**部署级**端点 ⇒ 非所有者**应 403**、所有者仍 200
 ====  ==========================================================================
 
 ## 为什么用"原文片段"当查询
@@ -378,18 +378,36 @@ def section_audit(report: Report, settings: Settings) -> None:
 
 
 def section_stats(report: Report, base: str, keys: dict[str, str]) -> None:
-    """H. 判据 6（只报告）：`/kb/stats` 是**已鉴权但不按身份收窄**的端点。"""
-    step("H. 判据 6（仅报告）：`/kb/stats` 的全局披露面")
+    """H. 判据 6：**部署级端点只对所有者开放**（非所有者 ⇒ 403）。
+
+    `/kb/stats` 返回的是**部署级**信息（collection 名、模型/切分器版本、**全局**文档数），
+    外部身份读它没有正当用途 ⇒ 2026-10-03 项目工程师批准收紧为**只对所有者开放**
+    （隧道层本就已在公网挡死它，这里补上**身份维度**，两道一致）。
+    """
+    step("H. 判据 6：`/kb/stats` 对非所有者**应 403**（部署级信息不外泄）")
     status, payload = get(base, "/kb/stats", keys.get(PUBLIC_ROLE, ""))
-    if status != 200 or not isinstance(payload, dict):
-        report.info(f"`stock_user` 取 `/kb/stats` 得 status={status} ⇒ 该端点未泄露")
-        return
-    report.info(
-        f"⚠️ `stock_user` 能读到**全局**统计：documents={payload.get('documents')}、"
-        f"points={payload.get('points_count')}、collection={payload.get('collection')}"
+    body = payload if isinstance(payload, dict) else {}
+    raw_error = body.get("error")
+    code = raw_error.get("code") if isinstance(raw_error, dict) else None
+    report.check(
+        f"`{PUBLIC_ROLE}` 取 `/kb/stats` ⇒ **403 forbidden**（实得 {status}）",
+        status == 403 and code == "forbidden",
+        f"status={status} code={code!r}",
     )
-    report.info(
-        "   ⇒ 泄露的是**规模与内部命名**，不是内容。是否收紧由项目工程师决定（tech.md §7.1）"
+    if status == 200:
+        report.info(
+            f"⚠️ 仍读到了全局统计：documents={body.get('documents')}、"
+            f"points={body.get('points_count')}、collection={body.get('collection')}"
+        )
+        report.info(
+            "   ⇒ 先怀疑 **API 进程比代码旧**（收紧后没重启）——"
+            "`tools/diagnose_answer.py` 的 A 节能直接判出来，别急着改代码"
+        )
+    insider_status, _ = get(base, "/kb/stats", keys.get(INSIDER_ROLE, ""))
+    report.check(
+        f"`{INSIDER_ROLE}` 取 `/kb/stats` 仍应 **200**（别把运维挡在门外）",
+        insider_status == 200,
+        f"status={insider_status}",
     )
 
 

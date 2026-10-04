@@ -382,6 +382,7 @@ R-47 只解决"**检索到之后怎么答**"，管不了"**要不要检索**"。
 | **空表语义** | **不启用鉴权**（S1 语义，fail-open）——S1 的防线本就是"只绑 127.0.0.1"。⚠️ 故 **R-39 公网接入的前置条件之一是必须配置 key 表** |
 | 携带方式 | `X-API-Key: <token>` 或 `Authorization: Bearer <token>` |
 | 免鉴权路径 | 仅 `/health`（探活，且不返回笔记内容） |
+| **部署级端点只对所有者开放**（2026-10-03 批准） | `/kb/stats` 返回的是**部署级**信息（collection 名、模型/切分器版本、**全局**文档数与点数）—— 外部身份读它没有正当用途，却会知道**内部命名与全库规模**。故非所有者 ⇒ **403 `forbidden`**（核心共享，REST 与 MCP **两条路径一起**受约束）。📌 **判据**：`identity.user == OWNER_USER`（`"me"`，`recall/auth.py`）。⚠️ 与隧道层**一致**：`/kb/stats` 本来就在公网被 403 挡死，这里补的是**身份维度**。⚠️ 检查放在 `get_service()` **之前** ⇒ 不查 Qdrant、不碰模型（省资源，且让这条红线能被**免 GPU** 的用例覆盖） |
 | **回环** | **不豁免**（含 127.0.0.1）——避免"本机免检"这条隐性规则在容器/代理/隧道下静默失效 |
 | 失败响应 | `401` + 统一错误信封 `{"error":{"code":"unauthorized",...}}` |
 | 身份传递 | 校验通过 ⇒ `set_current_identity()` 写入 **contextvar**；REST 经 `get_identity(request)` 读、MCP 工具经 `current_identity()` 读（工具函数拿不到 `Request`） |
@@ -420,6 +421,10 @@ tools: kb_search / kb_answer / kb_ingest / kb_stats
 > `GET /kb/stats` 与 MCP 工具 `kb_stats` **同源同形**（共用 `kb_stats_core()`），
 > 存在的理由是"不依赖 MCP 也能查状态"（脚本 / 运维）。新增于 2026-09-24，
 > 由项目工程师确认（见 §17 决策记录 14）。
+>
+> 🔴 **只对所有者开放**（2026-10-03 项目工程师批准，见 §7.1 表）：它是**部署级**端点，
+> 非所有者调用 ⇒ **403 `forbidden`**（REST 与 MCP 两条路径**一起**受约束，
+> 因为检查在共享的 core 里）。验收：`tools/verify_r40.py` H 节。
 >
 > **降级语义**（2026-09-25 项目工程师确认）：Qdrant 不可达时 `/kb/stats` 仍返回 **200**，
 > 以 `qdrant=false` / `collection_ready=false` / `points_count=0` / `collections=[]` 表达降级，

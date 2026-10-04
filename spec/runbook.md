@@ -232,7 +232,7 @@ curl.exe -s -o NUL -w "%{http_code}\n" https://recall.iamzyx.xyz/health
 | `healthz` | `healthz check passed` |
 | `verify_phase6.py` | **16 项通过 / 0 失败**（鉴权、审计、门槛、文档权限、工具白名单、watcher 都在里面） |
 | **`verify_r49.py`** | **23 项通过 / 0 失败**（飞书凭证 / 依赖窗口 / SDK 表面 / 卡片转义 / 本机检索链路 / 长连接握手；含一次真 WSS 握手） |
-| **`verify_r40.py`** | **14 项通过 / 0 失败**（跨身份隔离：`me` 看得见私有、`stock_user` 查**同一段原文**得 0 条、公开内容看得见、**带 filter 也绕不过**、审计可归因）⚠️ **需要 `RECALL_API_KEYS` 里同时有 `me` 与 `stock_user`**；token 全部从 `.env` 读，**不改动、不回显** |
+| **`verify_r40.py`** | **16 项通过 / 0 失败**（跨身份隔离：`me` 看得见私有、`stock_user` 查**同一段原文**得 0 条、公开内容看得见、**带 filter 也绕不过**、审计可归因、**`/kb/stats` 对非所有者 403**）⚠️ **需要 `RECALL_API_KEYS` 里同时有 `me` 与 `stock_user`**；token 全部从 `.env` 读，**不改动、不回显** |
 | 公网 `/health` | `200` |
 | **飞书入口** | 窗口 ⑤ 日志出现 `feishu_bot.starting`；在飞书里问一句**笔记里有的**问题 ⇒ 收到**带 `[n]` 引用的卡片** |
 
@@ -268,6 +268,7 @@ curl.exe -s -o NUL -w "%{http_code}\n" https://recall.iamzyx.xyz/health
 | 首次检索 **15~25 秒** | 模型冷启动 | 正常现象；先预热（见窗口 ②） |
 | Coze 提示**工具调用超时** | 撞上冷启动 | 同上，先在本机预热一次再让 Coze 问 |
 | 公网 `/kb/stats`、`/kb/ingest` 返回 **403** | **正常**（隧道层刻意挡死） | 无需处理；要重灌请走本机 `ingest.py` |
+| 非所有者（如 `stock_user`）取 `/kb/stats` 返回 **403** | **正常**（2026-10-03 起该端点是**部署级**的，只对所有者开放，`tech.md` §7.1） | 无需处理。⚠️ 若**所有者自己**也拿到 403，先查 API 进程是不是比代码旧（改了没重启）—— `tools/diagnose_answer.py` 的 A 节能直接判出来 |
 | 公网 `/mcp`（**少了尾斜杠**）返回 **307** | Starlette 挂载点重定向 | 外部配置一律写 `/mcp/` |
 | Qdrant 建 payload 索引报 `IO Error: 拒绝访问` | Qdrant 偶发降级（`tech.md` §12.3） | **重启 Qdrant**（该状态重试无用）；仍复现就跑 `tools\clean_qdrant_orphans.py` 清泄漏 |
 | 日志里出现 `store.index_failed` | 某字段索引**重试后仍失败**，已**降级为告警**（2026-10-03 起不再致命，`tech.md` §12.3） | 结果**仍然正确**，只是**过滤检索会变慢**（退化成全量扫描）。`grep store.index_failed data/logs/*.log` 看漏了哪些字段；**若由 Qdrant 瞬时 IO 故障引起，重启 Qdrant 才是根治** |

@@ -47,6 +47,7 @@ from recall.auth import (
     current_identity,
     effective_filter,
     get_identity,
+    is_owner,
     reset_current_identity,
     set_current_identity,
 )
@@ -872,15 +873,41 @@ async def health() -> HealthResult:
     )
 
 
-async def kb_stats_core() -> StatsResult:
+async def kb_stats_core(identity: Identity | None = None) -> StatsResult:
     """采集知识库状态（**只读**，无副作用）。
 
     REST ``GET /kb/stats`` 与 MCP 工具 ``kb_stats`` **共用这一份实现**，
     避免同一份口径在两条接入路径上各自演化。
 
+    🔴 **只对所有者开放**（roadmap R-40 完整版，2026-10-03 项目工程师批准）：
+    本端点返回的是**部署级**信息 —— collection 名、模型/切分器版本、**全局**文档数与点数。
+    外部身份（如 ``stock_user``）读它没有正当用途，却会知道**内部命名与全库规模**。
+    隧道层**早已**在公网挡死本端点（403），这里把**身份维度**也补上，两道一致。
+
+    ⚠️ 检查放在**最前面**：非所有者**不查 Qdrant、不碰模型**就返回 ⇒ 既省资源，
+    也让该行为可被"无需起服务"的用例覆盖。
+
+    ⚠️ ``identity=None``（S1 语义 / 内部调用）**按所有者处理** —— 与
+    :func:`kb_search_core` 等保持同一套兜底语义。**新增对外路径必须显式传入身份**，
+    别依赖这个默认值。
+
+    Args:
+        identity: 调用者身份；``None`` 时按 S1 默认身份（所有者）处理。
+
     Returns:
         目标 collection、现存 collection 列表、点数、文档数、失败文档数与建库参数。
+
+    Raises:
+        ApiError: 调用者不是所有者 ⇒ **403** ``forbidden``。
     """
+    actor = identity if identity is not None else Identity()
+    if not is_owner(actor):
+        logger.info("kb_stats.forbidden user=%s", actor.user)
+        raise ApiError(
+            "forbidden",
+            f"身份 {actor.user!r} 无权读取知识库全局统计（本端点只对所有者开放）。",
+            403,
+        )
     service = await get_service()
     reachable = await service.store.ping()
     ready = reachable and await service.store.collection_exists(service.collection)
@@ -902,13 +929,15 @@ async def kb_stats_core() -> StatsResult:
 
 
 @app.get("/kb/stats")
-async def kb_stats_endpoint() -> StatsResult:
+async def kb_stats_endpoint(request: Request) -> StatsResult:
     """知识库状态（只读）：collection / 点数 / 文档数 / 失败文档数 / 建库参数。
 
     与 MCP 工具 ``kb_stats`` 同源同形（tech.md §8，2026-09-24 由项目工程师确认新增）；
     不依赖 MCP 也能查状态，便于脚本与运维。
+
+    🔴 **只对所有者开放** ⇒ 必须把身份传进 core（roadmap R-40 完整版，2026-10-03）。
     """
-    return await kb_stats_core()
+    return await kb_stats_core(get_identity(request))
 
 
 @app.post("/kb/search")
@@ -987,11 +1016,14 @@ async def kb_stats() -> StatsResult:
 
     何时调用：需要确认"知识库里有多少内容/建库参数是什么/是否就绪"时。
 
+    🔴 **只对所有者开放**：非所有者调用会拿到 403（roadmap R-40 完整版，2026-10-03）。
+    故必须把**当前身份**传进 core —— 工具函数拿不到 ``Request``，用 ``current_identity()``。
+
     Returns:
         目标 collection、点数、文档数、失败文档数与建库参数。
     """
     try:
-        return await kb_stats_core()
+        return await kb_stats_core(current_identity())
     except Exception as exc:  # noqa: BLE001 - MCP 工具不裸抛，异常转可读文本（§6.2）
         logger.exception("mcp.kb_stats_failed")
         raise ToolError(f"读取知识库状态失败：{type(exc).__name__}: {exc}") from exc

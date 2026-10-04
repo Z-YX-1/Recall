@@ -27,13 +27,23 @@ from fastmcp.client.transports import StreamableHttpTransport
 from qdrant_client import models
 
 from ingest import run_ingest
-from recall.api import IdentityMiddleware, app, close_service, get_service, mcp
+from recall.api import (
+    ApiError,
+    IdentityMiddleware,
+    app,
+    close_service,
+    get_service,
+    kb_stats_core,
+    mcp,
+)
 from recall.auth import (
+    OWNER_USER,
     InvalidFilterError,
     build_scope_filter,
     effective_filter,
     get_identity,
     intersect,
+    is_owner,
 )
 from recall.chunker import count_tokens
 from recall.embedder import Embedder
@@ -233,6 +243,22 @@ def _client() -> httpx.AsyncClient:
     return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://recall.test")
 
 
+@pytest.fixture
+async def key_table_only(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[dict[str, str]]:
+    """只配 key 表，**不预热 service**（不装模型、不连 Qdrant）。
+
+    专供"**部署级端点的 403 在碰服务之前就返回**"这类用例：
+    非所有者路径压根走不到 `get_service()` ⇒ 用例**不需要 GPU**，
+    也就不会被显存/内存问题掩盖成假红。
+    """
+    monkeypatch.setenv("RECALL_API_KEYS", f"{ME_TOKEN}:me,{ALICE_TOKEN}:alice")
+    await close_service()
+    try:
+        yield {"me": ME_TOKEN, "alice": ALICE_TOKEN}
+    finally:
+        await close_service()
+
+
 async def test_no_key_table_keeps_s1_semantics(unsecured: IngestEnv) -> None:
     """未配置 ``RECALL_API_KEYS`` ⇒ 退回 S1（不鉴权），确保升级不打断既有使用。"""
     async with _client() as client:
@@ -257,6 +283,58 @@ async def test_wrong_key_is_rejected(secured: dict[str, str]) -> None:
         response = await client.get("/kb/stats", headers={"X-API-Key": "not-a-real-token"})
 
     assert response.status_code == 401
+
+
+# ── 部署级端点只对所有者开放（roadmap R-40 完整版，2026-10-03 项目工程师批准）─────
+
+
+@pytest.mark.parametrize("user", ["alice", "stock_user", "guest"])
+def test_is_owner_only_for_the_owner_user(user: str) -> None:
+    assert is_owner(Identity(user=user, groups=[])) is (user == OWNER_USER)
+    assert is_owner(Identity()) is True, "S1 默认身份就是所有者"
+
+
+async def test_stats_core_rejects_a_non_owner_before_touching_the_service() -> None:
+    """🔴 非所有者读全局统计 ⇒ **403**，且在**任何重活之前**返回。
+
+    "之前"是刻意的：检查放在 `get_service()` **前面** ⇒ 不查 Qdrant、不碰模型。
+    好处有两个：省资源；以及这条红线能被**无需起服务**的用例覆盖（不会被显存问题掩盖成假红）。
+    """
+    with pytest.raises(ApiError) as excinfo:
+        await kb_stats_core(Identity(user="stock_user", groups=[]))
+
+    assert excinfo.value.status_code == 403
+    assert excinfo.value.code == "forbidden"
+
+
+async def test_non_owner_gets_403_from_the_rest_endpoint(key_table_only: dict[str, str]) -> None:
+    """端到端：非所有者的 key 走真实 ASGI 链路 ⇒ **403** + **统一错误信封**。
+
+    动机：`/kb/stats` 返回的是**部署级**信息（collection 名、模型版本、**全局**文档数），
+    外部身份读它没有正当用途。隧道层早已在公网挡死本端点，这里补上**身份维度**。
+
+    ⚠️ 本用例用 `key_table_only`（**不预热 service**）⇒ 顺带证明 403 发生在
+    `get_service()` **之前**：不需要 GPU、不需要 Qdrant 也能验这条红线。
+    """
+    async with _client() as client:
+        response = await client.get("/kb/stats", headers={"X-API-Key": key_table_only["alice"]})
+
+    assert response.status_code == 403
+    assert response.json()["error"]["code"] == "forbidden"
+
+
+async def test_owner_still_reads_global_stats(secured: dict[str, str]) -> None:
+    """所有者不受影响（回归：别把运维自己挡在门外）。
+
+    ⚠️ 不断言 `documents` 的具体数值：本夹具用的是**临时注册表**，
+    数值随夹具实现变动 —— 这里要钉的是"**没被 403 挡住**"与**字段齐全**。
+    """
+    async with _client() as client:
+        response = await client.get("/kb/stats", headers={"X-API-Key": secured["me"]})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert {"collection", "documents", "points_count"} <= set(body)
 
 
 async def test_x_api_key_and_bearer_are_both_accepted(secured: dict[str, str]) -> None:

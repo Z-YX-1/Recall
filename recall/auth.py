@@ -29,6 +29,28 @@ from recall.models import Identity
 PUBLIC_VISIBILITY = "public"
 """公开可见的 ``visibility`` 取值。"""
 
+OWNER_USER = "me"
+"""**所有者**身份名（S1 的默认身份，取值与 ``ingest.py::DEFAULT_OWNER`` 一致）。
+
+**为什么需要它**（roadmap R-40 完整版，2026-10-03 项目工程师批准）：有一类端点是
+**部署级**的 —— 它们描述的是"这套系统本身"（collection 名、模型版本、全局文档数），
+而不是"某条内容"。外部身份读它没有正当用途，却会知道**内部命名与全库规模**。
+故这类端点只对所有者开放。⚠️ 与 ``ingest.py::DEFAULT_OWNER`` **必须同值**：
+后者管"新文档默认归谁"，这里管"谁能看部署信息" —— 同一个 ``me``。
+"""
+
+
+def is_owner(identity: Identity) -> bool:
+    """该身份是不是知识库所有者（决定能否读**部署级**信息）。
+
+    Args:
+        identity: 调用者身份。
+
+    Returns:
+        ``identity.user == OWNER_USER`` 时为 ``True``。
+    """
+    return identity.user == OWNER_USER
+
 _identity_ctx: ContextVar[Identity | None] = ContextVar("recall_identity", default=None)
 """当前请求的身份（由 :func:`set_current_identity` 写入，见模块 docstring）。
 
