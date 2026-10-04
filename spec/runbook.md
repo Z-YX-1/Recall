@@ -166,6 +166,37 @@ python ingest.py --update        :: 增量（等价于 watcher 的一次同步�
 python ingest.py --rebuild       :: 整篇重灌（会持有模型锁数分钟，期间检索排队）
 ```
 
+#### 把一批笔记标成公开（R-40 完整版前置，roadmap §七 2026-10-03）
+
+要给**外部身份**（如 `stock_user`）开可见范围，得先把对应笔记标成 `visibility: public` ——
+可见性来自 frontmatter（`tech.md` §3.4，**随内容走**，换台机器重建结果一致）。
+**不要手工一篇篇改**，用工具（**幂等、默认只列出、显式写了别的值不覆盖**）：
+
+```bat
+cd /d D:\Project\Recall
+python tools\mark_public.py --prefix AI/          :: ① 只列出会改哪些（默认，不动任何文件）
+python tools\mark_public.py --prefix AI/ --yes    :: ② 真正写入（只在 frontmatter 首行插一行）
+python ingest.py --update                          :: ③ ★ 重新摄取 —— 不做这步可见性不生效
+python ingest.py --rebuild                         :: ④ 整篇重灌（**只有怀疑账本失真时才需要**）
+```
+
+⚠️ 四条要点：
+
+1. **改完必须重新摄取**：Qdrant payload 与注册表账本里存的还是旧的 `private`
+   ⇒ 不重新摄取的话**外部身份依然什么都看不到**，而你会以为"工具没生效"。
+   **`--update` 就够**（正文哈希未变、但权限三元组变了 ⇒ 账本会放行这几篇重灌）；
+   **`--rebuild` 是整篇重灌**（持有模型锁数分钟、期间检索排队），**不是本流程的必需项**，
+   只有怀疑账本与 Qdrant 不一致时才用。
+2. **前缀要带 `/`**：`AI/` 只命中 `AI/` 目录；写 `AI`（不带斜杠）会**连带命中**
+   `AI大模型开发架构大纲MOC.md` 这类同前缀**文件**（工具会就此警告；该文件确实在知识库里）。
+3. **`visibility: private` 不会被覆盖** —— 显式意图优先，方向 fail-closed
+   （写错只会更私有，绝不意外公开）。
+4. 以后**新增 AI 笔记，重跑一次第 ① / ② 步**即可（已标过的会被跳过）。
+
+标完**先自查**"到底谁能看到什么"：`python tools\verify_phase6.py --api-key <token>`
+的「R-39 二、文档权限分布」一节会显示 `有 N 篇 public 文档 ⇒ 非 me 身份可见这些`
+（此前 0 篇时它提示"非 me 身份会检索不到任何东西"）。
+
 ---
 
 ## 2. 起完后的验收五连

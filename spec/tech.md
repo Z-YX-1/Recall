@@ -130,6 +130,16 @@ groups: [team-a]       # 数组或逗号分隔字符串；缺省 []
 > `me`/`private`/`[]` ⇒ 任何"给外部接入（如 Coze）单独发一把 token"的做法都会
 > **检索不到任何东西**，权限模型停在"全有或全无"。详见 `docs/R-39-public-access.md` §0。
 
+📌 **批量标公开用工具，别手改**（2026-10-03）：给某个目录下一批笔记开可见范围时用
+`tools/mark_public.py`（**幂等、默认只列出、只插一行、显式写了别的值绝不覆盖**）::
+
+    python tools\mark_public.py --prefix AI/          :: 只列出会改哪些
+    python tools\mark_public.py --prefix AI/ --yes    :: 真正写入
+    python ingest.py --update                          :: ★ 必须重新摄取，否则不生效
+
+⚠️ **改完不重新摄取 = 白改**：Qdrant payload 与注册表账本里存的仍是旧的 `private`。
+操作步骤与踩坑见 `runbook.md` §1 窗口 ⑥。
+
 ## 4. 检索链路（kb_search 内部）
 
 ```
