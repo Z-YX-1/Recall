@@ -269,6 +269,7 @@ curl.exe -s -o NUL -w "%{http_code}\n" https://recall.iamzyx.xyz/health
 | Coze 提示**工具调用超时** | 撞上冷启动 | 同上，先在本机预热一次再让 Coze 问 |
 | 公网 `/kb/stats`、`/kb/ingest` 返回 **403** | **正常**（隧道层刻意挡死） | 无需处理；要重灌请走本机 `ingest.py` |
 | 非所有者（如 `stock_user`）取 `/kb/stats` 返回 **403** | **正常**（2026-10-03 起该端点是**部署级**的，只对所有者开放，`tech.md` §7.1） | 无需处理。⚠️ 若**所有者自己**也拿到 403，先查 API 进程是不是比代码旧（改了没重启）—— `tools/diagnose_answer.py` 的 A 节能直接判出来 |
+| 公网请求返回 **403**，而 body 里带 `"type":"https://developers.cloudflare.com/…1xxx…"` | 🔴 **是 Cloudflare 的 WAF/Bot 防护挡的，请求根本没到我们应用**（`tech.md` §12.2 之外的第三种 403） | ⚠️ **本项目实测（2026-10-05）**：默认 **`Python-urllib/3.x` 的 User-Agent 会被拦**（403），而 `curl/8.x`、`Coze/1.0` 都放行（401/200）。⇒ **自己写探针/脚本调公网时必须设一个正常 UA**（`urllib` 默认 UA 是坑）；**若 Coze 报 403，先看 body 是不是 Cloudflare 的**，别去查我们的鉴权。区分口径：我们的 403 带**统一错误信封** `{"error":{"code":…}}`，Cloudflare 的带 `type`/`cloudflare-1xxx` |
 | 公网 `/mcp`（**少了尾斜杠**）返回 **307** | Starlette 挂载点重定向 | 外部配置一律写 `/mcp/` |
 | Qdrant 建 payload 索引报 `IO Error: 拒绝访问` | Qdrant 偶发降级（`tech.md` §12.3） | **重启 Qdrant**（该状态重试无用）；仍复现就跑 `tools\clean_qdrant_orphans.py` 清泄漏 |
 | 日志里出现 `store.index_failed` | 某字段索引**重试后仍失败**，已**降级为告警**（2026-10-03 起不再致命，`tech.md` §12.3） | 结果**仍然正确**，只是**过滤检索会变慢**（退化成全量扫描）。`grep store.index_failed data/logs/*.log` 看漏了哪些字段；**若由 Qdrant 瞬时 IO 故障引起，重启 Qdrant 才是根治** |
