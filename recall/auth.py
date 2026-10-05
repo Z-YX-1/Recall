@@ -51,6 +51,7 @@ def is_owner(identity: Identity) -> bool:
     """
     return identity.user == OWNER_USER
 
+
 _identity_ctx: ContextVar[Identity | None] = ContextVar("recall_identity", default=None)
 """当前请求的身份（由 :func:`set_current_identity` 写入，见模块 docstring）。
 
