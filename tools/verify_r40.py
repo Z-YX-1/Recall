@@ -152,7 +152,12 @@ def post(base: str, path: str, body: dict[str, Any], token: str | None) -> tuple
 
 
 def get(base: str, path: str, token: str | None) -> tuple[int, Any]:
-    """GET 一个 JSON 端点。"""
+    """GET 一个 JSON 端点。
+
+    ⚠️ **错误响应体也要按 JSON 解析**（与 :func:`post` 保持一致）：本脚本要读 403 的
+    `error.code` 才能判断"是不是预期的 forbidden"。若这里只回字符串，下游拿到的是
+    `str` 而非 `dict` ⇒ 取不到 `code` ⇒ **行为正确却报 FAIL**（2026-10-05 实测踩到过）。
+    """
     headers = {"X-API-Key": token} if token else {}
     request = urllib.request.Request(  # noqa: S310
         f"{base.rstrip('/')}{path}", headers=headers, method="GET"
@@ -161,7 +166,11 @@ def get(base: str, path: str, token: str | None) -> tuple[int, Any]:
         with urllib.request.urlopen(request, timeout=TIMEOUT_S) as response:  # noqa: S310
             return response.status, json.loads(response.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
-        return exc.code, exc.read().decode("utf-8", errors="replace")[:300]
+        raw = exc.read().decode("utf-8", errors="replace")
+        try:
+            return exc.code, json.loads(raw)
+        except json.JSONDecodeError:
+            return exc.code, raw[:300]
     except Exception as exc:  # noqa: BLE001
         return 0, f"{type(exc).__name__}: {exc}"
 
